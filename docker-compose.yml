@@ -1,9 +1,0 @@
-services:
-  logsentinel:
-    build:
-      context: .
-      target: production
-    image: logsentinel-dashboard:local
-    ports:
-      - "8080:80"
-    restart: unless-stopped
