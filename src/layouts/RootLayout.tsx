@@ -1,13 +1,16 @@
 import { Outlet, useLocation } from "react-router";
-import { Bell, RefreshCw, Search, Zap } from "lucide-react";
+import { Bell, Moon, RefreshCw, Search, Sun, Zap } from "lucide-react";
 import { DEFAULT_PAGE_META, PAGE_META } from "../constants/pageMeta";
 import { useClock } from "../hooks/useClock";
+import { useThemeMode } from "../hooks/useThemeMode";
 import { Sidebar } from "./Sidebar";
 
 function Header() {
   const location = useLocation();
   const meta = PAGE_META[location.pathname] ?? DEFAULT_PAGE_META;
   const time = useClock();
+  const { themeMode, toggleTheme } = useThemeMode();
+  const isDarkMode = themeMode === "dark";
 
   return (
     <header className="flex items-center justify-between px-5 py-3 border-b border-[#21262d] bg-[#0d1117] shrink-0">
@@ -38,6 +41,15 @@ function Header() {
         </button>
         <button aria-label="Refresh dashboard" className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#161b22] border border-[#21262d] text-[#7d8590] hover:text-[#e6edf3] transition-colors">
           <RefreshCw className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          aria-label={`Switch to ${isDarkMode ? "light" : "dark"} mode`}
+          title={`Switch to ${isDarkMode ? "light" : "dark"} mode`}
+          onClick={toggleTheme}
+          className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#161b22] border border-[#21262d] text-[#7d8590] hover:text-[#e6edf3] transition-colors"
+        >
+          {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
         <div className="w-px h-5 bg-[#21262d]" />
         <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#161b22] border border-[#21262d]">

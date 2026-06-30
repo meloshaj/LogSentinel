@@ -40,7 +40,7 @@ export function Sidebar() {
           <Zap className="w-4 h-4 text-white" />
         </div>
         <div>
-          <div className="text-white leading-none" style={{ fontSize: "13px", fontWeight: 600 }}>LogSentinel</div>
+          <div className="text-[#e6edf3] leading-none" style={{ fontSize: "13px", fontWeight: 600 }}>LogSentinel</div>
           <div className="text-[#7d8590]" style={{ fontSize: "10px", fontWeight: 400, marginTop: "2px" }}>v2.4.1 - Production</div>
         </div>
       </div>
