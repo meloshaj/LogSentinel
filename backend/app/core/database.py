@@ -31,9 +31,12 @@ _DB_HOST: str = os.getenv("POSTGRES_HOST", "localhost")
 _DB_PORT: str = os.getenv("POSTGRES_PORT", "5432")
 _DB_NAME: str = os.getenv("POSTGRES_DB", "logsentinel_db")
 
-DATABASE_URL: str = (
-    f"postgresql+asyncpg://{_DB_USER}:{_DB_PASSWORD}"
-    f"@{_DB_HOST}:{_DB_PORT}/{_DB_NAME}"
+DATABASE_URL: str = os.getenv(
+    "DATABASE_URL",
+    (
+        f"postgresql+asyncpg://{_DB_USER}:{_DB_PASSWORD}"
+        f"@{_DB_HOST}:{_DB_PORT}/{_DB_NAME}"
+    ),
 )
 
 # ---------------------------------------------------------------------------

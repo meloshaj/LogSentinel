@@ -15,6 +15,9 @@
   --app-text-subtle: #484f58;
   --app-link: #388bfd;
   --app-link-hover: #79c0ff;
+  --app-link-soft-bg: rgba(31, 111, 235, 0.2);
+  --app-link-soft-bg-hover: rgba(31, 111, 235, 0.3);
+  --app-link-soft-border: rgba(31, 111, 235, 0.3);
   --app-code-bg: #0d1117;
   --app-shadow: rgba(1, 4, 9, 0.45);
   --background: #ffffff;
@@ -70,6 +73,9 @@
   --app-text-subtle: #484f58;
   --app-link: #388bfd;
   --app-link-hover: #79c0ff;
+  --app-link-soft-bg: rgba(31, 111, 235, 0.2);
+  --app-link-soft-bg-hover: rgba(31, 111, 235, 0.3);
+  --app-link-soft-border: rgba(31, 111, 235, 0.3);
   --app-code-bg: #0d1117;
   --app-shadow: rgba(1, 4, 9, 0.45);
   --background: oklch(0.145 0 0);
@@ -122,6 +128,9 @@
   --app-text-subtle: #6e7781;
   --app-link: #0969da;
   --app-link-hover: #0550ae;
+  --app-link-soft-bg: rgba(9, 105, 218, 0.12);
+  --app-link-soft-bg-hover: rgba(9, 105, 218, 0.18);
+  --app-link-soft-border: rgba(9, 105, 218, 0.24);
   --app-code-bg: #f6f8fa;
   --app-shadow: rgba(31, 35, 40, 0.08);
   color-scheme: light;
@@ -171,6 +180,14 @@ body,
   background-color: var(--app-surface-strong);
 }
 
+[class~="bg-[#1f6feb]/20"] {
+  background-color: var(--app-link-soft-bg);
+}
+
+[class~="hover:bg-[#1f6feb]/30"]:hover {
+  background-color: var(--app-link-soft-bg-hover);
+}
+
 .border-\[\#21262d\],
 .border-b-\[\#21262d\],
 .border-r-\[\#21262d\],
@@ -188,6 +205,14 @@ body,
 
 [class~="divide-[#21262d]/50"] > :not([hidden]) ~ :not([hidden]) {
   border-color: var(--app-border-muted);
+}
+
+[class~="border-[#1f6feb]/30"] {
+  border-color: var(--app-link-soft-border);
+}
+
+[class~="hover:border-[#484f58]"]:hover {
+  border-color: var(--app-text-subtle);
 }
 
 .text-\[\#e6edf3\],
@@ -223,6 +248,11 @@ body,
 .hover\:text-\[\#79c0ff\]:hover,
 [class~="hover:text-[#79c0ff]"]:hover {
   color: var(--app-link-hover);
+}
+
+.hover\:text-\[\#7d8590\]:hover,
+[class~="hover:text-[#7d8590]"]:hover {
+  color: var(--app-text-muted);
 }
 
 .placeholder\:text-\[\#484f58\]::placeholder,

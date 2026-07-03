@@ -42,9 +42,11 @@ function Toggle({ defaultOn = false }: { defaultOn?: boolean }) {
 }
 
 const TEAM_MEMBERS = [
-  { name: "Alex Chen",      role: "Admin",    avatar: "AC", status: "online" },
-  { name: "Jordan Smith",   role: "Engineer", avatar: "JS", status: "online" },
-  { name: "Taylor Rivera",  role: "Viewer",   avatar: "TR", status: "offline" },
+  { name: "Leorent Ismajli",   role: "Admin",    avatar: "LI", status: "online" },
+  { name: "Melos Hajrullahu",  role: "Engineer", avatar: "MH", status: "online" },
+  { name: "Blerim Haxhiu",     role: "Engineer", avatar: "BH", status: "online" },
+  { name: "Juled Salihu",      role: "Viewer",   avatar: "JS", status: "offline" },
+  { name: "Blert Sylejmani",   role: "Viewer",   avatar: "BS", status: "offline" },
 ];
 
 export function SettingsPage() {
