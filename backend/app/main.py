@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -7,6 +9,12 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+
+from .repositories.db_health import check_database_health
+from .repositories.log_repository import LogRepository
+from .services.batch_manager import ParsedLogBatchManager
+from .services.drain_parser import DrainParser
+from .workers.drain_worker import DrainWorker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -63,6 +71,10 @@ class AsyncLogBuffer:
 
 
 log_buffer = AsyncLogBuffer()
+drain_parser = DrainParser()
+log_repository = LogRepository()
+batch_manager = ParsedLogBatchManager(sink=log_repository.bulk_insert_parsed_logs)
+drain_worker = DrainWorker(log_buffer, drain_parser, batch_manager=batch_manager)
 
 
 def get_log_buffer() -> AsyncLogBuffer:
@@ -70,10 +82,20 @@ def get_log_buffer() -> AsyncLogBuffer:
     return log_buffer
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    drain_worker.start()
+    try:
+        yield
+    finally:
+        await drain_worker.stop()
+
+
 app = FastAPI(
     title="LogSentinel Ingestion Gateway",
     version="0.1.0",
     description="Asynchronous ingestion endpoint for multi-service log payloads",
+    lifespan=lifespan,
 )
 
 
@@ -106,6 +128,42 @@ async def ingest_log(payload: IngestPayload) -> JSONResponse:
             "queue_size": get_log_buffer().queue_size(),
         },
     )
+
+
+@app.get("/drain3/stats")
+async def drain3_stats() -> dict[str, Any]:
+    return {
+        "parser": drain_parser.get_stats(),
+        "worker": drain_worker.get_stats(),
+        "batch": drain_worker.batch_manager.get_stats(),
+    }
+
+
+@app.get("/drain3/recent")
+async def drain3_recent(limit: int = 50) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "logs": drain_worker.get_recent_parsed_logs(limit=limit),
+    }
+
+
+@app.get("/drain3/templates")
+async def drain3_templates() -> dict[str, list[dict]]:
+    return {
+        "templates": drain_parser.get_templates(),
+    }
+
+
+@app.post("/drain3/flush")
+async def drain3_flush() -> dict[str, Any]:
+    await drain_worker.batch_manager.flush()
+    return {
+        "batch": drain_worker.batch_manager.get_stats(),
+    }
+
+
+@app.get("/drain3/db-health")
+async def drain3_db_health() -> dict[str, Any]:
+    return await check_database_health()
 
 
 if __name__ == "__main__":

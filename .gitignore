@@ -206,6 +206,10 @@ tempCodeRunnerFile.py
 # Node / frontend dependencies
 node_modules/
 
+# Runtime parser state
+state/
+backend/state/
+
 # Ruff stuff:
 .ruff_cache/
 

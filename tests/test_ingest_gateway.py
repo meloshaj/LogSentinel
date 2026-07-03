@@ -39,3 +39,45 @@ def test_ingest_log_rejects_missing_logs() -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_drain3_stats_returns_parser_and_worker_stats() -> None:
+    response = client.get("/drain3/stats")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "parser" in body
+    assert "worker" in body
+    assert "batch" in body
+    assert "cluster_count" in body["parser"]
+    assert "processed_count" in body["worker"]
+    assert "queue_size" in body["worker"]
+    assert "current_buffer_size" in body["batch"]
+    assert "periodic_flush_enabled" in body["batch"]
+    assert "flush_interval_seconds" in body["batch"]
+    assert "periodic_flush_count" in body["batch"]
+    assert "shutdown_flush_count" in body["batch"]
+    assert "failed_batch_count" in body["batch"]
+
+
+def test_drain3_flush_returns_batch_stats() -> None:
+    response = client.post("/drain3/flush")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "batch" in body
+    assert "batch_size" in body["batch"]
+    assert "current_buffer_size" in body["batch"]
+    assert "last_sink_result" in body["batch"]
+    assert "last_sink_error" in body["batch"]
+
+
+def test_drain3_db_health_returns_status_payload() -> None:
+    response = client.get("/drain3/db-health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "connected" in body
+    assert "table_exists" in body
+    assert "missing_columns" in body
+    assert "error" in body

@@ -1,0 +1,196 @@
+"""Async worker that drains queued ingest payloads into Drain3 parsing."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections import deque
+from datetime import datetime, timezone
+from typing import Any
+
+from ..services.batch_manager import ParsedLogBatchManager
+from ..services.drain_parser import DrainParser
+
+logger = logging.getLogger("logsentinel.drain_worker")
+
+
+class DrainWorker:
+    """Consume ingest queue items, parse log messages, and keep recent results."""
+
+    def __init__(
+        self,
+        log_buffer: Any,
+        parser: DrainParser,
+        batch_manager: ParsedLogBatchManager | None = None,
+        recent_limit: int = 1000,
+    ) -> None:
+        self.log_buffer = log_buffer
+        self.parser = parser
+        self.batch_manager = batch_manager or ParsedLogBatchManager()
+        self._recent_parsed_logs: deque[dict[str, Any]] = deque(maxlen=recent_limit)
+        self._task: asyncio.Task[None] | None = None
+        self._running = False
+        self.processed_count = 0
+        self.error_count = 0
+        self.last_processed_at: str | None = None
+
+    def start(self) -> None:
+        """Start the background worker without blocking application startup."""
+        if self._task and not self._task.done():
+            return
+
+        self._running = True
+        self.batch_manager.start_periodic_flush()
+        self._task = asyncio.create_task(self.run(), name="drain-worker")
+
+    async def stop(self) -> None:
+        """Stop the background worker cleanly."""
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                self._task = None
+
+        await self.batch_manager.stop_periodic_flush()
+        await self.batch_manager.shutdown_flush()
+
+    async def run(self) -> None:
+        """Continuously consume queued ingest payloads."""
+        while self._running:
+            try:
+                item = await self.log_buffer.dequeue()
+                await self.process_one(item)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.error_count += 1
+                logger.exception("Drain worker failed while processing queued item")
+
+    async def process_one(self, item: Any) -> list[dict[str, Any]]:
+        """Process one queued payload or log entry."""
+        parsed_logs: list[dict[str, Any]] = []
+        errors_before_extract = self.error_count
+
+        extracted_messages = self._extract_log_messages(item)
+        for raw_message, metadata in extracted_messages:
+            try:
+                parsed = self.parser.parse(raw_message, metadata=metadata)
+            except Exception:
+                self.error_count += 1
+                logger.exception("Drain parser failed for log message")
+                continue
+
+            self._recent_parsed_logs.append(parsed)
+            await self.batch_manager.add(parsed)
+            self.processed_count += 1
+            self.last_processed_at = datetime.now(timezone.utc).isoformat()
+            parsed_logs.append(parsed)
+
+        if not parsed_logs and self.error_count == errors_before_extract:
+            self.error_count += 1
+            logger.warning("Drain worker could not extract any log messages from queued item: %r", item)
+
+        return parsed_logs
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return worker counters and queue visibility."""
+        return {
+            "running": self._running,
+            "processed_count": self.processed_count,
+            "error_count": self.error_count,
+            "last_processed_at": self.last_processed_at,
+            "queue_size": self._queue_size(),
+            "recent_parsed_count": len(self._recent_parsed_logs),
+            "batch": self.batch_manager.get_stats(),
+        }
+
+    def get_recent_parsed_logs(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent parsed logs, newest first."""
+        safe_limit = max(0, limit)
+        return list(self._recent_parsed_logs)[-safe_limit:][::-1] if safe_limit else []
+
+    def _queue_size(self) -> int | None:
+        queue_size = getattr(self.log_buffer, "queue_size", None)
+        if callable(queue_size):
+            return int(queue_size())
+        return None
+
+    def _extract_log_messages(self, item: Any) -> list[tuple[str, dict[str, Any]]]:
+        if isinstance(item, str):
+            return [(item, {})]
+
+        if not isinstance(item, dict):
+            return []
+
+        parent_metadata = self._metadata_from_payload(item)
+        logs = item.get("logs")
+
+        if isinstance(logs, list):
+            extracted: list[tuple[str, dict[str, Any]]] = []
+            for entry in logs:
+                entry_messages = self._extract_entry(entry, parent_metadata)
+                if not entry_messages:
+                    self._record_unsupported(entry)
+                extracted.extend(entry_messages)
+            return extracted
+
+        entry_messages = self._extract_entry(item, parent_metadata)
+        if not entry_messages:
+            self._record_unsupported(item)
+        return entry_messages
+
+    def _extract_entry(
+        self,
+        entry: Any,
+        parent_metadata: dict[str, Any],
+    ) -> list[tuple[str, dict[str, Any]]]:
+        if isinstance(entry, str):
+            return [(entry, dict(parent_metadata))]
+
+        if not isinstance(entry, dict):
+            return []
+
+        raw_message = self._find_message(entry)
+        if not raw_message:
+            return []
+
+        metadata = dict(parent_metadata)
+        nested_metadata = entry.get("metadata")
+        if isinstance(nested_metadata, dict):
+            metadata.update(nested_metadata)
+
+        for source_key, target_key in (
+            ("service_name", "service"),
+            ("service", "service"),
+            ("level", "level"),
+            ("timestamp", "timestamp"),
+            ("correlation_id", "correlation_id"),
+        ):
+            value = entry.get(source_key)
+            if value is not None:
+                metadata[target_key] = value
+
+        return [(raw_message, metadata)]
+
+    def _metadata_from_payload(self, item: dict[str, Any]) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+        for key in ("source", "environment", "correlation_id"):
+            value = item.get(key)
+            if value is not None:
+                metadata[key] = value
+        return metadata
+
+    def _find_message(self, entry: dict[str, Any]) -> str | None:
+        for key in ("raw_message", "raw", "message", "log"):
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        return None
+
+    def _record_unsupported(self, item: Any) -> None:
+        self.error_count += 1
+        logger.warning("Drain worker found unsupported log entry shape: %r", item)

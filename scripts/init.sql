@@ -38,8 +38,26 @@ CREATE TABLE IF NOT EXISTS logs (
     service         VARCHAR(255)    NOT NULL,
     raw_message     TEXT            NOT NULL,
     template_id     VARCHAR(64)     NOT NULL,
-    correlation_id  VARCHAR(128)    NULL
+    template_text   TEXT            NULL,
+    parameters      JSONB           NOT NULL DEFAULT '[]'::jsonb,
+    level           VARCHAR(32)     NULL,
+    source          VARCHAR(255)    NULL,
+    environment     VARCHAR(255)    NULL,
+    correlation_id  VARCHAR(128)    NULL,
+    metadata        JSONB           NOT NULL DEFAULT '{}'::jsonb,
+    parsed_at       TIMESTAMPTZ     NULL,
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE logs
+    ADD COLUMN IF NOT EXISTS template_text TEXT NULL,
+    ADD COLUMN IF NOT EXISTS parameters JSONB NOT NULL DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS level VARCHAR(32) NULL,
+    ADD COLUMN IF NOT EXISTS source VARCHAR(255) NULL,
+    ADD COLUMN IF NOT EXISTS environment VARCHAR(255) NULL,
+    ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS parsed_at TIMESTAMPTZ NULL,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
 -- ---------------------------------------------------------------------------
 -- Incidents Table
@@ -73,6 +91,10 @@ CREATE INDEX IF NOT EXISTS idx_logs_correlation_id
 -- Accelerates time-range scans (essential for any log platform)
 CREATE INDEX IF NOT EXISTS idx_logs_timestamp
     ON logs (timestamp);
+
+-- Accelerates parsed-log insertion and dashboard recency checks
+CREATE INDEX IF NOT EXISTS idx_logs_created_at
+    ON logs (created_at);
 
 -- Accelerates open-incident dashboard queries
 CREATE INDEX IF NOT EXISTS idx_incidents_status
