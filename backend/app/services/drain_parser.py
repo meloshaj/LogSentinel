@@ -10,6 +10,8 @@ from drain3 import TemplateMiner
 from drain3.file_persistence import FilePersistence
 from drain3.template_miner_config import TemplateMinerConfig
 
+from ..models import ParsedLog
+
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "drain3.ini"
 DEFAULT_STATE_PATH = Path(__file__).resolve().parents[3] / "state" / "drain3_state.bin"
@@ -30,23 +32,45 @@ class DrainParser:
         persistence = FilePersistence(str(self.state_path))
         self._miner = TemplateMiner(persistence_handler=persistence, config=config)
 
-    def parse(self, raw_message: str, metadata: dict | None = None) -> dict:
-        """Mine a log template and return the normalized parser result."""
+    def parse(self, raw_message: str, metadata: dict | None = None) -> ParsedLog:
+        """Mine a log template and return a validated ParsedLog instance."""
         result = self._miner.add_log_message(raw_message)
         template_text = result["template_mined"]
-
         parameters = self._extract_parameters(template_text, raw_message)
-
-        return {
-            "raw_message": raw_message,
-            "template_id": str(result["cluster_id"]),
-            "template_text": template_text,
-            "cluster_size": result["cluster_size"],
-            "change_type": result["change_type"],
-            "parameters": parameters,
-            "metadata": metadata or {},
-            "parsed_at": datetime.now(timezone.utc).isoformat(),
-        }
+        
+        metadata_dict = metadata or {}
+        
+        # Extract timestamp from metadata or use current time
+        timestamp = metadata_dict.get("timestamp")
+        if not isinstance(timestamp, datetime):
+            if isinstance(timestamp, str):
+                try:
+                    timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    timestamp = datetime.now(timezone.utc)
+            else:
+                timestamp = datetime.now(timezone.utc)
+        
+        # Ensure timezone-aware
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        
+        return ParsedLog(
+            timestamp=timestamp,
+            service=metadata_dict.get("service", "unknown"),
+            level=metadata_dict.get("level", "info"),
+            raw_message=raw_message,
+            template_id=str(result["cluster_id"]),
+            template_text=template_text,
+            parameters=parameters,
+            cluster_size=result["cluster_size"],
+            change_type=result["change_type"],
+            source=metadata_dict.get("source"),
+            environment=metadata_dict.get("environment"),
+            correlation_id=metadata_dict.get("correlation_id"),
+            metadata=metadata_dict,
+            parsed_at=datetime.now(timezone.utc),
+        )
 
     def get_stats(self) -> dict:
         """Return lightweight parser state useful for diagnostics."""
