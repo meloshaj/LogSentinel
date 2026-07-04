@@ -1,5 +1,36 @@
 # LogSentinel
+
 LogSentinel is an automated, real-time log anomaly detection and root-cause ranking platform. Engineered to bypass manual threshold tuning and static alerting parameters, it continuously ingests raw log data, groups similar messages into structured templates using lightweight unsupervised machine learning, and flags system deviations dynamically.
+
+## ✨ New: Feature Extraction Module
+
+LogSentinel now includes a **production-ready sliding-window feature extraction module** that extracts statistical and semantic features from parsed log streams for downstream anomaly detection and ML models.
+
+**Key Features:**
+- 🪟 Time-based sliding windows with configurable size and overlap
+- 📊 Statistical features: log counts, error rates, template diversity
+- 🔢 ML-ready feature arrays for scikit-learn integration
+- ⚡ Real-time extraction with async processing
+- 🎯 Type-safe Pydantic models throughout
+- 📡 REST API for monitoring and control
+
+**Quick Start:**
+```bash
+# Start backend with feature extraction enabled (runs automatically)
+cd backend
+python -m uvicorn app.main:app --reload
+
+# Send logs
+python scripts/demo_drain3_e2e.py
+
+# Get extracted features
+curl http://localhost:8000/features/recent
+```
+
+**Documentation:**
+- Quick Start: [`docs/QUICK_START_FEATURES.md`](docs/QUICK_START_FEATURES.md)
+- Full Documentation: [`docs/FEATURE_EXTRACTION.md`](docs/FEATURE_EXTRACTION.md)
+- Implementation Summary: [`FEATURE_EXTRACTION_SUMMARY.md`](FEATURE_EXTRACTION_SUMMARY.md)
 
 ## Docker
 

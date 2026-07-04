@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
+from ..models import ParsedLog
 from ..services.batch_manager import ParsedLogBatchManager
 from ..services.drain_parser import DrainParser
 
@@ -23,11 +25,13 @@ class DrainWorker:
         parser: DrainParser,
         batch_manager: ParsedLogBatchManager | None = None,
         recent_limit: int = 1000,
+        on_log_parsed: Optional[Callable[[ParsedLog], None]] = None,
     ) -> None:
         self.log_buffer = log_buffer
         self.parser = parser
         self.batch_manager = batch_manager or ParsedLogBatchManager()
-        self._recent_parsed_logs: deque[dict[str, Any]] = deque(maxlen=recent_limit)
+        self._recent_parsed_logs: deque[ParsedLog] = deque(maxlen=recent_limit)
+        self._on_log_parsed = on_log_parsed
         self._task: asyncio.Task[None] | None = None
         self._running = False
         self.processed_count = 0
@@ -70,9 +74,9 @@ class DrainWorker:
                 self.error_count += 1
                 logger.exception("Drain worker failed while processing queued item")
 
-    async def process_one(self, item: Any) -> list[dict[str, Any]]:
+    async def process_one(self, item: Any) -> list[ParsedLog]:
         """Process one queued payload or log entry."""
-        parsed_logs: list[dict[str, Any]] = []
+        parsed_logs: list[ParsedLog] = []
         errors_before_extract = self.error_count
 
         extracted_messages = self._extract_log_messages(item)
@@ -85,10 +89,17 @@ class DrainWorker:
                 continue
 
             self._recent_parsed_logs.append(parsed)
-            await self.batch_manager.add(parsed)
+            await self.batch_manager.add(parsed.model_dump(mode="json"))
             self.processed_count += 1
             self.last_processed_at = datetime.now(timezone.utc).isoformat()
             parsed_logs.append(parsed)
+            
+            # Notify subscribers (e.g., feature extraction worker)
+            if self._on_log_parsed:
+                try:
+                    self._on_log_parsed(parsed)
+                except Exception:
+                    logger.exception("Log parsed callback failed")
 
         if not parsed_logs and self.error_count == errors_before_extract:
             self.error_count += 1
@@ -109,9 +120,10 @@ class DrainWorker:
         }
 
     def get_recent_parsed_logs(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Return recent parsed logs, newest first."""
+        """Return recent parsed logs as dicts, newest first."""
         safe_limit = max(0, limit)
-        return list(self._recent_parsed_logs)[-safe_limit:][::-1] if safe_limit else []
+        recent = list(self._recent_parsed_logs)[-safe_limit:][::-1] if safe_limit else []
+        return [log.model_dump(mode="json") for log in recent]
 
     def _queue_size(self) -> int | None:
         queue_size = getattr(self.log_buffer, "queue_size", None)

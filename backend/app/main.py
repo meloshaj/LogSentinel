@@ -10,11 +10,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .ml.feature_extraction import WindowConfig
 from .repositories.db_health import check_database_health
 from .repositories.log_repository import LogRepository
 from .services.batch_manager import ParsedLogBatchManager
 from .services.drain_parser import DrainParser
 from .workers.drain_worker import DrainWorker
+from .workers.feature_worker import FeatureExtractionWorker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -74,7 +76,25 @@ log_buffer = AsyncLogBuffer()
 drain_parser = DrainParser()
 log_repository = LogRepository()
 batch_manager = ParsedLogBatchManager(sink=log_repository.bulk_insert_parsed_logs)
-drain_worker = DrainWorker(log_buffer, drain_parser, batch_manager=batch_manager)
+
+# Feature extraction configuration
+window_config = WindowConfig(
+    window_size_seconds=60,  # 1-minute windows
+    stride_seconds=30,  # 50% overlap
+    min_logs_per_window=5,  # Require at least 5 logs per window
+)
+feature_worker = FeatureExtractionWorker(
+    window_config=window_config,
+    extraction_interval_seconds=10.0,  # Extract features every 10 seconds
+)
+
+# Create Drain worker with callback to feature worker
+drain_worker = DrainWorker(
+    log_buffer,
+    drain_parser,
+    batch_manager=batch_manager,
+    on_log_parsed=feature_worker.add_parsed_log,
+)
 
 
 def get_log_buffer() -> AsyncLogBuffer:
@@ -85,9 +105,11 @@ def get_log_buffer() -> AsyncLogBuffer:
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     drain_worker.start()
+    feature_worker.start()
     try:
         yield
     finally:
+        await feature_worker.stop()
         await drain_worker.stop()
 
 
@@ -164,6 +186,30 @@ async def drain3_flush() -> dict[str, Any]:
 @app.get("/drain3/db-health")
 async def drain3_db_health() -> dict[str, Any]:
     return await check_database_health()
+
+
+@app.get("/features/stats")
+async def feature_stats() -> dict[str, Any]:
+    """Return feature extraction worker statistics."""
+    return feature_worker.get_stats()
+
+
+@app.get("/features/recent")
+async def feature_recent(limit: int = 50) -> dict[str, list[dict[str, Any]]]:
+    """Return recently extracted feature vectors."""
+    return {
+        "features": feature_worker.get_recent_features(limit=limit),
+    }
+
+
+@app.post("/features/extract")
+async def feature_extract() -> dict[str, Any]:
+    """Manually trigger feature extraction from pending windows."""
+    features = await feature_worker.extract_pending_features()
+    return {
+        "features_extracted": len(features),
+        "features": [fv.model_dump(mode="json") for fv in features],
+    }
 
 
 if __name__ == "__main__":
