@@ -3,6 +3,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import FastAPI
@@ -10,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .ml.anomaly_detector import IsolationForestAnomalyDetector
 from .ml.feature_extractor import WindowConfig
 from .repositories.db_health import check_database_health
 from .repositories.log_repository import LogRepository
@@ -77,6 +79,14 @@ drain_parser = DrainParser()
 log_repository = LogRepository()
 batch_manager = ParsedLogBatchManager(sink=log_repository.bulk_insert_parsed_logs)
 
+DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "isolation_forest.pkl"
+
+anomaly_detector: Optional[IsolationForestAnomalyDetector] = None
+if DEFAULT_MODEL_PATH.exists():
+    anomaly_detector = IsolationForestAnomalyDetector.load_model(DEFAULT_MODEL_PATH)
+else:
+    logger.info("No pretrained isolation forest model found at %s; feature worker will run without anomaly predictions until trained", DEFAULT_MODEL_PATH)
+
 # Feature extraction configuration
 window_config = WindowConfig(
     window_size_seconds=60,  # 1-minute windows
@@ -86,6 +96,8 @@ window_config = WindowConfig(
 feature_worker = FeatureExtractionWorker(
     window_config=window_config,
     extraction_interval_seconds=10.0,  # Extract features every 10 seconds
+    anomaly_detector=anomaly_detector,
+    anomaly_model_path=DEFAULT_MODEL_PATH,
 )
 
 # Create Drain worker with callback to feature worker
