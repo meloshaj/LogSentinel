@@ -12,7 +12,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from ..ml.feature_extraction import SlidingWindowExtractor, WindowConfig
+from ..ml.feature_extractor import SlidingWindowFeatureExtractor as SlidingWindowExtractor, WindowConfig
 from ..models import FeatureVector, ParsedLog
 
 logger = logging.getLogger("logsentinel.feature_worker")

@@ -154,6 +154,14 @@ class FeatureVector(BaseModel):
         ...,
         description="Feature vector creation timestamp",
     )
+    window_start: Optional[datetime] = Field(
+        None,
+        description="Inclusive start of the source window",
+    )
+    window_end: Optional[datetime] = Field(
+        None,
+        description="Exclusive end of the source window",
+    )
     
     # Statistical features
     log_count: int = Field(
@@ -209,6 +217,10 @@ class FeatureVector(BaseModel):
     feature_names: Optional[list[str]] = Field(
         None,
         description="Names corresponding to feature_array elements",
+    )
+    features: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional structured feature values for inspection and downstream use",
     )
     
     class Config:

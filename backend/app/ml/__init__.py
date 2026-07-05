@@ -4,9 +4,11 @@ This module contains ML preprocessing, feature extraction, and anomaly detection
 components for log analysis.
 """
 
-from .feature_extraction import SlidingWindowExtractor, WindowConfig
+from .feature_extractor import SlidingWindowFeatureExtractor, WindowConfig
+from .feature_extraction import SlidingWindowExtractor
 
 __all__ = [
+    "SlidingWindowFeatureExtractor",
     "SlidingWindowExtractor",
     "WindowConfig",
 ]
