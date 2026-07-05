@@ -10,8 +10,10 @@ import asyncio
 import logging
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Optional
 
+from ..ml.anomaly_detector import IsolationForestAnomalyDetector
 from ..ml.feature_extractor import SlidingWindowFeatureExtractor as SlidingWindowExtractor, WindowConfig
 from ..models import FeatureVector, ParsedLog
 
@@ -33,6 +35,8 @@ class FeatureExtractionWorker:
         window_config: Optional[WindowConfig] = None,
         extraction_interval_seconds: float = 10.0,
         feature_buffer_size: int = 1000,
+        anomaly_detector: Optional[IsolationForestAnomalyDetector] = None,
+        anomaly_model_path: Optional[str | Path] = None,
     ) -> None:
         """Initialize the feature extraction worker.
         
@@ -45,6 +49,7 @@ class FeatureExtractionWorker:
         self.extraction_interval_seconds = extraction_interval_seconds
         
         self.extractor = SlidingWindowExtractor(self.window_config)
+        self.anomaly_detector = self._resolve_anomaly_detector(anomaly_detector, anomaly_model_path)
         
         # Buffer recent feature vectors for inspection/debugging
         self._feature_buffer: deque[FeatureVector] = deque(maxlen=feature_buffer_size)
@@ -100,7 +105,7 @@ class FeatureExtractionWorker:
                 self._extraction_errors += 1
                 logger.exception("Feature extraction worker encountered an error")
     
-    async def extract_pending_features(self) -> list[FeatureVector]:
+    async def extract_pending_features(self, current_time: Optional[datetime] = None) -> list[FeatureVector]:
         """Generate all pending windows and extract features.
         
         Returns:
@@ -108,7 +113,7 @@ class FeatureExtractionWorker:
         """
         try:
             # Get all windows ready for feature extraction
-            windows = self.extractor.get_pending_windows()
+            windows = self.extractor.get_pending_windows(current_time=current_time)
             
             if not windows:
                 return []
@@ -118,6 +123,8 @@ class FeatureExtractionWorker:
             for window in windows:
                 try:
                     feature_vector = self.extractor.extract_features(window)
+                    if self.anomaly_detector is not None and self.anomaly_detector.model is not None:
+                        feature_vector.anomaly_prediction = self.anomaly_detector.predict(feature_vector)
                     self._feature_buffer.append(feature_vector)
                     features.append(feature_vector)
                     self._features_extracted += 1
@@ -183,3 +190,20 @@ class FeatureExtractionWorker:
             "logs_removed": logs_removed,
             "features_removed": features_removed,
         }
+
+    @staticmethod
+    def _resolve_anomaly_detector(
+        anomaly_detector: Optional[IsolationForestAnomalyDetector],
+        anomaly_model_path: Optional[str | Path],
+    ) -> Optional[IsolationForestAnomalyDetector]:
+        if anomaly_detector is not None:
+            return anomaly_detector
+
+        if anomaly_model_path is None:
+            return None
+
+        model_path = Path(anomaly_model_path)
+        if not model_path.exists():
+            return None
+
+        return IsolationForestAnomalyDetector.load_model(model_path)

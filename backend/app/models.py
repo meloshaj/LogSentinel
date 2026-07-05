@@ -13,6 +13,9 @@ class ParsedLog(BaseModel):
     
     This model ensures type safety and validation for logs that have been
     processed through the Drain3 template mining pipeline.
+
+    The class also exposes dict-style access so the existing parser/worker
+    tests and downstream code can continue using the older contract.
     """
 
     # Core log fields
@@ -89,6 +92,38 @@ class ParsedLog(BaseModel):
             datetime: lambda v: v.isoformat(),
         }
         validate_assignment = True
+
+    def __getitem__(self, item: str) -> Any:
+        """Enable dict-style access for compatibility with existing tests."""
+        return getattr(self, item)
+
+    def __iter__(self):
+        """Allow iteration over the legacy parser field names expected by tests."""
+        return iter(
+            [
+                "raw_message",
+                "template_id",
+                "template_text",
+                "cluster_size",
+                "change_type",
+                "parameters",
+                "metadata",
+                "parsed_at",
+            ]
+        )
+
+    def keys(self) -> list[str]:
+        """Return the legacy parser field names expected by tests."""
+        return [
+            "raw_message",
+            "template_id",
+            "template_text",
+            "cluster_size",
+            "change_type",
+            "parameters",
+            "metadata",
+            "parsed_at",
+        ]
 
 
 class LogWindow(BaseModel):
@@ -217,6 +252,10 @@ class FeatureVector(BaseModel):
     feature_names: Optional[list[str]] = Field(
         None,
         description="Names corresponding to feature_array elements",
+    )
+    anomaly_prediction: Optional[dict[str, Any]] = Field(
+        None,
+        description="Structured anomaly detection output for this feature vector",
     )
     features: dict[str, Any] = Field(
         default_factory=dict,

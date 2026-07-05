@@ -1,0 +1,172 @@
+"""Isolation Forest-based anomaly detection for feature vectors.
+
+This module consumes feature vectors produced by the sliding window extractor
+and produces structured anomaly predictions without coupling the detection
+logic to the feature extraction pipeline.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any, Optional
+
+import joblib
+from sklearn.ensemble import IsolationForest
+
+from ..models import FeatureVector
+
+logger = logging.getLogger("logsentinel.anomaly_detector")
+
+FEATURE_COLUMNS = [
+    "log_count",
+    "info_count",
+    "warning_count",
+    "error_count",
+    "error_ratio",
+    "active_services",
+    "unique_templates",
+    "dominant_service_count",
+    "dominant_template_count",
+    "logs_per_second",
+    "avg_logs_per_minute",
+    "burst_indicator",
+]
+
+
+class IsolationForestAnomalyDetector:
+    """Train and use an IsolationForest model over feature vectors."""
+
+    def __init__(self, random_state: int = 42, contamination: float = 0.1) -> None:
+        self.random_state = random_state
+        self.contamination = contamination
+        self.model: Optional[IsolationForest] = None
+        self.model_version = "isolation_forest_v1"
+
+    def train(self, feature_vectors: list[FeatureVector]) -> IsolationForest:
+        """Train the IsolationForest model on a collection of feature vectors."""
+        if not feature_vectors:
+            raise ValueError("At least one feature vector is required for training")
+
+        matrix = self._to_feature_matrix(feature_vectors)
+        self.model = IsolationForest(
+            n_estimators=100,
+            contamination=self.contamination,
+            random_state=self.random_state,
+            n_jobs=-1,
+        )
+        self.model.fit(matrix)
+        return self.model
+
+    def predict(self, feature_vector: FeatureVector) -> dict[str, Any]:
+        """Return a structured anomaly prediction for a single feature vector."""
+        if self.model is None:
+            raise ValueError("Model must be trained before prediction")
+
+        row = self._to_feature_matrix([feature_vector])
+        score = float(self.model.decision_function(row)[0])
+        is_anomaly = bool(self.model.predict(row)[0] == -1)
+        severity = self._severity_from_score(score, is_anomaly)
+
+        return {
+            "window_id": feature_vector.window_id,
+            "anomaly_score": round(score, 6),
+            "is_anomaly": is_anomaly,
+            "severity": severity,
+            "model_version": self.model_version,
+        }
+
+    def predict_batch(self, feature_vectors: list[FeatureVector]) -> list[dict[str, Any]]:
+        """Return structured predictions for a batch of feature vectors."""
+        if self.model is None:
+            raise ValueError("Model must be trained before prediction")
+
+        matrix = self._to_feature_matrix(feature_vectors)
+        scores = self.model.decision_function(matrix)
+        predictions = self.model.predict(matrix)
+        results: list[dict[str, Any]] = []
+
+        for feature_vector, score, prediction in zip(feature_vectors, scores, predictions):
+            results.append(
+                {
+                    "window_id": feature_vector.window_id,
+                    "anomaly_score": round(float(score), 6),
+                    "is_anomaly": bool(prediction == -1),
+                    "severity": self._severity_from_score(float(score), bool(prediction == -1)),
+                    "model_version": self.model_version,
+                }
+            )
+
+        return results
+
+    def save_model(self, path: str | Path) -> None:
+        """Persist the trained model and metadata to disk."""
+        if self.model is None:
+            raise ValueError("No trained model available to save")
+
+        model_path = Path(path)
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump({"model": self.model, "model_version": self.model_version, "feature_columns": FEATURE_COLUMNS}, model_path)
+
+    @classmethod
+    def load_model(cls, path: str | Path) -> "IsolationForestAnomalyDetector":
+        """Load a previously serialized detector from disk."""
+        model_path = Path(path)
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+
+        payload = joblib.load(model_path)
+        detector = cls()
+        detector.model = payload.get("model")
+        detector.model_version = payload.get("model_version", detector.model_version)
+        return detector
+
+    def _to_feature_matrix(self, feature_vectors: list[FeatureVector]) -> list[list[float]]:
+        """Convert feature vectors into a numerical matrix for the sklearn model."""
+        rows: list[list[float]] = []
+        for vector in feature_vectors:
+            row: list[float] = []
+            for column in FEATURE_COLUMNS:
+                value = self._get_feature_value(vector, column)
+                row.append(float(value))
+            rows.append(row)
+        return rows
+
+    def _get_feature_value(self, feature_vector: FeatureVector, column: str) -> float:
+        """Safely read a feature value from the feature vector payload."""
+        if isinstance(feature_vector.features, dict):
+            value = feature_vector.features.get(column)
+            if value is not None:
+                return float(value)
+
+        if feature_vector.feature_names and feature_vector.feature_array:
+            if column in feature_vector.feature_names:
+                index = feature_vector.feature_names.index(column)
+                return float(feature_vector.feature_array[index])
+
+        fallback_map = {
+            "log_count": getattr(feature_vector, "log_count", 0),
+            "info_count": getattr(feature_vector, "features", {}).get("info_count", 0),
+            "warning_count": getattr(feature_vector, "features", {}).get("warning_count", 0),
+            "error_count": getattr(feature_vector, "error_count", 0),
+            "error_ratio": getattr(feature_vector, "features", {}).get("error_ratio", 0.0),
+            "active_services": getattr(feature_vector, "features", {}).get("active_services", 0.0),
+            "unique_templates": getattr(feature_vector, "unique_templates", 0),
+            "dominant_service_count": getattr(feature_vector, "features", {}).get("dominant_service_count", 0.0),
+            "dominant_template_count": getattr(feature_vector, "features", {}).get("dominant_template_count", 0.0),
+            "logs_per_second": getattr(feature_vector, "logs_per_second", 0.0),
+            "avg_logs_per_minute": getattr(feature_vector, "features", {}).get("avg_logs_per_minute", 0.0),
+            "burst_indicator": getattr(feature_vector, "features", {}).get("burst_indicator", 0.0),
+        }
+        return float(fallback_map.get(column, 0.0))
+
+    @staticmethod
+    def _severity_from_score(score: float, is_anomaly: bool) -> str:
+        """Translate the model score into a simple deterministic severity label."""
+        if not is_anomaly:
+            return "normal"
+        if score <= -0.5:
+            return "high"
+        if score <= -0.2:
+            return "medium"
+        return "low"
