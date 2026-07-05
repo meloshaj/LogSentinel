@@ -10,7 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .ml.feature_extraction import WindowConfig
+from .ml.feature_extractor import WindowConfig
 from .repositories.db_health import check_database_health
 from .repositories.log_repository import LogRepository
 from .services.batch_manager import ParsedLogBatchManager
