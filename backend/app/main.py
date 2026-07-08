@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from .core import dispose_engine, get_database_settings, init_engine
 from .ml.anomaly_detector import IsolationForestAnomalyDetector
 from .ml.feature_extractor import WindowConfig
 from .repositories.db_health import check_database_health
@@ -116,13 +117,19 @@ def get_log_buffer() -> AsyncLogBuffer:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # --- Startup: initialize the database connection pool ---
+    db_settings = get_database_settings()
+    init_engine(db_settings)
+
     drain_worker.start()
     feature_worker.start()
     try:
         yield
     finally:
+        # --- Shutdown: stop workers, then drain the connection pool ---
         await feature_worker.stop()
         await drain_worker.stop()
+        await dispose_engine()
 
 
 app = FastAPI(

@@ -76,6 +76,43 @@ CREATE TABLE IF NOT EXISTS incidents (
 );
 
 -- ---------------------------------------------------------------------------
+-- Feature Windows Table
+-- Stores feature vectors extracted from sliding log windows by the
+-- FeatureExtractionWorker.  Each row represents one window's worth of
+-- computed features and optional anomaly scores.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS feature_windows (
+    id                  BIGSERIAL       PRIMARY KEY,
+    window_id           VARCHAR(128)    NOT NULL UNIQUE,
+    start_time          TIMESTAMPTZ     NOT NULL,
+    end_time            TIMESTAMPTZ     NOT NULL,
+    service             VARCHAR(255)    NULL,
+    log_count           INTEGER         NOT NULL DEFAULT 0,
+    feature_vector      JSONB           NOT NULL DEFAULT '{}'::jsonb,
+    anomaly_prediction  JSONB           NULL,
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
+-- Anomaly Events Table
+-- Individual anomaly detections linked to the feature window that produced
+-- them.  Supports acknowledgement tracking for dashboard workflows.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS anomaly_events (
+    id              BIGSERIAL       PRIMARY KEY,
+    window_id       VARCHAR(128)    NOT NULL
+                        REFERENCES feature_windows(window_id) ON DELETE CASCADE,
+    event_type      VARCHAR(64)     NOT NULL,
+    severity        VARCHAR(32)     NOT NULL,
+    score           FLOAT           NULL,
+    details         JSONB           NULL,
+    acknowledged    BOOLEAN         NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+-- ---------------------------------------------------------------------------
 -- B-Tree Indexes
 -- Optimized for asynchronous lookups by AI/ML background workers.
 -- ---------------------------------------------------------------------------
@@ -99,5 +136,25 @@ CREATE INDEX IF NOT EXISTS idx_logs_created_at
 -- Accelerates open-incident dashboard queries
 CREATE INDEX IF NOT EXISTS idx_incidents_status
     ON incidents (status);
+
+-- Feature window lookups by window identifier
+CREATE INDEX IF NOT EXISTS idx_feature_windows_window_id
+    ON feature_windows (window_id);
+
+-- Time-range scans over feature windows
+CREATE INDEX IF NOT EXISTS idx_feature_windows_start_time
+    ON feature_windows (start_time);
+
+-- Anomaly event lookups by originating window
+CREATE INDEX IF NOT EXISTS idx_anomaly_events_window_id
+    ON anomaly_events (window_id);
+
+-- Anomaly event recency / dashboard queries
+CREATE INDEX IF NOT EXISTS idx_anomaly_events_created_at
+    ON anomaly_events (created_at);
+
+-- Anomaly severity filtering
+CREATE INDEX IF NOT EXISTS idx_anomaly_events_severity
+    ON anomaly_events (severity);
 
 COMMIT;
