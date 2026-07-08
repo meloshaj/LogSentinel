@@ -9,7 +9,7 @@ from sqlalchemy import Column, DateTime, MetaData, Table, Text, insert
 from sqlalchemy.dialects.postgresql import BIGINT, JSONB, VARCHAR
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from ..core.database import async_engine
+from ..core.database import get_engine
 
 metadata = MetaData()
 
@@ -36,8 +36,15 @@ logs_table = Table(
 class LogRepository:
     """Repository for writing parsed logs to PostgreSQL."""
 
-    def __init__(self, engine: AsyncEngine = async_engine) -> None:
-        self.engine = engine
+    def __init__(self, engine: AsyncEngine | None = None) -> None:
+        self._engine = engine
+
+    @property
+    def engine(self) -> AsyncEngine:
+        """Return the injected engine or fall back to the global pool."""
+        if self._engine is not None:
+            return self._engine
+        return get_engine()
 
     async def bulk_insert_parsed_logs(self, parsed_logs: list[dict]) -> int:
         """Insert parsed logs in a single transaction and return row count."""
