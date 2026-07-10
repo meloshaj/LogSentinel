@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -18,6 +18,7 @@ from .repositories.db_health import check_database_health
 from .repositories.log_repository import LogRepository
 from .services.batch_manager import ParsedLogBatchManager
 from .services.drain_parser import DrainParser
+from .services.telemetry import telemetry_event, telemetry_manager
 from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
 from .workers.feature_worker import FeatureExtractionWorker
@@ -139,6 +140,28 @@ app = FastAPI(
     description="Asynchronous ingestion endpoint for multi-service log payloads",
     lifespan=lifespan,
 )
+
+
+@app.websocket("/ws/telemetry")
+async def telemetry_websocket(websocket: WebSocket) -> None:
+    await telemetry_manager.connect(websocket)
+    try:
+        await websocket.send_json(
+            telemetry_event(
+                "system.status",
+                {
+                    "status": "connected",
+                    "message": "LogSentinel telemetry stream active",
+                },
+            )
+        )
+
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await telemetry_manager.disconnect(websocket)
 
 
 @app.exception_handler(RequestValidationError)

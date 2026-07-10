@@ -44,6 +44,46 @@ curl -X POST http://localhost:8000/ingest-log `
 - Full Documentation: [`docs/FEATURE_EXTRACTION.md`](docs/FEATURE_EXTRACTION.md)
 - Implementation Summary: [`FEATURE_EXTRACTION_SUMMARY.md`](FEATURE_EXTRACTION_SUMMARY.md)
 
+## WebSocket Telemetry
+
+The backend exposes a lightweight WebSocket telemetry stream at:
+
+```text
+ws://localhost:8000/ws/telemetry
+```
+
+The React dashboard uses `VITE_WS_URL` when it is set, otherwise it falls back to `ws://localhost:8000/ws/telemetry`.
+
+```powershell
+$env:VITE_WS_URL="ws://localhost:8000/ws/telemetry"
+```
+
+Supported first-version event types:
+
+- `system.status`
+- `log.parsed`
+- `feature.window.closed`
+- `anomaly.detected`, only when an existing anomaly prediction is available and marks the window as anomalous
+
+Manual telemetry smoke test:
+
+```powershell
+# Terminal 1
+cd backend
+$env:INGEST_API_KEY="dev-local-key"
+python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# Terminal 2
+$env:VITE_WS_URL="ws://localhost:8000/ws/telemetry"
+pnpm dev
+
+# Terminal 3, from the repository root
+$env:INGEST_API_KEY="dev-local-key"
+python scripts/demo_drain3_e2e.py
+```
+
+Open the Logs page and verify that `system.status` appears on connection, `log.parsed` appears as logs are parsed, and `feature.window.closed` appears after feature windows close.
+
 ## Docker
 
 Build and run the production container:
