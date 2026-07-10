@@ -12,6 +12,7 @@ from typing import Any, Optional
 from ..models import ParsedLog
 from ..services.batch_manager import ParsedLogBatchManager
 from ..services.drain_parser import DrainParser
+from ..services.telemetry import telemetry_event, telemetry_manager
 
 logger = logging.getLogger("logsentinel.drain_worker")
 
@@ -93,6 +94,7 @@ class DrainWorker:
             self.processed_count += 1
             self.last_processed_at = datetime.now(timezone.utc).isoformat()
             parsed_logs.append(parsed)
+            self._schedule_log_parsed_event(parsed)
             
             # Notify subscribers (e.g., feature extraction worker)
             if self._on_log_parsed:
@@ -206,3 +208,22 @@ class DrainWorker:
     def _record_unsupported(self, item: Any) -> None:
         self.error_count += 1
         logger.warning("Drain worker found unsupported log entry shape: %r", item)
+
+    def _schedule_log_parsed_event(self, parsed: ParsedLog) -> None:
+        event = telemetry_event(
+            "log.parsed",
+            {
+                "source": parsed.source,
+                "environment": parsed.environment,
+                "service": parsed.service,
+                "level": parsed.level,
+                "template_id": parsed.template_id,
+                "template": parsed.template_text,
+                "correlation_id": parsed.correlation_id,
+            },
+        )
+
+        try:
+            asyncio.create_task(telemetry_manager.broadcast(event))
+        except RuntimeError:
+            logger.debug("No running event loop available for log.parsed telemetry broadcast")

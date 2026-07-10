@@ -16,6 +16,7 @@ from typing import Any, Optional
 from ..ml.anomaly_detector import IsolationForestAnomalyDetector
 from ..ml.feature_extractor import SlidingWindowFeatureExtractor as SlidingWindowExtractor, WindowConfig
 from ..models import FeatureVector, ParsedLog
+from ..services.telemetry import telemetry_event, telemetry_manager
 
 logger = logging.getLogger("logsentinel.feature_worker")
 
@@ -128,6 +129,7 @@ class FeatureExtractionWorker:
                     self._feature_buffer.append(feature_vector)
                     features.append(feature_vector)
                     self._features_extracted += 1
+                    self._schedule_feature_events(feature_vector)
                 except Exception:
                     self._extraction_errors += 1
                     logger.exception(
@@ -207,3 +209,48 @@ class FeatureExtractionWorker:
             return None
 
         return IsolationForestAnomalyDetector.load_model(model_path)
+
+    def _schedule_feature_events(self, feature_vector: FeatureVector) -> None:
+        self._schedule_telemetry_event(
+            telemetry_event(
+                "feature.window.closed",
+                {
+                    "window_id": feature_vector.window_id,
+                    "window_start": _serialize_datetime(feature_vector.window_start),
+                    "window_end": _serialize_datetime(feature_vector.window_end),
+                    "total_log_count": feature_vector.log_count,
+                    "error_count": feature_vector.error_count,
+                    "warning_count": feature_vector.warning_count,
+                    "error_ratio": feature_vector.features.get("error_ratio"),
+                    "active_services": feature_vector.features.get("active_services"),
+                    "unique_templates": feature_vector.unique_templates,
+                    "burst_indicator": feature_vector.features.get("burst_indicator"),
+                },
+            )
+        )
+
+        prediction = feature_vector.anomaly_prediction
+        if isinstance(prediction, dict) and prediction.get("is_anomaly") is True:
+            self._schedule_telemetry_event(
+                telemetry_event(
+                    "anomaly.detected",
+                    {
+                        "window_id": feature_vector.window_id,
+                        "anomaly_score": prediction.get("anomaly_score"),
+                        "severity": prediction.get("severity"),
+                        "model_version": prediction.get("model_version"),
+                    },
+                )
+            )
+
+    def _schedule_telemetry_event(self, event: dict[str, Any]) -> None:
+        try:
+            asyncio.create_task(telemetry_manager.broadcast(event))
+        except RuntimeError:
+            logger.debug("No running event loop available for feature telemetry broadcast")
+
+
+def _serialize_datetime(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
