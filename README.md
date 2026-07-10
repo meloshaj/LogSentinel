@@ -84,6 +84,8 @@ python scripts/demo_drain3_e2e.py
 
 Open the Logs page and verify that `system.status` appears on connection, `log.parsed` appears as logs are parsed, and `feature.window.closed` appears after feature windows close.
 
+For a fuller presentation flow using synthetic logs through the real backend pipeline, see [`docs/DEMO_LIVE_PIPELINE.md`](docs/DEMO_LIVE_PIPELINE.md).
+
 ## Docker
 
 Build and run the production container:
