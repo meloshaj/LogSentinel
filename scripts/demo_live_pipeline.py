@@ -144,18 +144,60 @@ def trigger_feature_extraction(base_url: str) -> None:
 
 def print_verification_summary(base_url: str) -> None:
     recent_logs = _safe_get(base_url, "/drain3/recent?limit=100", "recent parsed logs")
-    recent_features = _safe_get(base_url, "/features/recent?limit=20", "recent feature windows")
+    recent_features = _safe_get(base_url, "/features/recent?limit=20", "recent feature vectors")
 
     parsed_logs = recent_logs.get("logs", []) if isinstance(recent_logs, dict) else []
-    features = recent_features.get("features", []) if isinstance(recent_features, dict) else []
+    features = extract_feature_vectors(recent_features)
     services = sorted({log.get("service") for log in parsed_logs if log.get("service")})
     error_count = sum(1 for log in parsed_logs if str(log.get("level", "")).upper() == "ERROR")
 
     print("\nVerification summary")
     print(f"recent parsed logs count: {len(parsed_logs)}")
-    print(f"recent feature windows count: {len(features)}")
+    print(f"recent feature vectors count: {len(features)}")
     print(f"services observed: {', '.join(services) if services else 'none'}")
     print(f"error count: {error_count}")
+    if features:
+        print(format_feature_summary(features[0]))
+
+
+def extract_feature_vectors(response: Any) -> list[dict[str, Any]]:
+    """Extract feature vectors from known /features/recent response shapes."""
+    if isinstance(response, list):
+        return [item for item in response if isinstance(item, dict)]
+
+    if not isinstance(response, dict):
+        return []
+
+    for key in ("features", "recent_features", "items", "data"):
+        value = response.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+
+    return []
+
+
+def format_feature_summary(feature: dict[str, Any]) -> str:
+    nested_features = feature.get("features")
+    if not isinstance(nested_features, dict):
+        nested_features = {}
+
+    service_distribution = feature.get("service_distribution")
+    services = sorted(service_distribution) if isinstance(service_distribution, dict) else []
+    anomaly_prediction = feature.get("anomaly_prediction") or "none"
+    error_ratio = nested_features.get("error_ratio", feature.get("error_ratio"))
+    unique_templates = feature.get("unique_templates", nested_features.get("unique_templates"))
+
+    return (
+        "latest feature vector: "
+        f"window_id={feature.get('window_id')} "
+        f"log_count={feature.get('log_count')} "
+        f"error_count={feature.get('error_count')} "
+        f"warning_count={feature.get('warning_count')} "
+        f"error_ratio={error_ratio} "
+        f"unique_templates={unique_templates} "
+        f"services={', '.join(services) if services else 'none'} "
+        f"anomaly_prediction={anomaly_prediction}"
+    )
 
 
 def main() -> None:
