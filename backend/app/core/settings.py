@@ -1,9 +1,8 @@
-"""Centralized database configuration for LogSentinel.
+"""Centralized configuration for LogSentinel.
 
-All PostgreSQL-related settings are consolidated into a single validated
-``DatabaseSettings`` model.  Environment variable names are kept identical
-to the ones already used by ``docker-compose.yml`` and the previous
-``database.py`` module so the migration is transparent.
+PostgreSQL-related settings are consolidated into a validated
+``DatabaseSettings`` model.  Ingestion security settings stay environment
+backed and stateless for machine-to-machine log ingestion.
 """
 
 from __future__ import annotations
@@ -111,3 +110,32 @@ def get_database_settings() -> DatabaseSettings:
         echo_sql=os.getenv("SQL_ECHO", "false").lower() == "true",
         database_url_override=os.getenv("DATABASE_URL"),
     )
+
+
+class IngestionSecuritySettings(BaseModel):
+    """Stateless API-key configuration for the ingestion endpoint."""
+
+    api_keys: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Configured ingestion API keys from INGEST_API_KEY and INGEST_API_KEYS",
+    )
+
+    @property
+    def configured(self) -> bool:
+        """Return whether at least one ingestion API key is configured."""
+        return bool(self.api_keys)
+
+
+def _split_api_keys(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [key.strip() for key in value.split(",") if key.strip()]
+
+
+def get_ingestion_security_settings() -> IngestionSecuritySettings:
+    """Construct ingestion security settings from the current environment."""
+    keys: list[str] = []
+    keys.extend(_split_api_keys(os.getenv("INGEST_API_KEY")))
+    keys.extend(_split_api_keys(os.getenv("INGEST_API_KEYS")))
+
+    return IngestionSecuritySettings(api_keys=tuple(dict.fromkeys(keys)))

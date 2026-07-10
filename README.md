@@ -15,16 +15,28 @@ LogSentinel now includes a **production-ready sliding-window feature extraction 
 - 📡 REST API for monitoring and control
 
 **Quick Start:**
-```bash
+```powershell
 # Start backend with feature extraction enabled (runs automatically)
 cd backend
 python -m uvicorn app.main:app --reload
 
-# Send logs
+# In a second terminal from the repository root, set a local ingestion key and send logs
+$env:INGEST_API_KEY="dev-local-key"
 python scripts/demo_drain3_e2e.py
 
 # Get extracted features
 curl http://localhost:8000/features/recent
+```
+
+`POST /ingest-log` requires an `X-API-Key` header. Configure local development with `INGEST_API_KEY` or comma-separated `INGEST_API_KEYS`; do not commit real keys to source control.
+
+```powershell
+$env:INGEST_API_KEY="dev-local-key"
+
+curl -X POST http://localhost:8000/ingest-log `
+  -H "Content-Type: application/json" `
+  -H "X-API-Key: dev-local-key" `
+  -d '{"source":"test","logs":[{"service_name":"test","message":"test"}]}'
 ```
 
 **Documentation:**
@@ -43,6 +55,7 @@ docker compose up --build
 The app will be available at `http://localhost:8080`.
 
 Build the image directly:
+
 
 ```bash
 docker build -t logsentinel-dashboard .
@@ -63,6 +76,7 @@ Run the backend API locally:
 
 ```powershell
 cd backend
+$env:INGEST_API_KEY="dev-local-key"
 python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -70,6 +84,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 In a second PowerShell window, run the end-to-end demo from the repository root:
 
 ```powershell
+$env:INGEST_API_KEY="dev-local-key"
 python scripts/demo_drain3_e2e.py
 ```
 
@@ -110,6 +125,7 @@ Run the backend:
 
 ```powershell
 cd backend
+$env:INGEST_API_KEY="dev-local-key"
 python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -118,6 +134,7 @@ In a second PowerShell window from the repository root, use the same `DATABASE_U
 
 ```powershell
 $env:DATABASE_URL="postgresql+asyncpg://logsentinel:logsentinel@127.0.0.1:5432/logsentinel_db"
+$env:INGEST_API_KEY="dev-local-key"
 python scripts/demo_drain3_e2e.py
 python scripts/verify_drain3_db.py
 python scripts/smoke_insert_drain3_db.py

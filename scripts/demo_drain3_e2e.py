@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
@@ -12,12 +13,25 @@ from typing import Any
 BASE_URL = "http://localhost:8000"
 
 
+def get_ingest_api_key() -> str:
+    api_key = os.getenv("INGEST_API_KEY", "").strip()
+    if not api_key:
+        raise SystemExit(
+            "INGEST_API_KEY is required for the ingestion demo. "
+            'Set it in PowerShell with: $env:INGEST_API_KEY="dev-local-key"'
+        )
+    return api_key
+
+
 def post_json(path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     data = json.dumps(payload or {}).encode("utf-8")
     request = urllib.request.Request(
         f"{BASE_URL}{path}",
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "X-API-Key": get_ingest_api_key(),
+        },
         method="POST",
     )
     return send(request)
