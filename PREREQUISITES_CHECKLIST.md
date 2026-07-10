@@ -15,14 +15,19 @@ Last validated: July 4, 2026
 - [x] `AsyncLogBuffer` queue with 10,000 item capacity
 - [x] Non-blocking ingestion (HTTP 202 response)
 - [x] Pydantic validation (`IngestPayload`, `LogEntry`)
+- [x] Stateless `X-API-Key` guard configured by `INGEST_API_KEY` or `INGEST_API_KEYS`
 
 **Verification:**
-```bash
-curl -X POST http://localhost:8000/ingest-log \
-  -H "Content-Type: application/json" \
+```powershell
+$env:INGEST_API_KEY="dev-local-key"
+curl -X POST http://localhost:8000/ingest-log `
+  -H "Content-Type: application/json" `
+  -H "X-API-Key: dev-local-key" `
   -d '{"source":"test","logs":[{"service_name":"test","message":"test"}]}'
 # Expected: 202 Accepted
 ```
+
+Use local development keys only. Do not commit real ingestion API keys to source control.
 
 ### ✅ Log Storage
 - [x] PostgreSQL database with `logs` table
@@ -240,7 +245,7 @@ ls docs/
 
 ### ✅ Complete Data Flow
 ```
-1. POST /ingest-log
+1. POST /ingest-log with X-API-Key
 2. AsyncLogBuffer (queue)
 3. DrainWorker.process_one()
 4. DrainParser.parse() → ParsedLog
@@ -257,6 +262,7 @@ ls docs/
 cd backend && uvicorn app.main:app --reload &
 
 # 2. Send logs
+$env:INGEST_API_KEY="dev-local-key"
 python scripts/demo_drain3_e2e.py
 
 # 3. Wait 15 seconds
@@ -329,6 +335,7 @@ python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 curl http://localhost:8000/features/stats
 
 # 5. Send sample logs
+$env:INGEST_API_KEY="dev-local-key"
 python scripts/demo_drain3_e2e.py
 
 # 6. Wait and check features

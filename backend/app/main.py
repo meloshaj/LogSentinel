@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -18,6 +18,7 @@ from .repositories.db_health import check_database_health
 from .repositories.log_repository import LogRepository
 from .services.batch_manager import ParsedLogBatchManager
 from .services.drain_parser import DrainParser
+from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
 from .workers.feature_worker import FeatureExtractionWorker
 
@@ -145,7 +146,7 @@ async def validation_exception_handler(_: object, exc: RequestValidationError) -
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
-@app.post("/ingest-log", status_code=202)
+@app.post("/ingest-log", status_code=202, dependencies=[Depends(require_ingestion_api_key)])
 async def ingest_log(payload: IngestPayload) -> JSONResponse:
     """Accept log payloads asynchronously and enqueue them for later processing."""
     normalized_payload = payload.model_dump(mode="json")

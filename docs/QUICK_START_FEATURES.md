@@ -19,6 +19,14 @@ python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+For local ingestion, configure an API key before starting the backend:
+
+```powershell
+$env:INGEST_API_KEY="dev-local-key"
+```
+
+Use a local value only. Do not commit real API keys to source control. For simple key rotation, set comma-separated `INGEST_API_KEYS`.
+
 You should see:
 ```
 INFO:logsentinel.feature_worker:FeatureExtractionWorker initialized: interval=10s window=60s stride=30s
@@ -57,8 +65,9 @@ Expected response:
 
 Use the demo script to send logs:
 
-```bash
+```powershell
 # From the repository root
+$env:INGEST_API_KEY="dev-local-key"
 python scripts/demo_drain3_e2e.py
 ```
 
@@ -67,6 +76,7 @@ Or send logs manually:
 ```bash
 curl -X POST http://localhost:8000/ingest-log \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: dev-local-key" \
   -d '{
     "source": "test",
     "environment": "local",
