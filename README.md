@@ -7,6 +7,7 @@ LogSentinel is an automated, real-time log anomaly detection and root-cause rank
 LogSentinel now includes a **production-ready sliding-window feature extraction module** that extracts statistical and semantic features from parsed log streams for downstream anomaly detection and ML models.
 
 **Key Features:**
+
 - 🪟 Time-based sliding windows with configurable size and overlap
 - 📊 Statistical features: log counts, error rates, template diversity
 - 🔢 ML-ready feature arrays for scikit-learn integration
@@ -15,6 +16,7 @@ LogSentinel now includes a **production-ready sliding-window feature extraction 
 - 📡 REST API for monitoring and control
 
 **Quick Start:**
+
 ```powershell
 # Start backend with feature extraction enabled (runs automatically)
 cd backend
@@ -40,6 +42,7 @@ curl -X POST http://localhost:8000/ingest-log `
 ```
 
 **Documentation:**
+
 - Quick Start: [`docs/QUICK_START_FEATURES.md`](docs/QUICK_START_FEATURES.md)
 - Full Documentation: [`docs/FEATURE_EXTRACTION.md`](docs/FEATURE_EXTRACTION.md)
 - Implementation Summary: [`FEATURE_EXTRACTION_SUMMARY.md`](FEATURE_EXTRACTION_SUMMARY.md)
@@ -101,7 +104,6 @@ The app will be available at `http://localhost:8080`.
 Live logs are pulled from a backend WebSocket endpoint. Set `VITE_WS_URL` before starting the frontend if your server is not reachable at the default same-origin `/ws/logs` path.
 
 Build the image directly:
-
 
 ```bash
 docker build -t logsentinel-dashboard .
