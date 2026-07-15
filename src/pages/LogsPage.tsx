@@ -1,4 +1,5 @@
 import { LogStream } from "../components/logs/LogStream";
+import { LiveTelemetryStatus } from "../components/logs/LiveTelemetryStatus";
 import { mockLogs } from "../services/mockMonitoringData";
 import { Download, Search, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
@@ -105,6 +106,9 @@ export function LogsPage() {
       </div>
 
       {/* Live stream */}
+      <LiveTelemetryStatus />
+
+      {/* Mock live stream */}
       <div style={{ height: 400 }}>
         <LogStream />
       </div>

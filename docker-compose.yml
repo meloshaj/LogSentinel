@@ -1,4 +1,24 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: logsentinel_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-logsentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logsentinel_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-logsentinel_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - logsentinel_pgdata:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logsentinel} -d ${POSTGRES_DB:-logsentinel_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
   logsentinel:
     build:
       context: .
@@ -6,4 +26,11 @@ services:
     image: logsentinel-dashboard:local
     ports:
       - "8080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  logsentinel_pgdata:
+    driver: local

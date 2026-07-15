@@ -16,6 +16,9 @@
   --app-text-subtle: #484f58;
   --app-link: #388bfd;
   --app-link-hover: #79c0ff;
+  --app-link-soft-bg: rgba(31, 111, 235, 0.2);
+  --app-link-soft-bg-hover: rgba(31, 111, 235, 0.3);
+  --app-link-soft-border: rgba(31, 111, 235, 0.3);
   --app-code-bg: #0d1117;
   --app-shadow: rgba(1, 4, 9, 0.45);
   --background: #ffffff;
@@ -72,6 +75,9 @@
   --app-text-subtle: #484f58;
   --app-link: #388bfd;
   --app-link-hover: #79c0ff;
+  --app-link-soft-bg: rgba(31, 111, 235, 0.2);
+  --app-link-soft-bg-hover: rgba(31, 111, 235, 0.3);
+  --app-link-soft-border: rgba(31, 111, 235, 0.3);
   --app-code-bg: #0d1117;
   --app-shadow: rgba(1, 4, 9, 0.45);
   --background: oklch(0.145 0 0);
@@ -113,19 +119,21 @@
 .light {
   --app-bg: #edf2f7;
   --app-surface: #ffffff;
-  --app-surface-alt: #f8fafc;
-  --app-surface-strong: #e2e8f0;
-  --app-surface-soft: rgba(226, 232, 240, 0.9);
-  --app-surface-hover: rgba(203, 213, 225, 0.55);
-  --app-border: #cbd5e1;
-  --app-border-muted: rgba(203, 213, 225, 0.75);
-  --app-text: #111827;
-  --app-text-soft: #1f2937;
-  --app-text-muted: #374151;
-  --app-text-subtle: #64748b;
-  --app-link: #075985;
-  --app-link-hover: #0c4a6e;
-  --app-code-bg: #f8fafc;
+  --app-surface-strong: #eaeef2;
+  --app-surface-soft: rgba(234, 238, 242, 0.85);
+  --app-surface-hover: rgba(208, 215, 222, 0.45);
+  --app-border: #d0d7de;
+  --app-border-muted: rgba(208, 215, 222, 0.65);
+  --app-text: #24292f;
+  --app-text-soft: #32383f;
+  --app-text-muted: #57606a;
+  --app-text-subtle: #6e7781;
+  --app-link: #0969da;
+  --app-link-hover: #0550ae;
+  --app-link-soft-bg: rgba(9, 105, 218, 0.12);
+  --app-link-soft-bg-hover: rgba(9, 105, 218, 0.18);
+  --app-link-soft-border: rgba(9, 105, 218, 0.24);
+  --app-code-bg: #f6f8fa;
   --app-shadow: rgba(31, 35, 40, 0.08);
   color-scheme: light;
 }
@@ -195,6 +203,14 @@ body,
   background-color: var(--app-surface-strong);
 }
 
+[class~="bg-[#1f6feb]/20"] {
+  background-color: var(--app-link-soft-bg);
+}
+
+[class~="hover:bg-[#1f6feb]/30"]:hover {
+  background-color: var(--app-link-soft-bg-hover);
+}
+
 .border-\[\#21262d\],
 .border-b-\[\#21262d\],
 .border-r-\[\#21262d\],
@@ -212,6 +228,14 @@ body,
 
 [class~="divide-[#21262d]/50"] > :not([hidden]) ~ :not([hidden]) {
   border-color: var(--app-border-muted);
+}
+
+[class~="border-[#1f6feb]/30"] {
+  border-color: var(--app-link-soft-border);
+}
+
+[class~="hover:border-[#484f58]"]:hover {
+  border-color: var(--app-text-subtle);
 }
 
 .text-\[\#e6edf3\],
@@ -279,9 +303,9 @@ body,
   color: var(--app-link-hover);
 }
 
-.light .hover\:text-\[\#79c0ff\]:hover,
-.light [class~="hover:text-[#79c0ff]"]:hover {
-  color: #0c4a6e;
+.hover\:text-\[\#7d8590\]:hover,
+[class~="hover:text-[#7d8590]"]:hover {
+  color: var(--app-text-muted);
 }
 
 .placeholder\:text-\[\#484f58\]::placeholder,
