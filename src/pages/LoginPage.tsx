@@ -7,6 +7,7 @@ import {
   Lock,
   ArrowRight,
   Check,
+  AlertCircle,
 } from "lucide-react";
 import { motion } from "motion/react";
 import {
@@ -41,17 +42,36 @@ export function LoginPage() {
     setErrors(errs);
     if (Object.keys(errs).length) return;
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 1300));
-    setLoading(false);
-    setSuccess(true);
-    
-    // Set logged in flag
-    localStorage.setItem("isLoggedIn", "true");
+    try {
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      const response = await fetch(`${apiBase}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
 
-    // Redirect to dashboard after a short delay showing the success state
-    setTimeout(() => {
-      navigate("/");
-    }, 1000);
+      const data = await response.json();
+      if (!response.ok) {
+        setErrors({ submit: data.detail || "Authentication failed" });
+        setLoading(false);
+        return;
+      }
+
+      setLoading(false);
+      setSuccess(true);
+
+      // Set logged in flag
+      localStorage.setItem("isLoggedIn", "true");
+      localStorage.setItem("authToken", data.access_token);
+
+      // Redirect to dashboard after a short delay showing the success state
+      setTimeout(() => {
+        navigate("/");
+      }, 1000);
+    } catch (err) {
+      setErrors({ submit: "Unable to connect to authentication server" });
+      setLoading(false);
+    }
   };
 
   const handleSSO = () => {
@@ -85,6 +105,13 @@ export function LoginPage() {
                 Sign in to your workspace to continue
               </p>
             </div>
+
+            {errors.submit && (
+              <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-xs flex items-center gap-2 select-none text-left">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{errors.submit}</span>
+              </div>
+            )}
 
             {success ? (
               <SuccessState
