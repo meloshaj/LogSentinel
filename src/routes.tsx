@@ -1,7 +1,24 @@
 import { createBrowserRouter } from "react-router";
 import { RootLayout } from "./layouts/RootLayout";
+import { AuthLayout } from "./layouts/AuthLayout";
 
 export const router = createBrowserRouter([
+  // ── Auth routes (no sidebar) ──────────────────────────────────
+  {
+    path: "/",
+    Component: AuthLayout,
+    children: [
+      {
+        path: "login",
+        lazy: async () => ({ Component: (await import("./pages/LoginPage")).LoginPage }),
+      },
+      {
+        path: "register",
+        lazy: async () => ({ Component: (await import("./pages/RegisterPage")).RegisterPage }),
+      },
+    ],
+  },
+  // ── Dashboard routes (with sidebar) ──────────────────────────
   {
     path: "/",
     Component: RootLayout,
