@@ -58,6 +58,9 @@ export function RegisterPage() {
     setLoading(false);
     setSuccess(true);
     
+    // Set logged in flag
+    localStorage.setItem("isLoggedIn", "true");
+
     // Redirect to dashboard after a short delay showing the success state
     setTimeout(() => {
       navigate("/");
@@ -65,7 +68,8 @@ export function RegisterPage() {
   };
 
   const handleSSO = () => {
-    // SSO redirects directly to dashboard without auth for MVP
+    // Set logged in flag and redirect
+    localStorage.setItem("isLoggedIn", "true");
     navigate("/");
   };
 
