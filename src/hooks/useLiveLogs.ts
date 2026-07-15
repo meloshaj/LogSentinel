@@ -4,8 +4,8 @@ import type { LogEntry, LogLevel } from "../types/monitoring";
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
 
-const SOCKET_PATH = "/ws/logs";
-const BACKUP_SOCKET_URL = "ws://localhost:8081/ws/logs";
+const SOCKET_PATH = "/ws/telemetry";
+const BACKUP_SOCKET_URL = "ws://localhost:8000/ws/telemetry";
 const MAX_VISIBLE_LOGS = 80;
 const NEW_LOG_HIGHLIGHT_MS = 2000;
 const RECONNECT_DELAY_MS = 3000;
@@ -88,6 +88,11 @@ function normalizeLogEntry(payload: unknown): LogEntry | null {
   };
 }
 
+/**
+ * Unwrap a telemetry event envelope and convert `log.parsed` payloads into
+ * displayable LogEntry objects. Non-log events (feature windows, system
+ * status, anomaly detections) are silently filtered out.
+ */
 function extractLogEntries(eventData: string | ArrayBuffer | Blob): Promise<LogEntry[]> {
   if (typeof eventData === "string") {
     const trimmed = eventData.trim();
@@ -95,33 +100,70 @@ function extractLogEntries(eventData: string | ArrayBuffer | Blob): Promise<LogE
       return Promise.resolve([]);
     }
 
-    const parseCandidate = (value: unknown) => {
-      if (Array.isArray(value)) {
-        return value.map(normalizeLogEntry).filter((entry): entry is LogEntry => Boolean(entry));
-      }
+    const parseTelemetryEnvelope = (value: unknown): LogEntry[] => {
+      if (!value || typeof value !== "object") return [];
 
-      const normalized = normalizeLogEntry(value);
-      return normalized ? [normalized] : [];
+      const envelope = value as Record<string, unknown>;
+
+      // Only process log.parsed telemetry events
+      if (envelope.type !== "log.parsed" || !envelope.payload) return [];
+
+      const payload = envelope.payload as Record<string, unknown>;
+      const message =
+        typeof payload.template === "string" && payload.template
+          ? payload.template
+          : typeof payload.message === "string" && payload.message
+            ? payload.message
+            : `[template ${payload.template_id ?? "unknown"}]`;
+
+      const levelRaw = typeof payload.level === "string" ? payload.level.toUpperCase() : "INFO";
+
+      return [
+        {
+          id: `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          timestamp:
+            typeof envelope.timestamp === "string"
+              ? new Date(envelope.timestamp).toTimeString().slice(0, 8) +
+                "." +
+                String(new Date(envelope.timestamp as string).getMilliseconds()).padStart(3, "0")
+              : getTimestamp(),
+          level: normalizeLevel(levelRaw),
+          service:
+            typeof payload.service === "string" && payload.service
+              ? payload.service
+              : "backend",
+          message,
+        },
+      ];
     };
 
     try {
       const parsed = JSON.parse(trimmed) as unknown;
-      return Promise.resolve(parseCandidate(parsed));
+
+      // Handle arrays of telemetry events
+      if (Array.isArray(parsed)) {
+        return Promise.resolve(parsed.flatMap(parseTelemetryEnvelope));
+      }
+
+      return Promise.resolve(parseTelemetryEnvelope(parsed));
     } catch {
+      // Fallback: try parsing individual lines
       const lines = trimmed.split(/\r?\n/).filter(Boolean);
       if (lines.length > 1) {
         return Promise.resolve(
           lines.flatMap((line) => {
             try {
-              return parseCandidate(JSON.parse(line) as unknown);
+              return parseTelemetryEnvelope(JSON.parse(line) as unknown);
             } catch {
-              return parseCandidate(line);
+              const normalized = normalizeLogEntry(line);
+              return normalized ? [normalized] : [];
             }
           }),
         );
       }
 
-      return Promise.resolve(parseCandidate(trimmed));
+      const normalized = normalizeLogEntry(trimmed);
+      return Promise.resolve(normalized ? [normalized] : []);
     }
   }
 

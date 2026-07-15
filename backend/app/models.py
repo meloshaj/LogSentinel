@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ParsedLog(BaseModel):
@@ -86,12 +86,7 @@ class ParsedLog(BaseModel):
         description="Timestamp when Drain3 parsing completed",
     )
     
-    class Config:
-        """Pydantic configuration."""
-        json_encoders = {
-            datetime: lambda v: v.isoformat(),
-        }
-        validate_assignment = True
+    model_config = ConfigDict(validate_assignment=True)
 
     def __getitem__(self, item: str) -> Any:
         """Enable dict-style access for compatibility with existing tests."""
@@ -168,11 +163,7 @@ class LogWindow(BaseModel):
             distribution[log.template_id] = distribution.get(log.template_id, 0) + 1
         return distribution
     
-    class Config:
-        """Pydantic configuration."""
-        json_encoders = {
-            datetime: lambda v: v.isoformat(),
-        }
+    model_config = ConfigDict()
 
 
 class FeatureVector(BaseModel):
@@ -262,8 +253,4 @@ class FeatureVector(BaseModel):
         description="Additional structured feature values for inspection and downstream use",
     )
     
-    class Config:
-        """Pydantic configuration."""
-        json_encoders = {
-            datetime: lambda v: v.isoformat(),
-        }
+    model_config = ConfigDict()

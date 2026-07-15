@@ -16,6 +16,7 @@ from typing import Any, Optional
 from ..ml.anomaly_detector import IsolationForestAnomalyDetector
 from ..ml.feature_extractor import SlidingWindowFeatureExtractor as SlidingWindowExtractor, WindowConfig
 from ..models import FeatureVector, ParsedLog
+from ..repositories.feature_repository import FeatureRepository
 from ..services.telemetry import telemetry_event, telemetry_manager
 
 logger = logging.getLogger("logsentinel.feature_worker")
@@ -38,6 +39,7 @@ class FeatureExtractionWorker:
         feature_buffer_size: int = 1000,
         anomaly_detector: Optional[IsolationForestAnomalyDetector] = None,
         anomaly_model_path: Optional[str | Path] = None,
+        feature_repository: Optional[FeatureRepository] = None,
     ) -> None:
         """Initialize the feature extraction worker.
         
@@ -51,6 +53,7 @@ class FeatureExtractionWorker:
         
         self.extractor = SlidingWindowExtractor(self.window_config)
         self.anomaly_detector = self._resolve_anomaly_detector(anomaly_detector, anomaly_model_path)
+        self._feature_repository = feature_repository
         
         # Buffer recent feature vectors for inspection/debugging
         self._feature_buffer: deque[FeatureVector] = deque(maxlen=feature_buffer_size)
@@ -130,6 +133,7 @@ class FeatureExtractionWorker:
                     features.append(feature_vector)
                     self._features_extracted += 1
                     self._schedule_feature_events(feature_vector)
+                    self._schedule_persist(feature_vector)
                 except Exception:
                     self._extraction_errors += 1
                     logger.exception(
@@ -248,6 +252,15 @@ class FeatureExtractionWorker:
             asyncio.create_task(telemetry_manager.broadcast(event))
         except RuntimeError:
             logger.debug("No running event loop available for feature telemetry broadcast")
+
+    def _schedule_persist(self, feature_vector: FeatureVector) -> None:
+        """Persist the feature vector to the database if a repository is configured."""
+        if self._feature_repository is None:
+            return
+        try:
+            asyncio.create_task(self._feature_repository.persist_feature_vector(feature_vector))
+        except RuntimeError:
+            logger.debug("No running event loop available for feature persistence")
 
 
 def _serialize_datetime(value: Any) -> str | None:
