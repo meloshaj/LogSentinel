@@ -138,11 +138,21 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(
     title="LogSentinel Ingestion Gateway",
     version="0.1.0",
     description="Asynchronous ingestion endpoint for multi-service log payloads",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(auth_router)
