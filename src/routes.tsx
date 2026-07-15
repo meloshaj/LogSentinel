@@ -2,9 +2,41 @@ import { createBrowserRouter, Navigate, Outlet } from "react-router";
 import { RootLayout } from "./layouts/RootLayout";
 import { AuthLayout } from "./layouts/AuthLayout";
 
+function decodeJwt(token: string): any {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      window.atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+}
+
+function isTokenValid(token: string | null): boolean {
+  if (!token) return false;
+  const payload = decodeJwt(token);
+  if (!payload || !payload.exp) return false;
+  const now = Math.floor(Date.now() / 1000);
+  return payload.exp > now;
+}
+
 function ProtectedRoute() {
-  const isLoggedIn = localStorage.getItem("isLoggedIn") === "true";
-  return isLoggedIn ? <Outlet /> : <Navigate to="/login" replace />;
+  const token = localStorage.getItem("authToken");
+  const isValid = isTokenValid(token);
+
+  if (!isValid) {
+    localStorage.removeItem("isLoggedIn");
+    localStorage.removeItem("authToken");
+    return <Navigate to="/login" replace />;
+  }
+
+  return <Outlet />;
 }
 
 export const router = createBrowserRouter([
