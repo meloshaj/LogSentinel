@@ -23,6 +23,7 @@ from .services.telemetry import telemetry_event, telemetry_manager
 from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
 from .workers.feature_worker import FeatureExtractionWorker
+from .routers.auth_router import router as auth_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -143,6 +144,8 @@ app = FastAPI(
     description="Asynchronous ingestion endpoint for multi-service log payloads",
     lifespan=lifespan,
 )
+
+app.include_router(auth_router)
 
 
 @app.websocket("/ws/telemetry")
