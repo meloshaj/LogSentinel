@@ -15,6 +15,7 @@ from .core import dispose_engine, get_database_settings, init_engine
 from .ml.anomaly_detector import IsolationForestAnomalyDetector
 from .ml.feature_extractor import WindowConfig
 from .repositories.db_health import check_database_health
+from .repositories.feature_repository import FeatureRepository
 from .repositories.log_repository import LogRepository
 from .services.batch_manager import ParsedLogBatchManager
 from .services.drain_parser import DrainParser
@@ -80,6 +81,7 @@ class AsyncLogBuffer:
 log_buffer = AsyncLogBuffer()
 drain_parser = DrainParser()
 log_repository = LogRepository()
+feature_repository = FeatureRepository()
 batch_manager = ParsedLogBatchManager(sink=log_repository.bulk_insert_parsed_logs)
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "isolation_forest.pkl"
@@ -101,6 +103,7 @@ feature_worker = FeatureExtractionWorker(
     extraction_interval_seconds=10.0,  # Extract features every 10 seconds
     anomaly_detector=anomaly_detector,
     anomaly_model_path=DEFAULT_MODEL_PATH,
+    feature_repository=feature_repository,
 )
 
 # Create Drain worker with callback to feature worker
