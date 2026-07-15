@@ -4,6 +4,7 @@
   --font-size: 16px;
   --app-bg: #0d1117;
   --app-surface: #161b22;
+  --app-surface-alt: #0d1117;
   --app-surface-strong: #21262d;
   --app-surface-soft: rgba(33, 38, 45, 0.6);
   --app-surface-hover: rgba(33, 38, 45, 0.3);
@@ -62,6 +63,7 @@
 .dark {
   --app-bg: #0d1117;
   --app-surface: #161b22;
+  --app-surface-alt: #0d1117;
   --app-surface-strong: #21262d;
   --app-surface-soft: rgba(33, 38, 45, 0.6);
   --app-surface-hover: rgba(33, 38, 45, 0.3);
@@ -115,7 +117,7 @@
 }
 
 .light {
-  --app-bg: #f6f8fa;
+  --app-bg: #edf2f7;
   --app-surface: #ffffff;
   --app-surface-strong: #eaeef2;
   --app-surface-soft: rgba(234, 238, 242, 0.85);
@@ -156,13 +158,34 @@ body,
   background-color: var(--app-bg);
 }
 
+.light .bg-\[\#0d1117\],
+.light [class~="bg-[#0d1117]"] {
+  background-color: var(--app-code-bg);
+}
+
+.light body,
+.light #root > .bg-\[\#0d1117\],
+.light #root > [class~="bg-[#0d1117]"] {
+  background-color: var(--app-bg);
+}
+
 .bg-\[\#161b22\],
 [class~="bg-[#161b22]"] {
   background-color: var(--app-surface);
 }
 
+.light .bg-\[\#161b22\],
+.light [class~="bg-[#161b22]"] {
+  background-color: var(--app-surface);
+}
+
 .bg-\[\#21262d\],
 [class~="bg-[#21262d]"] {
+  background-color: var(--app-surface-strong);
+}
+
+.light .bg-\[\#21262d\],
+.light [class~="bg-[#21262d]"] {
   background-color: var(--app-surface-strong);
 }
 
@@ -220,9 +243,19 @@ body,
   color: var(--app-text);
 }
 
+.light .text-\[\#e6edf3\],
+.light [class~="text-[#e6edf3]"] {
+  color: #111827;
+}
+
 .text-\[\#c9d1d9\],
 [class~="text-[#c9d1d9]"] {
   color: var(--app-text-soft);
+}
+
+.light .text-\[\#c9d1d9\],
+.light [class~="text-[#c9d1d9]"] {
+  color: #1f2937;
 }
 
 .text-\[\#7d8590\],
@@ -230,9 +263,19 @@ body,
   color: var(--app-text-muted);
 }
 
+.light .text-\[\#7d8590\],
+.light [class~="text-[#7d8590]"] {
+  color: #374151;
+}
+
 .text-\[\#484f58\],
 [class~="text-[#484f58]"] {
   color: var(--app-text-subtle);
+}
+
+.light .text-\[\#484f58\],
+.light [class~="text-[#484f58]"] {
+  color: #64748b;
 }
 
 .text-\[\#388bfd\],
@@ -240,9 +283,19 @@ body,
   color: var(--app-link);
 }
 
+.light .text-\[\#388bfd\],
+.light [class~="text-[#388bfd]"] {
+  color: #075985;
+}
+
 .hover\:text-\[\#e6edf3\]:hover,
 [class~="hover:text-[#e6edf3]"]:hover {
   color: var(--app-text);
+}
+
+.light .hover\:text-\[\#e6edf3\]:hover,
+.light [class~="hover:text-[#e6edf3]"]:hover {
+  color: #111827;
 }
 
 .hover\:text-\[\#79c0ff\]:hover,
@@ -258,6 +311,11 @@ body,
 .placeholder\:text-\[\#484f58\]::placeholder,
 [class~="placeholder:text-[#484f58]"]::placeholder {
   color: var(--app-text-subtle);
+}
+
+.light .placeholder\:text-\[\#484f58\]::placeholder,
+.light [class~="placeholder:text-[#484f58]"]::placeholder {
+  color: #64748b;
 }
 
 input,

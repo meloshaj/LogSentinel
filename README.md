@@ -96,6 +96,10 @@ docker compose up --build
 
 The app will be available at `http://localhost:8080`.
 
+## WebSocket
+
+Live logs are pulled from a backend WebSocket endpoint. Set `VITE_WS_URL` before starting the frontend if your server is not reachable at the default same-origin `/ws/logs` path.
+
 Build the image directly:
 
 

@@ -36,8 +36,11 @@ function LogRow({ entry, isNew }: { entry: LogEntry; isNew: boolean }) {
 }
 
 export function LogStream() {
-  const { filter, filteredLogs, newIds, paused, setFilter, setPaused } = useLiveLogs();
+  const { connectionState, connectionUrl, filter, filteredLogs, isUsingMockData, newIds, paused, setFilter, setPaused } = useLiveLogs();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const connectionLabel =
+    connectionState === "connected" ? "CONNECTED" : connectionState === "connecting" ? "CONNECTING" : connectionState === "disconnected" ? "DISCONNECTED" : "ERROR";
+  const connectionTone = connectionState === "connected" ? "text-[#3fb950]" : connectionState === "connecting" ? "text-[#d29922]" : "text-[#f85149]";
 
   useEffect(() => {
     if (!paused && scrollRef.current) {
@@ -52,8 +55,10 @@ export function LogStream() {
           <Terminal className="w-4 h-4 text-[#388bfd]" />
           <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Live Log Stream</span>
           <span className="flex items-center gap-1">
-            <Circle className="w-2 h-2 text-[#3fb950] fill-[#3fb950]" />
-            <span className="text-[#3fb950]" style={{ fontSize: "10px", fontWeight: 500 }}>LIVE</span>
+            <Circle className={`w-2 h-2 fill-current ${connectionTone}`} />
+            <span className={connectionTone} style={{ fontSize: "10px", fontWeight: 500 }}>
+              {connectionLabel}
+            </span>
           </span>
         </div>
         <div className="flex items-center gap-2" role="toolbar" aria-label="Log stream controls">
@@ -100,7 +105,10 @@ export function LogStream() {
         <span className="text-[#484f58]" style={{ fontSize: "10px" }}>
           {filteredLogs.length} entries - auto-scroll {paused ? "paused" : "enabled"}
         </span>
-        <span className="text-[#484f58]" style={{ fontSize: "10px" }}>2,450 logs/min ingestion rate</span>
+        <span className="text-[#484f58]" style={{ fontSize: "10px" }}>
+          {isUsingMockData ? "Demo data" : "Backend stream"}
+          {connectionUrl ? ` | ${connectionUrl}` : ""}
+        </span>
       </div>
     </div>
   );

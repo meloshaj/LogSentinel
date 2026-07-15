@@ -42,11 +42,11 @@ function Toggle({ defaultOn = false }: { defaultOn?: boolean }) {
 }
 
 const TEAM_MEMBERS = [
-  { name: "Leorent Ismajli",   role: "Admin",    avatar: "LI", status: "online" },
-  { name: "Melos Hajrullahu",  role: "Engineer", avatar: "MH", status: "online" },
-  { name: "Blerim Haxhiu",     role: "Engineer", avatar: "BH", status: "online" },
-  { name: "Juled Salihu",      role: "Viewer",   avatar: "JS", status: "offline" },
-  { name: "Blert Sylejmani",   role: "Viewer",   avatar: "BS", status: "offline" },
+  { name: "Blert Sylejmani",    role: "Admin",    avatar: "BS", status: "online" },
+  { name: "Blerim Haxhiu",      role: "Engineer", avatar: "BH", status: "online" },
+  { name: "Juled Salihu",       role: "Engineer", avatar: "JS", status: "online" },
+  { name: "Leorent Ismajli",    role: "Viewer",   avatar: "LI", status: "offline" },
+  { name: "Melos Hajrullahu",   role: "Admin",    avatar: "MH", status: "online" },
 ];
 
 export function SettingsPage() {
