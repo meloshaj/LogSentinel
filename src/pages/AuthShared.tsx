@@ -192,8 +192,7 @@ export function LogSentinelLogo({ large = false }: { large?: boolean }) {
   return (
     <div className={`flex items-center ${large ? "gap-3.5" : "gap-2.5"}`}>
       <div className={`flex-shrink-0 rounded-xl overflow-hidden ${large ? "w-24 h-24" : "w-16 h-16"}`} style={{ 
-        background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.6) 0%, rgba(30, 41, 59, 0.4) 100%)',
-        boxShadow: '0 0 0 1px rgba(148, 163, 184, 0.1), 0 4px 12px rgba(0, 0, 0, 0.3)'
+        background: 'transparent',
       }}>
         <img
           src={logoSrc}
