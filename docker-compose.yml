@@ -29,6 +29,26 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    image: logsentinel-backend:local
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+      - INGEST_API_KEY=dev-local-key
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

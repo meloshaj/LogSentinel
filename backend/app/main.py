@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .core import dispose_engine, get_database_settings, init_engine
+from .core import Base, dispose_engine, get_database_settings, get_engine, init_engine
 from .ml.anomaly_detector import IsolationForestAnomalyDetector
 from .ml.feature_extractor import WindowConfig
 from .repositories.db_health import check_database_health
@@ -23,6 +23,7 @@ from .services.telemetry import telemetry_event, telemetry_manager
 from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
 from .workers.feature_worker import FeatureExtractionWorker
+from .routers.auth_router import router as auth_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -126,6 +127,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     db_settings = get_database_settings()
     init_engine(db_settings)
 
+    # Auto-create all tables in the database (e.g. users table)
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     drain_worker.start()
     feature_worker.start()
     try:
@@ -137,12 +143,24 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await dispose_engine()
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(
     title="LogSentinel Ingestion Gateway",
     version="0.1.0",
     description="Asynchronous ingestion endpoint for multi-service log payloads",
     lifespan=lifespan,
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth_router)
 
 
 @app.websocket("/ws/telemetry")

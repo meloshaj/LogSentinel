@@ -157,4 +157,23 @@ CREATE INDEX IF NOT EXISTS idx_anomaly_events_created_at
 CREATE INDEX IF NOT EXISTS idx_anomaly_events_severity
     ON anomaly_events (severity);
 
+-- ---------------------------------------------------------------------------
+-- Users Table
+-- Stores user registration records and hashed passwords.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS users (
+    id              BIGSERIAL       PRIMARY KEY,
+    email           VARCHAR(255)    NOT NULL UNIQUE,
+    hashed_password VARCHAR(255)    NOT NULL,
+    full_name       VARCHAR(255)    NULL,
+    organization    VARCHAR(255)    NULL,
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+-- Accelerates user lookups by email
+CREATE INDEX IF NOT EXISTS idx_users_email
+    ON users (email);
+
 COMMIT;
