@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .core import dispose_engine, get_database_settings, init_engine
+from .core import Base, dispose_engine, get_database_settings, get_engine, init_engine
 from .ml.anomaly_detector import IsolationForestAnomalyDetector
 from .ml.feature_extractor import WindowConfig
 from .repositories.db_health import check_database_health
@@ -127,6 +127,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     db_settings = get_database_settings()
     init_engine(db_settings)
 
+    # Auto-create all tables in the database (e.g. users table)
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     drain_worker.start()
     feature_worker.start()
     try:
@@ -150,7 +155,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
