@@ -1,7 +1,8 @@
-import { NavLink } from "react-router";
-import { ChevronRight, Cpu, Terminal, Zap } from "lucide-react";
+import { NavLink, useNavigate } from "react-router";
+import { ChevronRight, Cpu, LogOut, Terminal, Zap } from "lucide-react";
 import { PRIMARY_NAV_ITEMS, SECONDARY_NAV_ITEMS } from "../constants/navigation";
 import type { NavigationItem } from "../constants/navigation";
+import { clearAuthToken } from "../utils/auth";
 
 function NavigationLink({ item }: { item: NavigationItem }) {
   return (
@@ -33,6 +34,13 @@ function NavigationLink({ item }: { item: NavigationItem }) {
 }
 
 export function Sidebar() {
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    clearAuthToken();
+    navigate("/login", { replace: true });
+  };
+
   return (
     <aside className="flex flex-col h-full w-56 bg-[#0d1117] border-r border-[#21262d] shrink-0">
       <div className="flex items-center gap-2.5 px-4 py-4 border-b border-[#21262d]">
@@ -59,6 +67,14 @@ export function Sidebar() {
 
       <div className="px-2 py-2 border-t border-[#21262d] space-y-0.5">
         {SECONDARY_NAV_ITEMS.map((item) => <NavigationLink key={item.to} item={item} />)}
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[#7d8590] hover:bg-[#161b22] hover:text-[#e6edf3] transition-colors cursor-pointer"
+        >
+          <LogOut className="w-4 h-4 shrink-0" />
+          <span style={{ fontSize: "13px", fontWeight: 400 }}>Log out</span>
+        </button>
         <div className="flex items-center gap-2.5 px-3 py-2 mt-1 rounded-lg bg-[#161b22]">
           <div className="flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-br from-[#1f6feb] to-[#388bfd] shrink-0">
             <Cpu className="w-3 h-3 text-white" />

@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate, Outlet } from "react-router";
 import { RootLayout } from "./layouts/RootLayout";
 import { AuthLayout } from "./layouts/AuthLayout";
+import { clearAuthToken, getAuthToken } from "./utils/auth";
 
 function decodeJwt(token: string): any {
   try {
@@ -27,12 +28,11 @@ function isTokenValid(token: string | null): boolean {
 }
 
 function ProtectedRoute() {
-  const token = localStorage.getItem("authToken");
+  const token = getAuthToken();
   const isValid = isTokenValid(token);
 
   if (!isValid) {
-    localStorage.removeItem("isLoggedIn");
-    localStorage.removeItem("authToken");
+    clearAuthToken();
     return <Navigate to="/login" replace />;
   }
 

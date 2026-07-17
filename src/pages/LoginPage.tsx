@@ -17,6 +17,7 @@ import {
   SuccessState,
   Spinner,
 } from "./AuthShared";
+import { getAuthErrorMessage, setAuthToken } from "../utils/auth";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -51,9 +52,17 @@ export function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = await response.json();
       if (!response.ok) {
-        setErrors({ submit: data.detail || "Authentication failed" });
+        setErrors({
+          submit: await getAuthErrorMessage(response, "Authentication failed"),
+        });
+        setLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      if (typeof data.access_token !== "string" || !data.access_token) {
+        setErrors({ submit: "Authentication server returned an invalid token" });
         setLoading(false);
         return;
       }
@@ -61,9 +70,7 @@ export function LoginPage() {
       setLoading(false);
       setSuccess(true);
 
-      // Set logged in flag
-      localStorage.setItem("isLoggedIn", "true");
-      localStorage.setItem("authToken", data.access_token);
+      setAuthToken(data.access_token);
 
       // Redirect to dashboard after a short delay showing the success state
       setTimeout(() => {
@@ -76,9 +83,9 @@ export function LoginPage() {
   };
 
   const handleSSO = () => {
-    // Set logged in flag and redirect
-    localStorage.setItem("isLoggedIn", "true");
-    navigate("/");
+    setErrors({
+      submit: "Single sign-on is not connected yet. Use email and password to sign in.",
+    });
   };
 
   return (

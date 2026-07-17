@@ -20,6 +20,7 @@ import {
   SuccessState,
   Spinner,
 } from "./AuthShared";
+import { getAuthErrorMessage, setAuthToken } from "../utils/auth";
 
 export function RegisterPage() {
   const navigate = useNavigate();
@@ -67,9 +68,10 @@ export function RegisterPage() {
         }),
       });
 
-      const data = await response.json();
       if (!response.ok) {
-        setErrors({ submit: data.detail || "Registration failed" });
+        setErrors({
+          submit: await getAuthErrorMessage(response, "Registration failed"),
+        });
         setLoading(false);
         return;
       }
@@ -81,11 +83,27 @@ export function RegisterPage() {
         body: JSON.stringify({ email, password }),
       });
 
-      const loginData = await loginResponse.json();
-      if (loginResponse.ok) {
-        localStorage.setItem("isLoggedIn", "true");
-        localStorage.setItem("authToken", loginData.access_token);
+      if (!loginResponse.ok) {
+        setErrors({
+          submit: await getAuthErrorMessage(
+            loginResponse,
+            "Account created, but automatic sign-in failed. Please sign in.",
+          ),
+        });
+        setLoading(false);
+        return;
       }
+
+      const loginData = await loginResponse.json();
+      if (typeof loginData.access_token !== "string" || !loginData.access_token) {
+        setErrors({
+          submit: "Account created, but the authentication server returned an invalid token. Please sign in.",
+        });
+        setLoading(false);
+        return;
+      }
+
+      setAuthToken(loginData.access_token);
 
       setLoading(false);
       setSuccess(true);
@@ -101,9 +119,9 @@ export function RegisterPage() {
   };
 
   const handleSSO = () => {
-    // Set logged in flag and redirect
-    localStorage.setItem("isLoggedIn", "true");
-    navigate("/");
+    setErrors({
+      submit: "Single sign-on is not connected yet. Create an account with email and password.",
+    });
   };
 
   const pwMatch =
@@ -145,7 +163,7 @@ export function RegisterPage() {
             {success ? (
               <SuccessState
                 title="Account created!"
-                body="Check your inbox — we've sent a verification link to confirm your email."
+                body="Your workspace is ready. Redirecting you to the dashboard..."
               />
             ) : (
               <form onSubmit={handleSubmit} noValidate className="space-y-3">

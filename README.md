@@ -41,6 +41,22 @@ curl -X POST http://localhost:8000/ingest-log `
   -d '{"source":"test","logs":[{"service_name":"test","message":"test"}]}'
 ```
 
+## Dashboard Authentication
+
+The React dashboard uses the backend JWT endpoints under `/api/auth` for user login and registration:
+
+- `POST /api/auth/register` creates a user record with a bcrypt-hashed password.
+- `POST /api/auth/login` verifies the password and returns a bearer JWT.
+- `GET /api/auth/me` verifies `Authorization: Bearer <token>` and returns the current user.
+
+The frontend stores the JWT in `localStorage` as `authToken`, and protected dashboard routes treat that token as the only source of truth. Logout clears `authToken` and redirects back to `/login`. The legacy `isLoggedIn` flag is cleared when auth state changes and is not used for access decisions.
+
+Configure JWT signing with `JWT_SECRET_KEY`. The backend has a development fallback so local startup is easy, but production deployments must set a strong secret. Tokens are signed with `HS256` and currently expire after 60 minutes.
+
+Because `authToken` is stored in `localStorage`, it persists across browser refreshes and is readable by JavaScript running on the page. Keep the frontend free of XSS issues, avoid storing other secrets in the browser, and consider an HttpOnly cookie strategy before treating this as a hardened production auth model.
+
+This user dashboard JWT flow is separate from the machine-to-machine ingestion guard. `/ingest-log` continues to use the `X-API-Key` header configured by `INGEST_API_KEY` or `INGEST_API_KEYS`; dashboard JWTs are not accepted as ingestion API keys.
+
 **Documentation:**
 
 - Quick Start: [`docs/QUICK_START_FEATURES.md`](docs/QUICK_START_FEATURES.md)
