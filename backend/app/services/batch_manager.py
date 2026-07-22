@@ -10,10 +10,11 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
+from ..models import ParsedLog
+
 logger = logging.getLogger("logsentinel.batch_manager")
 
-ParsedLogRecord = dict[str, Any]
-BatchSink = Callable[[list[ParsedLogRecord]], Any]
+BatchSink = Callable[[list[ParsedLog]], Any]
 
 
 class ParsedLogBatchManager:
@@ -37,9 +38,9 @@ class ParsedLogBatchManager:
         self.flush_interval_seconds = flush_interval_seconds
         self.sink = sink
 
-        self._buffer: list[ParsedLogRecord] = []
-        self._flushed_batches: list[list[ParsedLogRecord]] = []
-        self._last_failed_batch: list[ParsedLogRecord] | None = None
+        self._buffer: list[ParsedLog] = []
+        self._flushed_batches: list[list[ParsedLog]] = []
+        self._last_failed_batch: list[ParsedLog] | None = None
 
         self._flushed_batch_count = 0
         self._flushed_record_count = 0
@@ -61,7 +62,7 @@ class ParsedLogBatchManager:
         self._periodic_flush_count = 0
         self._shutdown_flush_count = 0
 
-    async def add(self, parsed_log: ParsedLogRecord) -> None:
+    async def add(self, parsed_log: ParsedLog) -> None:
         """Add one parsed log and trigger a serialized threshold flush."""
         async with self._state_lock:
             self._buffer.append(parsed_log)
@@ -184,15 +185,15 @@ class ParsedLogBatchManager:
             "flush_in_progress": self._flush_active,
         }
 
-    def get_pending_records(self) -> list[ParsedLogRecord]:
+    def get_pending_records(self) -> list[ParsedLog]:
         """Return a shallow snapshot of records still awaiting persistence."""
         return list(self._buffer)
 
-    def get_flushed_batches(self) -> list[list[ParsedLogRecord]]:
+    def get_flushed_batches(self) -> list[list[ParsedLog]]:
         """Return in-memory flushed batches for testing and local debugging."""
         return [list(batch) for batch in self._flushed_batches]
 
-    def get_failed_batches(self) -> list[list[ParsedLogRecord]]:
+    def get_failed_batches(self) -> list[list[ParsedLog]]:
         """Return the latest failed attempt for backward-compatible inspection.
 
         Failed records live in the active pending buffer. Only one bounded
@@ -203,13 +204,13 @@ class ParsedLogBatchManager:
             return []
         return [list(self._last_failed_batch)]
 
-    def _drain_buffer(self) -> list[ParsedLogRecord]:
+    def _drain_buffer(self) -> list[ParsedLog]:
         """Drain the active buffer while the caller holds the state lock."""
         batch = list(self._buffer)
         self._buffer.clear()
         return batch
 
-    async def _invoke_sink(self, batch: list[ParsedLogRecord]) -> Any:
+    async def _invoke_sink(self, batch: list[ParsedLog]) -> Any:
         if self.sink is None:
             return {"stored_in_memory": True, "record_count": len(batch)}
 
@@ -220,7 +221,7 @@ class ParsedLogBatchManager:
 
     async def _restore_failed_batch(
         self,
-        batch: list[ParsedLogRecord],
+        batch: list[ParsedLog],
         *,
         error_summary: str,
         cancelled: bool,

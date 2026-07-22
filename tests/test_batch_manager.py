@@ -1,24 +1,33 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from backend.app.models import ParsedLog
 from backend.app.services.batch_manager import ParsedLogBatchManager
 
 
-def parsed_log(index: int) -> dict[str, str]:
-    return {
-        "raw_message": f"log {index}",
-        "template_id": str(index),
-        "template_text": "log <*>",
-    }
+def parsed_log(index: int) -> ParsedLog:
+    timestamp = datetime(2026, 7, 22, tzinfo=timezone.utc) + timedelta(seconds=index)
+    return ParsedLog(
+        timestamp=timestamp,
+        service=f"service-{index}",
+        level="info",
+        raw_message=f"log {index}",
+        template_id=str(index),
+        template_text="log <*>",
+        parameters=[{"value": str(index), "mask_name": "NUM"}],
+        metadata={"sequence": index},
+        parsed_at=timestamp,
+    )
 
 
 def pending_ids(manager: ParsedLogBatchManager) -> list[str]:
-    return [record["template_id"] for record in manager.get_pending_records()]
+    return [record.template_id for record in manager.get_pending_records()]
 
 
-def batch_ids(batch: list[dict]) -> list[str]:
-    return [record["template_id"] for record in batch]
+def batch_ids(batch: list[ParsedLog]) -> list[str]:
+    return [record.template_id for record in batch]
 
 
 def test_records_below_threshold_remain_pending() -> None:
@@ -35,9 +44,9 @@ def test_records_below_threshold_remain_pending() -> None:
 
 
 def test_threshold_flush_invokes_async_sink_once() -> None:
-    received: list[list[dict]] = []
+    received: list[list[ParsedLog]] = []
 
-    async def sink(batch: list[dict]) -> int:
+    async def sink(batch: list[ParsedLog]) -> int:
         received.append(batch)
         return len(batch)
 
@@ -54,6 +63,7 @@ def test_threshold_flush_invokes_async_sink_once() -> None:
     assert manager.get_stats()["flushed_batch_count"] == 1
     assert manager.get_stats()["flushed_record_count"] == 2
     assert manager.get_stats()["last_sink_result"] == 2
+    assert all(isinstance(record, ParsedLog) for record in received[0])
 
 
 def test_threshold_flush_without_sink_keeps_debug_batch_compatibility() -> None:
@@ -72,9 +82,9 @@ def test_threshold_flush_without_sink_keeps_debug_batch_compatibility() -> None:
 
 
 def test_manual_flush_sends_records_and_empty_flush_does_not_call_sink() -> None:
-    received: list[list[dict]] = []
+    received: list[list[ParsedLog]] = []
 
-    async def sink(batch: list[dict]) -> int:
+    async def sink(batch: list[ParsedLog]) -> int:
         received.append(batch)
         return len(batch)
 
@@ -94,10 +104,10 @@ def test_manual_flush_sends_records_and_empty_flush_does_not_call_sink() -> None
 
 
 def test_periodic_flush_sends_pending_records_and_stops_cleanly() -> None:
-    received: list[list[dict]] = []
+    received: list[list[ParsedLog]] = []
     sink_called = asyncio.Event()
 
-    async def sink(batch: list[dict]) -> int:
+    async def sink(batch: list[ParsedLog]) -> int:
         received.append(batch)
         sink_called.set()
         return len(batch)
@@ -124,9 +134,9 @@ def test_periodic_flush_sends_pending_records_and_stops_cleanly() -> None:
 
 
 def test_synchronous_sink_compatibility_is_preserved() -> None:
-    received: list[list[dict]] = []
+    received: list[list[ParsedLog]] = []
 
-    def sink(batch: list[dict]) -> int:
+    def sink(batch: list[ParsedLog]) -> int:
         received.append(batch)
         return len(batch)
 
@@ -140,11 +150,11 @@ def test_synchronous_sink_compatibility_is_preserved() -> None:
 def test_overlapping_threshold_flushes_serialize_sink_invocations() -> None:
     active_invocations = 0
     maximum_concurrent_invocations = 0
-    received: list[list[dict]] = []
+    received: list[list[ParsedLog]] = []
     first_sink_entered = asyncio.Event()
     release_first_sink = asyncio.Event()
 
-    async def sink(batch: list[dict]) -> int:
+    async def sink(batch: list[ParsedLog]) -> int:
         nonlocal active_invocations, maximum_concurrent_invocations
         active_invocations += 1
         maximum_concurrent_invocations = max(
@@ -182,7 +192,7 @@ def test_overlapping_threshold_flushes_serialize_sink_invocations() -> None:
 
 
 def test_failed_flush_restores_records_in_original_order() -> None:
-    async def sink(_: list[dict]) -> int:
+    async def sink(_: list[ParsedLog]) -> int:
         raise RuntimeError("database unavailable")
 
     manager = ParsedLogBatchManager(batch_size=10, sink=sink)
@@ -206,10 +216,12 @@ def test_failed_flush_restores_records_in_original_order() -> None:
 
 
 def test_later_flush_retries_restored_records_without_loss() -> None:
-    attempts: list[list[dict]] = []
-    successful_batches: list[list[dict]] = []
+    attempts: list[list[ParsedLog]] = []
+    successful_batches: list[list[ParsedLog]] = []
+    first = parsed_log(1)
+    second = parsed_log(2)
 
-    async def sink(batch: list[dict]) -> int:
+    async def sink(batch: list[ParsedLog]) -> int:
         attempts.append(batch)
         if len(attempts) == 1:
             raise RuntimeError("temporary outage")
@@ -219,8 +231,8 @@ def test_later_flush_retries_restored_records_without_loss() -> None:
     manager = ParsedLogBatchManager(batch_size=10, sink=sink)
 
     async def run() -> None:
-        await manager.add(parsed_log(1))
-        await manager.add(parsed_log(2))
+        await manager.add(first)
+        await manager.add(second)
         assert await manager.flush() is False
         assert pending_ids(manager) == ["1", "2"]
         assert await manager.flush() is True
@@ -229,6 +241,10 @@ def test_later_flush_retries_restored_records_without_loss() -> None:
 
     assert [batch_ids(batch) for batch in attempts] == [["1", "2"], ["1", "2"]]
     assert [batch_ids(batch) for batch in successful_batches] == [["1", "2"]]
+    assert attempts[0][0] is first
+    assert attempts[0][1] is second
+    assert attempts[1][0] is first
+    assert attempts[1][1] is second
     assert pending_ids(manager) == []
     stats = manager.get_stats()
     assert stats["failed_flush_attempt_count"] == 1
@@ -241,7 +257,7 @@ def test_records_added_during_failed_flush_follow_restored_records() -> None:
     sink_entered = asyncio.Event()
     release_sink = asyncio.Event()
 
-    async def sink(_: list[dict]) -> int:
+    async def sink(_: list[ParsedLog]) -> int:
         sink_entered.set()
         await release_sink.wait()
         raise RuntimeError("write failed")
@@ -271,7 +287,7 @@ def test_cancellation_restores_records_and_propagates_cancelled_error() -> None:
     sink_entered = asyncio.Event()
     wait_forever = asyncio.Event()
 
-    async def sink(_: list[dict]) -> int:
+    async def sink(_: list[ParsedLog]) -> int:
         sink_entered.set()
         await wait_forever.wait()
         return 1
@@ -300,9 +316,9 @@ def test_cancellation_restores_records_and_propagates_cancelled_error() -> None:
 
 
 def test_shutdown_flush_persists_pending_records() -> None:
-    received: list[list[dict]] = []
+    received: list[list[ParsedLog]] = []
 
-    async def sink(batch: list[dict]) -> int:
+    async def sink(batch: list[ParsedLog]) -> int:
         received.append(batch)
         return len(batch)
 
@@ -322,7 +338,7 @@ def test_shutdown_flush_persists_pending_records() -> None:
 
 
 def test_failed_shutdown_flush_leaves_records_pending() -> None:
-    async def sink(_: list[dict]) -> int:
+    async def sink(_: list[ParsedLog]) -> int:
         raise RuntimeError("shutdown database unavailable")
 
     manager = ParsedLogBatchManager(batch_size=10, sink=sink)
@@ -345,7 +361,7 @@ def test_failed_periodic_attempt_is_not_counted_as_success() -> None:
     sink_attempted = asyncio.Event()
     release_sink = asyncio.Event()
 
-    async def sink(_: list[dict]) -> int:
+    async def sink(_: list[ParsedLog]) -> int:
         sink_attempted.set()
         await release_sink.wait()
         raise RuntimeError("periodic database unavailable")
@@ -375,7 +391,7 @@ def test_failed_periodic_attempt_is_not_counted_as_success() -> None:
 
 
 def test_error_summary_redacts_connection_credentials() -> None:
-    async def sink(_: list[dict]) -> int:
+    async def sink(_: list[ParsedLog]) -> int:
         raise RuntimeError("postgresql://user:super-secret@database/logs")
 
     manager = ParsedLogBatchManager(batch_size=1, sink=sink)

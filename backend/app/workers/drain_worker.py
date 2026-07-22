@@ -90,7 +90,7 @@ class DrainWorker:
                 continue
 
             self._recent_parsed_logs.append(parsed)
-            await self.batch_manager.add(parsed.model_dump(mode="json"))
+            await self.batch_manager.add(parsed)
             self.processed_count += 1
             self.last_processed_at = datetime.now(timezone.utc).isoformat()
             parsed_logs.append(parsed)

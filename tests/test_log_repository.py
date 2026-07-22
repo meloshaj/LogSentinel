@@ -1,77 +1,142 @@
 import asyncio
 from datetime import datetime, timezone
 
+from backend.app.models import ParsedLog
 from backend.app.repositories.db_health import check_database_health, find_missing_columns
 from backend.app.repositories.log_repository import LogRepository
-from backend.app.services.batch_manager import ParsedLogBatchManager
 
 
-def test_log_repository_maps_parsed_log_to_insert_row() -> None:
-    parsed_at = "2026-07-03T20:00:00+00:00"
-    timestamp = "2026-07-03T19:59:59+00:00"
+EVENT_TIMESTAMP = datetime(2026, 7, 22, 18, 30, tzinfo=timezone.utc)
+METADATA_TIMESTAMP = datetime(2020, 1, 2, 3, 4, tzinfo=timezone.utc)
+PARSED_AT = datetime(2026, 7, 22, 18, 31, tzinfo=timezone.utc)
 
-    row = LogRepository.map_parsed_log(
-        {
-            "raw_message": "service-a failed to connect to 10.0.0.1 on port 5432",
-            "template_id": "7",
-            "template_text": "service-a failed to connect to <IP> on <PORT>",
-            "parameters": [{"value": "10.0.0.1", "mask_name": "IP"}],
-            "metadata": {
-                "timestamp": timestamp,
-                "service": "service-a",
-                "level": "error",
-                "source": "unit-test",
-                "environment": "test",
-                "correlation_id": "corr-1",
-            },
-            "parsed_at": parsed_at,
-        }
+
+def parsed_log(index: int = 7) -> ParsedLog:
+    return ParsedLog(
+        timestamp=EVENT_TIMESTAMP,
+        service="service-a",
+        level="error",
+        raw_message=f"service-a failed to connect to 10.0.0.{index} on port 5432",
+        template_id=str(index),
+        template_text="service-a failed to connect to <IP> on <PORT>",
+        parameters=[{"value": f"10.0.0.{index}", "mask_name": "IP"}],
+        cluster_size=12,
+        change_type="none",
+        source="unit-test",
+        environment="test",
+        correlation_id=f"corr-{index}",
+        metadata={
+            "timestamp": METADATA_TIMESTAMP.isoformat(),
+            "observed_at": METADATA_TIMESTAMP,
+            "custom": {"attempt": index},
+        },
+        parsed_at=PARSED_AT,
     )
 
+
+def test_log_repository_maps_canonical_parsed_log_fields() -> None:
+    log = parsed_log()
+    row = LogRepository.map_parsed_log(log)
+
     assert row["service"] == "service-a"
-    assert row["raw_message"] == "service-a failed to connect to 10.0.0.1 on port 5432"
+    assert row["raw_message"] == "service-a failed to connect to 10.0.0.7 on port 5432"
     assert row["template_id"] == "7"
     assert row["template_text"] == "service-a failed to connect to <IP> on <PORT>"
-    assert row["parameters"] == [{"value": "10.0.0.1", "mask_name": "IP"}]
+    assert row["parameters"] == [{"value": "10.0.0.7", "mask_name": "IP"}]
     assert row["level"] == "error"
     assert row["source"] == "unit-test"
     assert row["environment"] == "test"
-    assert row["correlation_id"] == "corr-1"
-    assert row["timestamp"] == datetime.fromisoformat(timestamp)
-    assert row["parsed_at"] == datetime.fromisoformat(parsed_at)
+    assert row["correlation_id"] == "corr-7"
+    assert row["parsed_at"] is PARSED_AT
     assert row["created_at"].tzinfo is not None
 
 
-def test_log_repository_mapping_uses_safe_defaults() -> None:
-    row = LogRepository.map_parsed_log({})
+def test_top_level_timestamp_is_canonical_over_metadata_timestamp() -> None:
+    log = parsed_log()
+    row = LogRepository.map_parsed_log(log)
 
-    assert row["service"] == "unknown"
-    assert row["raw_message"] == ""
-    assert row["template_id"] == ""
-    assert row["parameters"] == []
-    assert row["metadata"] == {}
-    assert row["timestamp"].tzinfo is not None
+    assert row["timestamp"] is EVENT_TIMESTAMP
+    assert row["timestamp"] != datetime.fromisoformat(log.metadata["timestamp"])
 
 
-def test_batch_manager_with_fake_async_repository_sink() -> None:
-    inserted_batches: list[list[dict]] = []
+def test_json_fields_are_serialized_without_mutating_parsed_log() -> None:
+    log = parsed_log()
+    original = log.model_copy(deep=True)
+    row = LogRepository.map_parsed_log(log)
 
-    async def fake_insert(batch: list[dict]) -> int:
-        inserted_batches.append(batch)
-        return len(batch)
+    assert row["parameters"] == log.parameters
+    assert row["parameters"] is not log.parameters
+    assert row["metadata"]["observed_at"] == "2020-01-02T03:04:00Z"
+    assert row["metadata"] is not log.metadata
+    assert log == original
+    assert log.metadata["observed_at"] is METADATA_TIMESTAMP
 
-    manager = ParsedLogBatchManager(batch_size=2, sink=fake_insert)
 
-    async def run() -> None:
-        await manager.add({"raw_message": "first", "template_id": "1"})
-        await manager.add({"raw_message": "second", "template_id": "1"})
+def test_runtime_only_fields_are_not_in_insert_row() -> None:
+    row = LogRepository.map_parsed_log(parsed_log())
 
-    asyncio.run(run())
+    assert "cluster_size" not in row
+    assert "change_type" not in row
 
-    stats = manager.get_stats()
-    assert stats["last_sink_result"] == 2
-    assert stats["flushed_record_count"] == 2
-    assert len(inserted_batches) == 1
+
+class FakeInsertConnection:
+    def __init__(self) -> None:
+        self.execute_calls: list[tuple[object, list[dict[str, object]]]] = []
+
+    async def execute(
+        self,
+        statement: object,
+        rows: list[dict[str, object]],
+    ) -> None:
+        self.execute_calls.append((statement, rows))
+
+
+class FakeBeginContext:
+    def __init__(self, connection: FakeInsertConnection) -> None:
+        self.connection = connection
+
+    async def __aenter__(self) -> FakeInsertConnection:
+        return self.connection
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+class FakeInsertEngine:
+    def __init__(self) -> None:
+        self.begin_count = 0
+        self.connection = FakeInsertConnection()
+
+    def begin(self) -> FakeBeginContext:
+        self.begin_count += 1
+        return FakeBeginContext(self.connection)
+
+
+def test_bulk_insert_uses_one_transaction_for_typed_batch() -> None:
+    engine = FakeInsertEngine()
+    repository = LogRepository(engine=engine)  # type: ignore[arg-type]
+    logs = [parsed_log(1), parsed_log(2)]
+
+    inserted = asyncio.run(repository.bulk_insert_parsed_logs(logs))
+
+    assert inserted == 2
+    assert engine.begin_count == 1
+    assert len(engine.connection.execute_calls) == 1
+    _, rows = engine.connection.execute_calls[0]
+    assert [row["template_id"] for row in rows] == ["1", "2"]
+    assert all(row["timestamp"] is EVENT_TIMESTAMP for row in rows)
+    assert all(isinstance(log, ParsedLog) for log in logs)
+
+
+def test_bulk_insert_empty_input_skips_transaction() -> None:
+    engine = FakeInsertEngine()
+    repository = LogRepository(engine=engine)  # type: ignore[arg-type]
+
+    inserted = asyncio.run(repository.bulk_insert_parsed_logs([]))
+
+    assert inserted == 0
+    assert engine.begin_count == 0
+    assert engine.connection.execute_calls == []
 
 
 def test_find_missing_columns_reports_absent_required_columns() -> None:

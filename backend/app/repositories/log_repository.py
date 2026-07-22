@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,6 +11,7 @@ from sqlalchemy.dialects.postgresql import BIGINT, JSONB, VARCHAR
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..core.database import get_engine
+from ..models import ParsedLog
 
 metadata = MetaData()
 
@@ -46,7 +48,7 @@ class LogRepository:
             return self._engine
         return get_engine()
 
-    async def bulk_insert_parsed_logs(self, parsed_logs: list[dict]) -> int:
+    async def bulk_insert_parsed_logs(self, parsed_logs: Sequence[ParsedLog]) -> int:
         """Insert parsed logs in a single transaction and return row count."""
         if not parsed_logs:
             return 0
@@ -58,60 +60,29 @@ class LogRepository:
         return len(rows)
 
     @staticmethod
-    def map_parsed_log(parsed_log: dict[str, Any]) -> dict[str, Any]:
-        metadata_value = parsed_log.get("metadata")
-        metadata_dict = metadata_value if isinstance(metadata_value, dict) else {}
+    def map_parsed_log(parsed_log: ParsedLog) -> dict[str, Any]:
+        """Convert a validated ParsedLog into one database insert row.
+
+        ``cluster_size`` and ``change_type`` remain runtime-only because the
+        current logs schema has no authorized columns for those fields.
+        """
+        json_fields = parsed_log.model_dump(
+            mode="json",
+            include={"parameters", "metadata"},
+        )
 
         return {
-            "timestamp": _parse_datetime(metadata_dict.get("timestamp")) or datetime.now(timezone.utc),
-            "service": _first_text(metadata_dict.get("service"), parsed_log.get("service"), default="unknown"),
-            "raw_message": _first_text(parsed_log.get("raw_message"), default=""),
-            "template_id": _first_text(parsed_log.get("template_id"), default=""),
-            "template_text": _optional_text(parsed_log.get("template_text")),
-            "parameters": _json_compatible(parsed_log.get("parameters"), default=[]),
-            "level": _optional_text(metadata_dict.get("level") or parsed_log.get("level")),
-            "source": _optional_text(metadata_dict.get("source") or parsed_log.get("source")),
-            "environment": _optional_text(metadata_dict.get("environment") or parsed_log.get("environment")),
-            "correlation_id": _optional_text(
-                metadata_dict.get("correlation_id") or parsed_log.get("correlation_id")
-            ),
-            "metadata": metadata_dict,
-            "parsed_at": _parse_datetime(parsed_log.get("parsed_at")),
+            "timestamp": parsed_log.timestamp,
+            "service": parsed_log.service,
+            "raw_message": parsed_log.raw_message,
+            "template_id": parsed_log.template_id,
+            "template_text": parsed_log.template_text,
+            "parameters": json_fields["parameters"],
+            "level": parsed_log.level,
+            "source": parsed_log.source,
+            "environment": parsed_log.environment,
+            "correlation_id": parsed_log.correlation_id,
+            "metadata": json_fields["metadata"],
+            "parsed_at": parsed_log.parsed_at,
             "created_at": datetime.now(timezone.utc),
         }
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if isinstance(value, datetime):
-        return value
-    if not isinstance(value, str) or not value:
-        return None
-
-    normalized = value.replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
-
-
-def _first_text(*values: Any, default: str) -> str:
-    for value in values:
-        if isinstance(value, str) and value:
-            return value
-    return default
-
-
-def _optional_text(value: Any) -> str | None:
-    if isinstance(value, str) and value:
-        return value
-    return None
-
-
-def _json_compatible(value: Any, default: Any) -> Any:
-    if value is None:
-        return default
-    return value

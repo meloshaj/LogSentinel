@@ -1,5 +1,7 @@
 import asyncio
+from datetime import datetime
 
+from backend.app.models import ParsedLog
 from backend.app.services.drain_parser import DrainParser
 from backend.app.services.batch_manager import ParsedLogBatchManager
 from backend.app.workers.drain_worker import DrainWorker
@@ -14,6 +16,17 @@ class StubLogBuffer:
 
     def queue_size(self) -> int:
         return self.items.qsize()
+
+
+class RecordingBatchManager(ParsedLogBatchManager):
+    """Capture exactly what DrainWorker passes to the batching boundary."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.received: list[ParsedLog] = []
+
+    async def add(self, parsed_log: ParsedLog) -> None:
+        self.received.append(parsed_log)
 
 
 def make_worker(tmp_path) -> DrainWorker:
@@ -48,6 +61,7 @@ def test_drain_worker_processes_sample_payload(tmp_path) -> None:
     )
 
     assert worker.get_stats()["processed_count"] == 1
+    assert isinstance(parsed_logs[0], ParsedLog)
     assert parsed_logs[0]["template_id"]
     assert parsed_logs[0]["template_text"]
     assert parsed_logs[0]["metadata"]["service"] == "service-a"
@@ -107,10 +121,52 @@ def test_drain_worker_sends_parsed_logs_to_batch_manager(tmp_path) -> None:
     assert batch_stats["flushed_record_count"] == 2
 
 
-def test_drain_worker_flushes_parsed_logs_to_fake_sink(tmp_path) -> None:
-    inserted_batches: list[list[dict]] = []
+def test_drain_worker_passes_typed_parsed_log_without_serializing(tmp_path) -> None:
+    parser = DrainParser(state_path=str(tmp_path / "typed_boundary_state.bin"))
+    batch_manager = RecordingBatchManager()
+    worker = DrainWorker(StubLogBuffer(), parser, batch_manager=batch_manager)
+    timestamp = "2026-07-22T18:30:00+00:00"
 
-    async def fake_sink(batch: list[dict]) -> int:
+    parsed_logs = asyncio.run(
+        worker.process_one(
+            {
+                "source": "typed-test",
+                "environment": "test",
+                "correlation_id": "typed-correlation",
+                "logs": [
+                    {
+                        "service_name": "orders",
+                        "level": "warning",
+                        "timestamp": timestamp,
+                        "raw": "order 42 timed out after 5000ms",
+                        "message": "fallback message",
+                        "metadata": {"request_id": "request-42"},
+                    }
+                ],
+            }
+        )
+    )
+
+    assert len(parsed_logs) == 1
+    parsed = parsed_logs[0]
+    assert isinstance(parsed, ParsedLog)
+    assert batch_manager.received == [parsed]
+    assert batch_manager.received[0] is parsed
+    assert parsed.raw_message == "order 42 timed out after 5000ms"
+    assert parsed.template_id
+    assert parsed.template_text
+    assert parsed.timestamp == datetime.fromisoformat(timestamp)
+    assert parsed.service == "orders"
+    assert parsed.level == "warning"
+    assert parsed.metadata["request_id"] == "request-42"
+    assert parsed.metadata["source"] == "typed-test"
+    assert parsed.metadata["correlation_id"] == "typed-correlation"
+
+
+def test_drain_worker_flushes_parsed_logs_to_fake_sink(tmp_path) -> None:
+    inserted_batches: list[list[ParsedLog]] = []
+
+    async def fake_sink(batch: list[ParsedLog]) -> int:
         inserted_batches.append(batch)
         return len(batch)
 
@@ -125,13 +181,14 @@ def test_drain_worker_flushes_parsed_logs_to_fake_sink(tmp_path) -> None:
     assert batch_stats["last_sink_result"] == 2
     assert batch_stats["flushed_record_count"] == 2
     assert len(inserted_batches) == 1
-    assert inserted_batches[0][0]["template_id"]
+    assert isinstance(inserted_batches[0][0], ParsedLog)
+    assert inserted_batches[0][0].template_id
 
 
 def test_drain_worker_shutdown_flushes_remaining_batch_records(tmp_path) -> None:
-    inserted_batches: list[list[dict]] = []
+    inserted_batches: list[list[ParsedLog]] = []
 
-    async def fake_sink(batch: list[dict]) -> int:
+    async def fake_sink(batch: list[ParsedLog]) -> int:
         inserted_batches.append(batch)
         return len(batch)
 
