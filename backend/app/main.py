@@ -22,6 +22,7 @@ from .services.batch_manager import ParsedLogBatchManager
 from .services.drain_parser import DrainParser
 from .services.runtime_dependency_parser import RuntimeDependencyParser
 from .services.telemetry import telemetry_event, telemetry_manager
+from .services.topology_pipeline import NetworkXTopologyPipeline
 from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
 from .workers.feature_worker import FeatureExtractionWorker
@@ -92,6 +93,7 @@ class AsyncLogBuffer:
 log_buffer = AsyncLogBuffer()
 drain_parser = DrainParser()
 runtime_dependency_parser = RuntimeDependencyParser()
+topology_pipeline = NetworkXTopologyPipeline()
 log_repository = LogRepository()
 feature_repository = FeatureRepository()
 drain3_pipeline_settings = get_drain3_pipeline_settings()
@@ -130,6 +132,7 @@ drain_worker = DrainWorker(
     batch_manager=batch_manager,
     on_log_parsed=feature_worker.add_parsed_log,
     runtime_dependency_parser=runtime_dependency_parser,
+    on_trace_observation=topology_pipeline.add_observation,
     queue_drain_timeout_seconds=drain3_pipeline_settings.queue_drain_timeout_seconds,
 )
 
