@@ -1,5 +1,7 @@
+import asyncio
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 import backend.app.main as main_module
@@ -28,6 +30,86 @@ def valid_payload() -> dict:
             }
         ],
     }
+
+
+def test_async_log_buffer_join_waits_for_exactly_one_task_done() -> None:
+    async def run() -> None:
+        log_buffer = main_module.AsyncLogBuffer(maxsize=1)
+        payload = {"logs": [{"message": "queued"}]}
+        assert log_buffer.enqueue(payload)
+        assert await log_buffer.dequeue() == payload
+
+        join_task = asyncio.create_task(log_buffer.join())
+        await asyncio.sleep(0)
+        assert join_task.done() is False
+
+        log_buffer.task_done()
+        await asyncio.wait_for(join_task, timeout=0.1)
+
+        with pytest.raises(ValueError):
+            log_buffer.task_done()
+
+    asyncio.run(run())
+
+
+def test_lifespan_stops_drain_before_features_and_database(monkeypatch) -> None:
+    events: list[str] = []
+
+    class FakeConnection:
+        async def run_sync(self, _operation) -> None:
+            events.append("database.schema")
+
+    class FakeBeginContext:
+        async def __aenter__(self) -> FakeConnection:
+            return FakeConnection()
+
+        async def __aexit__(self, _exc_type, _exc, _traceback) -> None:
+            return None
+
+    class FakeEngine:
+        def begin(self) -> FakeBeginContext:
+            return FakeBeginContext()
+
+    class FakeDrainWorker:
+        def start(self) -> None:
+            events.append("drain.start")
+
+        async def stop(self) -> None:
+            events.append("drain.stop")
+            events.append("batch.shutdown_flush")
+
+    class FakeFeatureWorker:
+        def start(self) -> None:
+            events.append("feature.start")
+
+        async def stop(self) -> None:
+            events.append("feature.stop")
+
+    def fake_init_engine(_settings) -> None:
+        events.append("database.init")
+
+    async def fake_dispose_engine() -> None:
+        events.append("database.dispose")
+
+    monkeypatch.setattr(main_module, "get_database_settings", lambda: object())
+    monkeypatch.setattr(main_module, "init_engine", fake_init_engine)
+    monkeypatch.setattr(main_module, "get_engine", lambda: FakeEngine())
+    monkeypatch.setattr(main_module, "dispose_engine", fake_dispose_engine)
+    monkeypatch.setattr(main_module, "drain_worker", FakeDrainWorker())
+    monkeypatch.setattr(main_module, "feature_worker", FakeFeatureWorker())
+
+    async def run_lifespan() -> None:
+        async with main_module.lifespan(main_module.app):
+            pass
+
+    asyncio.run(run_lifespan())
+
+    assert events[-4:] == [
+        "drain.stop",
+        "batch.shutdown_flush",
+        "feature.stop",
+        "database.dispose",
+    ]
 
 
 def test_ingest_log_returns_202_for_valid_payload() -> None:

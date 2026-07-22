@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .core import Base, dispose_engine, get_database_settings, get_engine, init_engine
+from .core.settings import get_drain3_pipeline_settings
 from .ml.anomaly_detector import IsolationForestAnomalyDetector
 from .ml.feature_extractor import WindowConfig
 from .repositories.db_health import check_database_health
@@ -78,12 +79,25 @@ class AsyncLogBuffer:
         """Retrieve the next payload for downstream processing."""
         return await self._queue.get()
 
+    async def join(self) -> None:
+        """Wait until every accepted payload has been marked complete."""
+        await self._queue.join()
+
+    def task_done(self) -> None:
+        """Mark one successfully dequeued payload as fully processed."""
+        self._queue.task_done()
+
 
 log_buffer = AsyncLogBuffer()
 drain_parser = DrainParser()
 log_repository = LogRepository()
 feature_repository = FeatureRepository()
-batch_manager = ParsedLogBatchManager(sink=log_repository.bulk_insert_parsed_logs)
+drain3_pipeline_settings = get_drain3_pipeline_settings()
+batch_manager = ParsedLogBatchManager(
+    batch_size=drain3_pipeline_settings.batch_size,
+    flush_interval_seconds=drain3_pipeline_settings.flush_interval_seconds,
+    sink=log_repository.bulk_insert_parsed_logs,
+)
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "isolation_forest.pkl"
 
@@ -113,6 +127,7 @@ drain_worker = DrainWorker(
     drain_parser,
     batch_manager=batch_manager,
     on_log_parsed=feature_worker.add_parsed_log,
+    queue_drain_timeout_seconds=drain3_pipeline_settings.queue_drain_timeout_seconds,
 )
 
 
@@ -137,9 +152,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # --- Shutdown: stop workers, then drain the connection pool ---
-        await feature_worker.stop()
+        # Drain parsing first so feature extraction receives every accepted log.
         await drain_worker.stop()
+        await feature_worker.stop()
         await dispose_engine()
 
 
