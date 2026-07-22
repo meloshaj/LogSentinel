@@ -21,7 +21,12 @@ from backend.app.core.database import (
     get_session_factory,
     init_engine,
 )
-from backend.app.core.settings import DatabaseSettings, get_database_settings
+from backend.app.core.settings import (
+    DatabaseSettings,
+    Drain3PipelineSettings,
+    get_database_settings,
+    get_drain3_pipeline_settings,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +125,83 @@ class TestGetDatabaseSettings:
             settings = get_database_settings()
 
         assert settings.url == "postgresql+asyncpg://x:y@z:1/d"
+
+
+class TestDrain3PipelineSettings:
+    """Validate centralized Drain3 batching and shutdown configuration."""
+
+    def test_defaults(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            settings = get_drain3_pipeline_settings()
+
+        assert settings.batch_size == 500
+        assert settings.flush_interval_seconds == 5.0
+        assert settings.queue_drain_timeout_seconds == 30.0
+
+    def test_reads_numeric_environment_overrides(self) -> None:
+        env = {
+            "DRAIN3_BATCH_SIZE": "125",
+            "DRAIN3_FLUSH_INTERVAL_SECONDS": "2.5",
+            "DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS": "12.75",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            settings = get_drain3_pipeline_settings()
+
+        assert settings.batch_size == 125
+        assert settings.flush_interval_seconds == 2.5
+        assert settings.queue_drain_timeout_seconds == 12.75
+
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [
+            ("batch_size", 0),
+            ("batch_size", -1),
+            ("flush_interval_seconds", 0),
+            ("flush_interval_seconds", -1.0),
+            ("queue_drain_timeout_seconds", 0),
+            ("queue_drain_timeout_seconds", -1.0),
+        ],
+    )
+    def test_rejects_non_positive_values(self, field_name: str, value: float) -> None:
+        with pytest.raises(ValueError):
+            Drain3PipelineSettings(**{field_name: value})
+
+    @pytest.mark.parametrize(
+        ("environment_name", "value"),
+        [
+            ("DRAIN3_BATCH_SIZE", "0"),
+            ("DRAIN3_BATCH_SIZE", "-1"),
+            ("DRAIN3_FLUSH_INTERVAL_SECONDS", "0"),
+            ("DRAIN3_FLUSH_INTERVAL_SECONDS", "-1"),
+            ("DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS", "0"),
+            ("DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS", "-1"),
+        ],
+    )
+    def test_rejects_non_positive_environment_values(
+        self,
+        environment_name: str,
+        value: str,
+    ) -> None:
+        with patch.dict("os.environ", {environment_name: value}, clear=True):
+            with pytest.raises(ValueError):
+                get_drain3_pipeline_settings()
+
+    @pytest.mark.parametrize(
+        ("environment_name", "value"),
+        [
+            ("DRAIN3_BATCH_SIZE", "not-an-integer"),
+            ("DRAIN3_FLUSH_INTERVAL_SECONDS", "not-a-number"),
+            ("DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS", "not-a-number"),
+        ],
+    )
+    def test_rejects_invalid_numeric_environment_values(
+        self,
+        environment_name: str,
+        value: str,
+    ) -> None:
+        with patch.dict("os.environ", {environment_name: value}, clear=True):
+            with pytest.raises(ValueError):
+                get_drain3_pipeline_settings()
 
 
 # ---------------------------------------------------------------------------

@@ -112,6 +112,45 @@ def get_database_settings() -> DatabaseSettings:
     )
 
 
+class Drain3PipelineSettings(BaseModel):
+    """Validated batching and graceful-drain settings for the Drain3 pipeline."""
+
+    batch_size: int = Field(
+        default=500,
+        gt=0,
+        description="Parsed logs per persistence batch (env: DRAIN3_BATCH_SIZE)",
+    )
+    flush_interval_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        description=(
+            "Seconds between periodic parsed-log flushes "
+            "(env: DRAIN3_FLUSH_INTERVAL_SECONDS)"
+        ),
+    )
+    queue_drain_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description=(
+            "Maximum graceful-shutdown queue drain wait "
+            "(env: DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS)"
+        ),
+    )
+
+
+def get_drain3_pipeline_settings() -> Drain3PipelineSettings:
+    """Construct Drain3 pipeline settings from the current environment."""
+    return Drain3PipelineSettings(
+        batch_size=int(os.getenv("DRAIN3_BATCH_SIZE", "500")),
+        flush_interval_seconds=float(
+            os.getenv("DRAIN3_FLUSH_INTERVAL_SECONDS", "5.0")
+        ),
+        queue_drain_timeout_seconds=float(
+            os.getenv("DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS", "30.0")
+        ),
+    )
+
+
 class IngestionSecuritySettings(BaseModel):
     """Stateless API-key configuration for the ingestion endpoint."""
 

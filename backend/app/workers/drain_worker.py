@@ -27,17 +27,24 @@ class DrainWorker:
         batch_manager: ParsedLogBatchManager | None = None,
         recent_limit: int = 1000,
         on_log_parsed: Optional[Callable[[ParsedLog], None]] = None,
+        queue_drain_timeout_seconds: float = 30.0,
     ) -> None:
+        if queue_drain_timeout_seconds <= 0:
+            raise ValueError("queue_drain_timeout_seconds must be greater than 0")
+
         self.log_buffer = log_buffer
         self.parser = parser
         self.batch_manager = batch_manager or ParsedLogBatchManager()
         self._recent_parsed_logs: deque[ParsedLog] = deque(maxlen=recent_limit)
         self._on_log_parsed = on_log_parsed
+        self.queue_drain_timeout_seconds = queue_drain_timeout_seconds
         self._task: asyncio.Task[None] | None = None
         self._running = False
         self.processed_count = 0
         self.error_count = 0
         self.last_processed_at: str | None = None
+        self.last_queue_drain_timed_out = False
+        self.last_shutdown_batch_flush_failed = False
 
     def start(self) -> None:
         """Start the background worker without blocking application startup."""
@@ -49,31 +56,89 @@ class DrainWorker:
         self._task = asyncio.create_task(self.run(), name="drain-worker")
 
     async def stop(self) -> None:
-        """Stop the background worker cleanly."""
-        self._running = False
-        if self._task:
-            self._task.cancel()
+        """Drain accepted payloads, stop the consumer, and flush parsed logs."""
+        self.last_queue_drain_timed_out = False
+        self.last_shutdown_batch_flush_failed = False
+
+        task = self._task
+        if task is not None:
+            logger.info(
+                "Starting Drain worker queue drain: queue_size=%s timeout_seconds=%.3f",
+                self._queue_size(),
+                self.queue_drain_timeout_seconds,
+            )
             try:
-                await self._task
+                await asyncio.wait_for(
+                    self.log_buffer.join(),
+                    timeout=self.queue_drain_timeout_seconds,
+                )
+                logger.info("Drain worker queue drain completed")
+            except TimeoutError:
+                self.last_queue_drain_timed_out = True
+                logger.error(
+                    "Drain worker queue drain timed out after %.3f seconds; "
+                    "remaining_queue_size=%s",
+                    self.queue_drain_timeout_seconds,
+                    self._queue_size(),
+                )
+
+        self._running = False
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            try:
+                await task
             except asyncio.CancelledError:
                 pass
             finally:
-                self._task = None
+                if self._task is task:
+                    self._task = None
 
         await self.batch_manager.stop_periodic_flush()
         await self.batch_manager.shutdown_flush()
+
+        batch_stats = self.batch_manager.get_stats()
+        pending_records = int(batch_stats.get("current_buffer_size", 0))
+        if pending_records > 0:
+            self.last_shutdown_batch_flush_failed = True
+            logger.error(
+                "Final parsed-log batch flush did not persist all records; "
+                "pending_records=%d",
+                pending_records,
+            )
+
+        logger.info(
+            "Drain worker stop completed: queue_drain_timed_out=%s "
+            "pending_batch_records=%d",
+            self.last_queue_drain_timed_out,
+            pending_records,
+        )
 
     async def run(self) -> None:
         """Continuously consume queued ingest payloads."""
         while self._running:
             try:
                 item = await self.log_buffer.dequeue()
+            except asyncio.CancelledError:
+                # Cancellation while waiting did not dequeue a payload, so
+                # there is no corresponding unfinished task to acknowledge.
+                raise
+            except Exception:
+                self.error_count += 1
+                logger.exception("Drain worker failed while dequeuing an item")
+                continue
+
+            try:
                 await self.process_one(item)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 self.error_count += 1
                 logger.exception("Drain worker failed while processing queued item")
+            finally:
+                # A successful dequeue owns exactly one completion signal,
+                # including when processing fails or is cancelled.
+                self.log_buffer.task_done()
 
     async def process_one(self, item: Any) -> list[ParsedLog]:
         """Process one queued payload or log entry."""
@@ -117,6 +182,8 @@ class DrainWorker:
             "error_count": self.error_count,
             "last_processed_at": self.last_processed_at,
             "queue_size": self._queue_size(),
+            "last_queue_drain_timed_out": self.last_queue_drain_timed_out,
+            "last_shutdown_batch_flush_failed": self.last_shutdown_batch_flush_failed,
             "recent_parsed_count": len(self._recent_parsed_logs),
             "batch": self.batch_manager.get_stats(),
         }
