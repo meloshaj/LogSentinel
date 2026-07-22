@@ -12,6 +12,7 @@ from typing import Any, Optional
 from ..models import ParsedLog
 from ..services.batch_manager import ParsedLogBatchManager
 from ..services.drain_parser import DrainParser
+from ..services.runtime_dependency_parser import RuntimeDependencyParser, TraceObservation
 from ..services.telemetry import telemetry_event, telemetry_manager
 
 logger = logging.getLogger("logsentinel.drain_worker")
@@ -27,6 +28,9 @@ class DrainWorker:
         batch_manager: ParsedLogBatchManager | None = None,
         recent_limit: int = 1000,
         on_log_parsed: Optional[Callable[[ParsedLog], None]] = None,
+        runtime_dependency_parser: RuntimeDependencyParser | None = None,
+        on_trace_observation: Optional[Callable[[TraceObservation], None]] = None,
+        recent_trace_observation_limit: int = 1000,
         queue_drain_timeout_seconds: float = 30.0,
     ) -> None:
         if queue_drain_timeout_seconds <= 0:
@@ -37,6 +41,11 @@ class DrainWorker:
         self.batch_manager = batch_manager or ParsedLogBatchManager()
         self._recent_parsed_logs: deque[ParsedLog] = deque(maxlen=recent_limit)
         self._on_log_parsed = on_log_parsed
+        self.runtime_dependency_parser = runtime_dependency_parser
+        self._recent_trace_observations: deque[TraceObservation] = deque(
+            maxlen=recent_trace_observation_limit
+        )
+        self._on_trace_observation = on_trace_observation
         self.queue_drain_timeout_seconds = queue_drain_timeout_seconds
         self._task: asyncio.Task[None] | None = None
         self._running = False
@@ -154,12 +163,15 @@ class DrainWorker:
                 logger.exception("Drain parser failed for log message")
                 continue
 
+            trace_observation = self._extract_trace_observation(parsed)
             self._recent_parsed_logs.append(parsed)
             await self.batch_manager.add(parsed)
             self.processed_count += 1
             self.last_processed_at = datetime.now(timezone.utc).isoformat()
             parsed_logs.append(parsed)
             self._schedule_log_parsed_event(parsed)
+            if trace_observation is not None:
+                self._record_trace_observation(trace_observation)
             
             # Notify subscribers (e.g., feature extraction worker)
             if self._on_log_parsed:
@@ -185,6 +197,7 @@ class DrainWorker:
             "last_queue_drain_timed_out": self.last_queue_drain_timed_out,
             "last_shutdown_batch_flush_failed": self.last_shutdown_batch_flush_failed,
             "recent_parsed_count": len(self._recent_parsed_logs),
+            "recent_trace_observation_count": len(self._recent_trace_observations),
             "batch": self.batch_manager.get_stats(),
         }
 
@@ -193,6 +206,16 @@ class DrainWorker:
         safe_limit = max(0, limit)
         recent = list(self._recent_parsed_logs)[-safe_limit:][::-1] if safe_limit else []
         return [log.model_dump(mode="json") for log in recent]
+
+    def get_recent_trace_observations(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent trace observations as dicts, newest first."""
+        safe_limit = max(0, limit)
+        recent = (
+            list(self._recent_trace_observations)[-safe_limit:][::-1]
+            if safe_limit
+            else []
+        )
+        return [observation.model_dump(mode="json") for observation in recent]
 
     def _queue_size(self) -> int | None:
         queue_size = getattr(self.log_buffer, "queue_size", None)
@@ -294,3 +317,21 @@ class DrainWorker:
             asyncio.create_task(telemetry_manager.broadcast(event))
         except RuntimeError:
             logger.debug("No running event loop available for log.parsed telemetry broadcast")
+
+    def _extract_trace_observation(self, parsed: ParsedLog) -> TraceObservation | None:
+        if self.runtime_dependency_parser is None:
+            return None
+        try:
+            return self.runtime_dependency_parser.extract(parsed)
+        except Exception:
+            logger.exception("Runtime dependency trace extraction failed")
+            return None
+
+    def _record_trace_observation(self, observation: TraceObservation) -> None:
+        self._recent_trace_observations.append(observation)
+        if self._on_trace_observation is None:
+            return
+        try:
+            self._on_trace_observation(observation)
+        except Exception:
+            logger.exception("Trace observation callback failed")

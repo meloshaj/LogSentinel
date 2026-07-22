@@ -5,6 +5,7 @@ from backend.app.main import AsyncLogBuffer
 from backend.app.models import ParsedLog
 from backend.app.services.drain_parser import DrainParser
 from backend.app.services.batch_manager import ParsedLogBatchManager
+from backend.app.services.runtime_dependency_parser import RuntimeDependencyParser, TraceObservation
 from backend.app.workers.drain_worker import DrainWorker
 
 
@@ -51,6 +52,35 @@ class FakeParser:
             service=str(metadata.get("service", "test-service")),
             level=str(metadata.get("level", "info")),
         )
+
+
+class MetadataPreservingParser:
+    def parse(
+        self,
+        raw_message: str,
+        metadata: dict | None = None,
+    ) -> ParsedLog:
+        metadata = metadata or {}
+        now = datetime.now(timezone.utc)
+        return ParsedLog(
+            timestamp=now,
+            service=str(metadata.get("service", "test-service")),
+            level=str(metadata.get("level", "info")),
+            raw_message=raw_message,
+            template_id=f"template-{raw_message}",
+            template_text=raw_message,
+            parameters=[],
+            source=metadata.get("source"),
+            environment=metadata.get("environment"),
+            correlation_id=metadata.get("correlation_id"),
+            metadata=dict(metadata),
+            parsed_at=now,
+        )
+
+
+class FailingRuntimeDependencyParser(RuntimeDependencyParser):
+    def extract(self, parsed_log: ParsedLog) -> TraceObservation | None:
+        raise RuntimeError("expected trace extraction failure")
 
 
 class ShutdownRecordingBatchManager(ParsedLogBatchManager):
@@ -454,3 +484,90 @@ def test_drain_worker_timeout_stops_consumer_and_attempts_final_flush() -> None:
     assert shutdown_attempt_count == 1
     assert persisted_messages == ["already-parsed"]
     assert stats["batch"]["current_buffer_size"] == 0
+
+
+def test_drain_worker_continues_normal_persistence_when_no_trace_context() -> None:
+    batch_manager = RecordingBatchManager()
+    observations: list[TraceObservation] = []
+    worker = DrainWorker(
+        StubLogBuffer(),
+        MetadataPreservingParser(),  # type: ignore[arg-type]
+        batch_manager=batch_manager,
+        runtime_dependency_parser=RuntimeDependencyParser(),
+        on_trace_observation=observations.append,
+    )
+
+    parsed_logs = asyncio.run(
+        worker.process_one({"logs": [{"service_name": "orders", "message": "no trace here"}]})
+    )
+
+    assert len(parsed_logs) == 1
+    assert batch_manager.received == parsed_logs
+    assert observations == []
+    assert worker.get_stats()["recent_trace_observation_count"] == 0
+
+
+def test_drain_worker_passes_extracted_trace_observation_to_injected_collector() -> None:
+    batch_manager = RecordingBatchManager()
+    observations: list[TraceObservation] = []
+    worker = DrainWorker(
+        StubLogBuffer(),
+        MetadataPreservingParser(),  # type: ignore[arg-type]
+        batch_manager=batch_manager,
+        runtime_dependency_parser=RuntimeDependencyParser(),
+        on_trace_observation=observations.append,
+    )
+
+    parsed_logs = asyncio.run(
+        worker.process_one(
+            {
+                "source": "gateway",
+                "environment": "test",
+                "logs": [
+                    {
+                        "service_name": "orders",
+                        "message": "trace-bearing log",
+                        "metadata": {"trace_id": "worker-trace"},
+                    }
+                ],
+            }
+        )
+    )
+
+    assert len(parsed_logs) == 1
+    assert len(observations) == 1
+    assert observations[0].trace_id == "worker-trace"
+    assert observations[0].canonical_transaction_id == "worker-trace"
+    assert observations[0].service == "orders"
+    assert worker.get_recent_trace_observations(limit=1)[0]["trace_id"] == "worker-trace"
+
+
+def test_trace_extraction_failure_does_not_prevent_parsed_log_batching() -> None:
+    batch_manager = RecordingBatchManager()
+    observations: list[TraceObservation] = []
+    worker = DrainWorker(
+        StubLogBuffer(),
+        MetadataPreservingParser(),  # type: ignore[arg-type]
+        batch_manager=batch_manager,
+        runtime_dependency_parser=FailingRuntimeDependencyParser(),
+        on_trace_observation=observations.append,
+    )
+
+    parsed_logs = asyncio.run(
+        worker.process_one(
+            {
+                "logs": [
+                    {
+                        "service_name": "orders",
+                        "message": "trace extraction failure is isolated",
+                        "metadata": {"trace_id": "worker-trace"},
+                    }
+                ]
+            }
+        )
+    )
+
+    assert len(parsed_logs) == 1
+    assert batch_manager.received == parsed_logs
+    assert observations == []
+    assert worker.get_stats()["processed_count"] == 1
