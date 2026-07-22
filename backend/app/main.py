@@ -20,6 +20,7 @@ from .repositories.feature_repository import FeatureRepository
 from .repositories.log_repository import LogRepository
 from .services.batch_manager import ParsedLogBatchManager
 from .services.drain_parser import DrainParser
+from .services.runtime_dependency_parser import RuntimeDependencyParser
 from .services.telemetry import telemetry_event, telemetry_manager
 from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
@@ -90,6 +91,7 @@ class AsyncLogBuffer:
 
 log_buffer = AsyncLogBuffer()
 drain_parser = DrainParser()
+runtime_dependency_parser = RuntimeDependencyParser()
 log_repository = LogRepository()
 feature_repository = FeatureRepository()
 drain3_pipeline_settings = get_drain3_pipeline_settings()
@@ -127,6 +129,7 @@ drain_worker = DrainWorker(
     drain_parser,
     batch_manager=batch_manager,
     on_log_parsed=feature_worker.add_parsed_log,
+    runtime_dependency_parser=runtime_dependency_parser,
     queue_drain_timeout_seconds=drain3_pipeline_settings.queue_drain_timeout_seconds,
 )
 
