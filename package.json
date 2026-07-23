@@ -8,6 +8,7 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@xyflow/react": "^12.9.0",
     "lucide-react": "0.487.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
