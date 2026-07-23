@@ -18,20 +18,12 @@ metadata = MetaData()
 logs_table = Table(
     "logs",
     metadata,
-    Column("id", BIGINT, primary_key=True),
+    Column("id", BIGINT, primary_key=True, autoincrement=True),
     Column("timestamp", DateTime(timezone=True), nullable=False),
     Column("service", VARCHAR(255), nullable=False),
     Column("raw_message", Text, nullable=False),
     Column("template_id", VARCHAR(64), nullable=False),
-    Column("template_text", Text),
-    Column("parameters", JSONB),
-    Column("level", VARCHAR(32)),
-    Column("source", VARCHAR(255)),
-    Column("environment", VARCHAR(255)),
-    Column("correlation_id", VARCHAR(128)),
-    Column("metadata", JSONB),
-    Column("parsed_at", DateTime(timezone=True)),
-    Column("created_at", DateTime(timezone=True)),
+    Column("correlation_id", VARCHAR(128), nullable=True),
 )
 
 
@@ -61,28 +53,11 @@ class LogRepository:
 
     @staticmethod
     def map_parsed_log(parsed_log: ParsedLog) -> dict[str, Any]:
-        """Convert a validated ParsedLog into one database insert row.
-
-        ``cluster_size`` and ``change_type`` remain runtime-only because the
-        current logs schema has no authorized columns for those fields.
-        """
-        json_fields = parsed_log.model_dump(
-            mode="json",
-            include={"parameters", "metadata"},
-        )
-
+        """Convert a validated ParsedLog into one database insert row."""
         return {
             "timestamp": parsed_log.timestamp,
-            "service": parsed_log.service,
-            "raw_message": parsed_log.raw_message,
-            "template_id": parsed_log.template_id,
-            "template_text": parsed_log.template_text,
-            "parameters": json_fields["parameters"],
-            "level": parsed_log.level,
-            "source": parsed_log.source,
-            "environment": parsed_log.environment,
-            "correlation_id": parsed_log.correlation_id,
-            "metadata": json_fields["metadata"],
-            "parsed_at": parsed_log.parsed_at,
-            "created_at": datetime.now(timezone.utc),
+            "service": getattr(parsed_log, "service_name", parsed_log.service),
+            "raw_message": getattr(parsed_log, "message", getattr(parsed_log, "raw", parsed_log.raw_message)),
+            "template_id": parsed_log.template_id if parsed_log.template_id else "UNPARSED_0000",
+            "correlation_id": getattr(parsed_log, "correlation_id", None),
         }

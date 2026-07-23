@@ -163,7 +163,9 @@ class ParsedLogBatchManager:
 
     def get_stats(self) -> dict[str, Any]:
         """Return an event-loop-local snapshot of manager diagnostics."""
-        return {
+        from ..core.profiler import db_profiler
+
+        stats = {
             "batch_size": self.batch_size,
             "current_buffer_size": len(self._buffer),
             "flushed_batch_count": self._flushed_batch_count,
@@ -184,6 +186,11 @@ class ParsedLogBatchManager:
             "cancelled_flush_attempt_count": self._cancelled_flush_attempt_count,
             "flush_in_progress": self._flush_active,
         }
+        
+        if db_profiler.enabled:
+            stats["profiling"] = db_profiler.get_profiling_summary()
+            
+        return stats
 
     def get_pending_records(self) -> list[ParsedLog]:
         """Return a shallow snapshot of records still awaiting persistence."""
@@ -211,12 +218,21 @@ class ParsedLogBatchManager:
         return batch
 
     async def _invoke_sink(self, batch: list[ParsedLog]) -> Any:
+        import time
+        from ..core.profiler import db_profiler
+        
+        start_time = time.perf_counter()
+        
         if self.sink is None:
-            return {"stored_in_memory": True, "record_count": len(batch)}
-
-        result = self.sink(list(batch))
-        if inspect.isawaitable(result):
-            return await result
+            result = {"stored_in_memory": True, "record_count": len(batch)}
+        else:
+            result = self.sink(list(batch))
+            if inspect.isawaitable(result):
+                result = await result
+                
+        duration_ms = (time.perf_counter() - start_time) * 1000.0
+        db_profiler.track_batch(len(batch), duration_ms)
+        
         return result
 
     async def _restore_failed_batch(

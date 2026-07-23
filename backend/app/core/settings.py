@@ -30,7 +30,7 @@ class DatabaseSettings(BaseModel):
         description="PostgreSQL password (env: POSTGRES_PASSWORD)",
     )
     host: str = Field(
-        default="localhost",
+        default="127.0.0.1",
         description="PostgreSQL hostname (env: POSTGRES_HOST)",
     )
     port: int = Field(
@@ -56,13 +56,21 @@ class DatabaseSettings(BaseModel):
         description="Max temporary connections above pool_size",
     )
     pool_recycle_seconds: int = Field(
-        default=3600,
+        default=1800,
         ge=0,
         description="Seconds before a connection is recycled",
+    )
+    ssl_mode: str = Field(
+        default="disable",
+        description="PostgreSQL SSL mode (env: POSTGRES_SSL_MODE)",
     )
     echo_sql: bool = Field(
         default=False,
         description="Log all emitted SQL (env: SQL_ECHO)",
+    )
+    profiling_enabled: bool = Field(
+        default=False,
+        description="Enable database batch profiling (env: PROFILING_ENABLED)",
     )
 
     # Optional full DSN override — takes precedence over individual fields
@@ -87,7 +95,7 @@ class DatabaseSettings(BaseModel):
             return self.database_url_override
         return (
             f"postgresql+asyncpg://{self.user}:{self.password}"
-            f"@{self.host}:{self.port}/{self.db_name}"
+            f"@{self.host}:{self.port}/{self.db_name}?ssl={self.ssl_mode}"
         )
 
 
@@ -101,13 +109,15 @@ def get_database_settings() -> DatabaseSettings:
     return DatabaseSettings(
         user=os.getenv("POSTGRES_USER", "logsentinel"),
         password=os.getenv("POSTGRES_PASSWORD", "logsentinel_secret"),
-        host=os.getenv("POSTGRES_HOST", "localhost"),
+        host=os.getenv("POSTGRES_HOST", "127.0.0.1"),
         port=int(os.getenv("POSTGRES_PORT", "5432")),
         db_name=os.getenv("POSTGRES_DB", "logsentinel_db"),
         pool_size=int(os.getenv("POOL_SIZE", "20")),
         max_overflow=int(os.getenv("POOL_MAX_OVERFLOW", "10")),
-        pool_recycle_seconds=int(os.getenv("POOL_RECYCLE_SECONDS", "3600")),
+        pool_recycle_seconds=int(os.getenv("POOL_RECYCLE_SECONDS", "1800")),
+        ssl_mode=os.getenv("POSTGRES_SSL_MODE", "disable"),
         echo_sql=os.getenv("SQL_ECHO", "false").lower() == "true",
+        profiling_enabled=os.getenv("PROFILING_ENABLED", "false").lower() == "true",
         database_url_override=os.getenv("DATABASE_URL"),
     )
 

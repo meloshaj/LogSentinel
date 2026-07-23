@@ -59,9 +59,18 @@ def init_engine(settings: DatabaseSettings) -> AsyncEngine:
         pool_size=settings.pool_size,
         max_overflow=settings.max_overflow,
         pool_pre_ping=True,
+        pool_timeout=10.0,
         pool_recycle=settings.pool_recycle_seconds,
         echo=settings.echo_sql,
+        connect_args={
+            "timeout": 5.0,
+            "command_timeout": 30.0,
+        },
     )
+
+    if settings.profiling_enabled:
+        from .profiler import db_profiler
+        db_profiler.attach_to_engine(_engine.sync_engine)
 
     _session_factory = async_sessionmaker(
         bind=_engine,
