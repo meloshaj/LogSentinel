@@ -1,5 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useMemo } from "react";
+import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
 import { DEPENDENCY_NODE_STATUS } from "../../constants/statusConfig";
+import { reactFlowEngineConfig } from "../../config/reactFlow";
 import type { ServiceGraph } from "../../types/monitoring";
 
 interface DependencyGraphProps {
@@ -10,6 +12,56 @@ interface DependencyGraphProps {
   labelOffset?: number;
 }
 
+type ServiceNodeData = {
+  label: string;
+  status: {
+    fill: string;
+    stroke: string;
+  };
+  radius: number;
+  labelOffset: number;
+  glowRadius: number;
+  strokeWidth: number;
+};
+
+function ServiceNode({ data }: NodeProps<Node<ServiceNodeData>>) {
+  return (
+    <div
+      className="flex flex-col items-center justify-start"
+      style={{
+        width: 76,
+        height: 60,
+        color: "#c9d1d9",
+      }}
+    >
+      <Handle type="target" position={Position.Left} style={{ opacity: 0, width: 10, height: 10 }} />
+      <Handle type="source" position={Position.Right} style={{ opacity: 0, width: 10, height: 10 }} />
+      <div
+        className="rounded-full"
+        style={{
+          width: data.radius * 2,
+          height: data.radius * 2,
+          marginTop: 1,
+          border: `${data.strokeWidth}px solid ${data.status.stroke}`,
+          background: data.status.fill,
+          boxShadow: data.label === "database-service" || data.label === "payment-service" ? `0 0 0 ${data.glowRadius}px rgba(218,54,51,0.12)` : "none",
+        }}
+      />
+      <div
+        className="mt-2 text-center leading-tight"
+        style={{
+          fontSize: 9,
+          fontWeight: 500,
+          color: "#c9d1d9",
+          marginTop: data.labelOffset - data.radius * 2,
+        }}
+      >
+        {data.label.replace("-service", "")}
+      </div>
+    </div>
+  );
+}
+
 export function DependencyGraph({
   graph,
   glowRadius = 18,
@@ -17,80 +69,89 @@ export function DependencyGraph({
   strokeWidth = 1.5,
   labelOffset = 26,
 }: DependencyGraphProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const width = canvas.offsetWidth;
-    const height = canvas.offsetHeight;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
-
-    const nodeMap: Record<string, { x: number; y: number }> = {};
-    graph.nodes.forEach((node) => {
-      nodeMap[node.id] = { x: node.x * (width / 400), y: node.y * (height / 400) };
-    });
-
-    ctx.clearRect(0, 0, width, height);
-
-    graph.edges.forEach((edge) => {
-      const from = nodeMap[edge.from];
-      const to = nodeMap[edge.to];
-      if (!from || !to) return;
-
-      const isCritical = edge.to === "database-service" || edge.from === "database-service";
-      ctx.beginPath();
-      ctx.moveTo(from.x, from.y);
-      ctx.lineTo(to.x, to.y);
-      ctx.strokeStyle = isCritical ? "rgba(248,81,73,0.5)" : "rgba(33,38,45,1)";
-      ctx.lineWidth = isCritical ? 1.5 : 1;
-      ctx.setLineDash(isCritical ? [4, 3] : []);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      const angle = Math.atan2(to.y - from.y, to.x - from.x);
-      const midX = (from.x + to.x) / 2;
-      const midY = (from.y + to.y) / 2;
-      ctx.beginPath();
-      ctx.moveTo(midX, midY);
-      ctx.lineTo(midX - 6 * Math.cos(angle - 0.4), midY - 6 * Math.sin(angle - 0.4));
-      ctx.lineTo(midX - 6 * Math.cos(angle + 0.4), midY - 6 * Math.sin(angle + 0.4));
-      ctx.closePath();
-      ctx.fillStyle = isCritical ? "rgba(248,81,73,0.5)" : "rgba(72,79,88,0.7)";
-      ctx.fill();
-    });
-
-    graph.nodes.forEach((node) => {
-      const pos = nodeMap[node.id];
-      const config = DEPENDENCY_NODE_STATUS[node.id] ?? { fill: "#1c2128", stroke: "#484f58" };
+  const { nodes, edges, nodeTypes } = useMemo(() => {
+    const mappedNodes: Node<ServiceNodeData>[] = graph.nodes.map((node) => {
+      const status = DEPENDENCY_NODE_STATUS[node.id] ?? { fill: "#1c2128", stroke: "#484f58" };
       const isCritical = node.id === "database-service" || node.id === "payment-service";
 
-      if (isCritical) {
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, glowRadius, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(218,54,51,0.12)";
-        ctx.fill();
-      }
-
-      ctx.beginPath();
-      ctx.arc(pos.x, pos.y, nodeRadius, 0, Math.PI * 2);
-      ctx.fillStyle = config.fill;
-      ctx.fill();
-      ctx.strokeStyle = config.stroke;
-      ctx.lineWidth = strokeWidth;
-      ctx.stroke();
-
-      ctx.fillStyle = "#c9d1d9";
-      ctx.font = "500 9px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(node.id.split("-")[0], pos.x, pos.y + labelOffset);
+      return {
+        id: node.id,
+        type: "serviceNode",
+        position: { x: node.x, y: node.y },
+        data: {
+          label: node.id,
+          status,
+          radius: nodeRadius,
+          labelOffset,
+          glowRadius,
+          strokeWidth,
+        },
+        sourcePosition: "right",
+        targetPosition: "left",
+        draggable: false,
+        selectable: false,
+        style: {
+          width: 76,
+          height: 60,
+          background: "transparent",
+          border: "none",
+          boxShadow: "none",
+          opacity: isCritical ? 1 : 0.98,
+        },
+      };
     });
-  }, [glowRadius, graph, labelOffset, nodeRadius, strokeWidth]);
 
-  return <canvas ref={canvasRef} className="w-full h-full" style={{ display: "block" }} aria-label="Service dependency graph" />;
+    const mappedEdges: Edge[] = graph.edges.map((edge) => {
+      const isCritical = edge.to === "database-service" || edge.from === "database-service";
+
+      return {
+        id: `${edge.from}-${edge.to}`,
+        source: edge.from,
+        target: edge.to,
+        type: "smoothstep",
+        animated: isCritical,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 14,
+          height: 14,
+          color: isCritical ? "rgba(248,81,73,0.65)" : "rgba(72,79,88,0.8)",
+        },
+        style: {
+          stroke: isCritical ? "rgba(248,81,73,0.65)" : "rgba(72,79,88,0.8)",
+          strokeWidth: isCritical ? 1.5 : 1,
+        },
+      };
+    });
+
+    return { nodes: mappedNodes, edges: mappedEdges, nodeTypes: { serviceNode: ServiceNode } };
+  }, [glowRadius, graph.edges, graph.nodes, strokeWidth]);
+
+  return (
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      defaultViewport={reactFlowEngineConfig.defaultViewport}
+      fitView
+      fitViewOptions={reactFlowEngineConfig.fitViewOptions}
+      nodesDraggable={reactFlowEngineConfig.nodesDraggable}
+      nodesConnectable={reactFlowEngineConfig.nodesConnectable}
+      elementsSelectable={reactFlowEngineConfig.elementsSelectable}
+      elevateNodesOnSelect={reactFlowEngineConfig.elevateNodesOnSelect}
+      panOnDrag={reactFlowEngineConfig.panOnDrag}
+      panOnScroll={reactFlowEngineConfig.panOnScroll}
+      zoomOnScroll={reactFlowEngineConfig.zoomOnScroll}
+      zoomOnPinch={reactFlowEngineConfig.zoomOnPinch}
+      autoPanOnNodeDrag={reactFlowEngineConfig.autoPanOnNodeDrag}
+      snapToGrid={reactFlowEngineConfig.snapToGrid}
+      snapGrid={reactFlowEngineConfig.snapGrid}
+      proOptions={{ hideAttribution: true }}
+      nodesFocusable={false}
+      edgesFocusable={false}
+      className="w-full h-full"
+    >
+      <Background color="rgba(72,79,88,0.25)" gap={18} size={1} />
+      <Controls showInteractive={false} position="bottom-right" />
+    </ReactFlow>
+  );
 }
