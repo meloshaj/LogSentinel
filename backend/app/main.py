@@ -25,7 +25,9 @@ from .services.telemetry import telemetry_event, telemetry_manager
 from .services.topology_pipeline import NetworkXTopologyPipeline
 from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
+from .workers.event_manager import EventManager
 from .workers.feature_worker import FeatureExtractionWorker
+from .repositories.tracking_repository import TrackingRepository
 from .routers.auth_router import router as auth_router
 
 logging.basicConfig(
@@ -117,12 +119,16 @@ window_config = WindowConfig(
     stride_seconds=30,  # 50% overlap
     min_logs_per_window=5,  # Require at least 5 logs per window
 )
+tracking_repository = TrackingRepository()
+event_manager = EventManager(tracking_repository=tracking_repository)
+
 feature_worker = FeatureExtractionWorker(
     window_config=window_config,
     extraction_interval_seconds=10.0,  # Extract features every 10 seconds
     anomaly_detector=anomaly_detector,
     anomaly_model_path=DEFAULT_MODEL_PATH,
     feature_repository=feature_repository,
+    event_manager=event_manager,
 )
 
 # Create Drain worker with callback to feature worker
@@ -155,12 +161,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     drain_worker.start()
     feature_worker.start()
+    event_manager.start()
     try:
         yield
     finally:
         # Drain parsing first so feature extraction receives every accepted log.
         await drain_worker.stop()
         await feature_worker.stop()
+        await event_manager.stop()
         await dispose_engine()
 
 

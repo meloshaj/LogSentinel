@@ -181,3 +181,34 @@ class UserRecord(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+
+
+# ---------------------------------------------------------------------------
+# Tracking Loops — automated tracking for anomaly alerts
+# ---------------------------------------------------------------------------
+
+
+class TrackingLoopRecord(Base):
+    """ORM model for the ``tracking_loops`` table."""
+
+    __tablename__ = "tracking_loops"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    window_id: Mapped[str] = mapped_column(
+        VARCHAR(128),
+        ForeignKey("feature_windows.window_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(VARCHAR(32), nullable=False, default="triggered")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
