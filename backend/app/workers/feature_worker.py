@@ -18,6 +18,7 @@ from ..ml.feature_extractor import SlidingWindowFeatureExtractor as SlidingWindo
 from ..models import FeatureVector, ParsedLog
 from ..repositories.feature_repository import FeatureRepository
 from ..services.telemetry import telemetry_event, telemetry_manager
+from .event_manager import EventManager
 
 logger = logging.getLogger("logsentinel.feature_worker")
 
@@ -40,6 +41,7 @@ class FeatureExtractionWorker:
         anomaly_detector: Optional[IsolationForestAnomalyDetector] = None,
         anomaly_model_path: Optional[str | Path] = None,
         feature_repository: Optional[FeatureRepository] = None,
+        event_manager: Optional[EventManager] = None,
     ) -> None:
         """Initialize the feature extraction worker.
         
@@ -54,6 +56,7 @@ class FeatureExtractionWorker:
         self.extractor = SlidingWindowExtractor(self.window_config)
         self.anomaly_detector = self._resolve_anomaly_detector(anomaly_detector, anomaly_model_path)
         self._feature_repository = feature_repository
+        self.event_manager = event_manager
         
         # Buffer recent feature vectors for inspection/debugging
         self._feature_buffer: deque[FeatureVector] = deque(maxlen=feature_buffer_size)
@@ -134,6 +137,9 @@ class FeatureExtractionWorker:
                     self._features_extracted += 1
                     self._schedule_feature_events(feature_vector)
                     self._schedule_persist(feature_vector)
+                    
+                    if self.event_manager is not None:
+                        self.event_manager.enqueue_feature_vector(feature_vector)
                 except Exception:
                     self._extraction_errors += 1
                     logger.exception(
