@@ -23,6 +23,8 @@ services:
     build:
       context: .
       target: production
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
     image: logsentinel-dashboard:local
     ports:
       - "8080:80"
@@ -46,6 +48,8 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
       - INGEST_API_KEY=dev-local-key
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
     depends_on:
       postgres:
         condition: service_healthy

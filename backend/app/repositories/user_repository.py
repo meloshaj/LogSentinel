@@ -38,7 +38,7 @@ class UserRepository:
     async def create_user(
         db: AsyncSession,
         email: str,
-        hashed_password: str,
+        hashed_password: Optional[str] = None,
         full_name: Optional[str] = None,
         organization: Optional[str] = None,
     ) -> UserRecord:
@@ -54,3 +54,17 @@ class UserRepository:
         await db.refresh(new_user)
         logger.info("Successfully registered user: %s", email)
         return new_user
+
+    @staticmethod
+    async def update_password(
+        db: AsyncSession,
+        user: UserRecord,
+        hashed_password: str,
+    ) -> UserRecord:
+        """Update a user's hashed password and commit."""
+        user.hashed_password = hashed_password
+        await db.commit()
+        await db.refresh(user)
+        logger.info("Password updated for user: %s", user.email)
+        return user
+
