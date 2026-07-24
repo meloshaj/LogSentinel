@@ -10,8 +10,12 @@ import asyncio
 import logging
 from typing import Any, Optional
 
+from ..core.settings import GraphScoringSettings, get_graph_scoring_settings
+from ..ml.anomaly_scoring import normalize_prediction_anomaly_score
 from ..models import FeatureVector
 from ..repositories.tracking_repository import TrackingRepository
+from ..schemas.blast_radius import BlastRadiusResult
+from ..services.graph_analysis_service import GraphAnalysisService
 from ..services.telemetry import telemetry_event, telemetry_manager
 
 logger = logging.getLogger("logsentinel.event_manager")
@@ -23,27 +27,27 @@ class EventManager:
     def __init__(
         self,
         tracking_repository: Optional[TrackingRepository] = None,
-        anomaly_threshold: float = 0.75,
+        graph_analysis_service: Optional[GraphAnalysisService] = None,
+        graph_scoring_settings: Optional[GraphScoringSettings] = None,
+        telemetry_broadcaster: Any | None = None,
         max_queue_size: int = 10000,
     ) -> None:
         """Initialize the event manager.
         
         Args:
             tracking_repository: Repository to persist tracking loops.
-            anomaly_threshold: Score above which a tracking loop is triggered.
             max_queue_size: Maximum size of the incoming queue.
         """
         self.tracking_repository = tracking_repository or TrackingRepository()
-        self.anomaly_threshold = anomaly_threshold
+        self.graph_analysis_service = graph_analysis_service
+        self.graph_scoring_settings = graph_scoring_settings or get_graph_scoring_settings()
+        self.telemetry_broadcaster = telemetry_broadcaster or telemetry_manager
         self.queue: asyncio.Queue[FeatureVector] = asyncio.Queue(maxsize=max_queue_size)
         
         self._task: asyncio.Task[None] | None = None
         self._running = False
         
-        logger.info(
-            "EventManager initialized with anomaly_threshold=%.2f",
-            self.anomaly_threshold,
-        )
+        logger.info("EventManager initialized")
 
     def start(self) -> None:
         """Start the background event manager loop."""
@@ -98,51 +102,92 @@ class EventManager:
             return
 
         is_anomaly = prediction.get("is_anomaly")
-        anomaly_score = prediction.get("anomaly_score")
+        anomaly_score = normalize_prediction_anomaly_score(prediction)
 
-        if is_anomaly is True and anomaly_score is not None:
-            if anomaly_score >= self.anomaly_threshold:
-                logger.info(
-                    "Threshold met (%.3f >= %.3f). Triggering tracking loop for window_id=%s",
-                    anomaly_score,
-                    self.anomaly_threshold,
-                    feature_vector.window_id,
-                )
-                await self._trigger_tracking_loop(feature_vector, anomaly_score, prediction)
-            else:
-                logger.debug(
-                    "Anomaly detected but score (%.3f) is below threshold (%.3f)",
-                    anomaly_score,
-                    self.anomaly_threshold,
-                )
+        if is_anomaly is True:
+            logger.info(
+                "Anomaly detected (score %.3f). Triggering tracking loop for window_id=%s",
+                anomaly_score,
+                feature_vector.window_id,
+            )
+            await self._trigger_tracking_loop(feature_vector, anomaly_score, prediction)
 
     async def _trigger_tracking_loop(
         self, feature_vector: FeatureVector, anomaly_score: float, prediction: dict[str, Any]
     ) -> None:
         """Create a tracking loop in the database and emit an alert telemetry event."""
+        blast_radius_result = await self._run_graph_analysis(feature_vector)
+        blast_radius_payload = (
+            blast_radius_result.model_dump(mode="json")
+            if blast_radius_result is not None
+            else None
+        )
+
         # Persist to database
         try:
             await self.tracking_repository.persist_tracking_loop(
                 window_id=feature_vector.window_id,
                 anomaly_score=anomaly_score,
                 status="triggered",
+                blast_radius=blast_radius_payload,
             )
         except Exception:
             logger.exception("Failed to persist tracking loop in EventManager")
 
         # Broadcast via WebSocket
         try:
-            await telemetry_manager.broadcast(
+            payload = {
+                "window_id": feature_vector.window_id,
+                "anomaly_score": anomaly_score,
+                "severity": prediction.get("severity"),
+                "model_version": prediction.get("model_version"),
+                "status": "triggered",
+            }
+            if blast_radius_result is not None:
+                payload.update(
+                    {
+                        "blast_radius": blast_radius_payload,
+                        "suspected_root_service": blast_radius_result.suspected_root_service,
+                        "root_cause_confidence": blast_radius_result.confidence,
+                        "graph_analysis_version": blast_radius_result.algorithm_version,
+                    }
+                )
+
+            await self.telemetry_broadcaster.broadcast(
                 telemetry_event(
                     "infrastructure.tracking_loop.triggered",
-                    {
-                        "window_id": feature_vector.window_id,
-                        "anomaly_score": anomaly_score,
-                        "severity": prediction.get("severity"),
-                        "model_version": prediction.get("model_version"),
-                        "status": "triggered",
-                    },
+                    payload,
                 )
             )
         except Exception:
             logger.exception("Failed to broadcast tracking loop event")
+
+    async def _run_graph_analysis(
+        self,
+        feature_vector: FeatureVector,
+    ) -> BlastRadiusResult | None:
+        """Run graph analysis with reliability isolation."""
+        if not self.graph_scoring_settings.enabled:
+            logger.debug("Graph scoring skipped: disabled")
+            return None
+        if self.graph_analysis_service is None:
+            logger.debug("Graph scoring skipped: service unavailable")
+            return None
+
+        try:
+            return await asyncio.wait_for(
+                self.graph_analysis_service.analyze_anomaly(
+                    feature_vector=feature_vector,
+                ),
+                timeout=self.graph_scoring_settings.timeout_seconds,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            logger.warning("Graph scoring timed out")
+        except Exception as exc:
+            logger.warning(
+                "Graph scoring failed: %s",
+                type(exc).__name__,
+            )
+        return None

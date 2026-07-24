@@ -158,6 +158,32 @@ CREATE INDEX IF NOT EXISTS idx_anomaly_events_severity
     ON anomaly_events (severity);
 
 -- ---------------------------------------------------------------------------
+-- Tracking Loops Table
+-- Stores automated tracking-loop triggers emitted by EventManager.  The
+-- nullable blast_radius payload is additive and remains absent for older rows.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS tracking_loops (
+    id              BIGSERIAL       PRIMARY KEY,
+    window_id       VARCHAR(128)    NOT NULL
+                        REFERENCES feature_windows(window_id) ON DELETE CASCADE,
+    anomaly_score   FLOAT           NOT NULL,
+    status          VARCHAR(32)     NOT NULL DEFAULT 'triggered',
+    blast_radius    JSONB           NULL,
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE tracking_loops
+    ADD COLUMN IF NOT EXISTS blast_radius JSONB NULL;
+
+CREATE INDEX IF NOT EXISTS idx_tracking_loops_window_id
+    ON tracking_loops (window_id);
+
+CREATE INDEX IF NOT EXISTS idx_tracking_loops_created_at
+    ON tracking_loops (created_at);
+
+-- ---------------------------------------------------------------------------
 -- Users Table
 -- Stores user registration records and hashed passwords.
 -- ---------------------------------------------------------------------------

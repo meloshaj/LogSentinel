@@ -46,6 +46,7 @@ services:
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
       - INGEST_API_KEY=dev-local-key
+      - GRAPH_SCORING_LOOKBACK_SECONDS=${GRAPH_SCORING_LOOKBACK_SECONDS:-180}
     depends_on:
       postgres:
         condition: service_healthy

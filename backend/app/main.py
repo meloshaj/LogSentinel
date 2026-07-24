@@ -6,20 +6,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .core import Base, dispose_engine, get_database_settings, get_engine, init_engine
-from .core.settings import get_drain3_pipeline_settings
+from .core.settings import get_drain3_pipeline_settings, get_graph_scoring_settings
 from .ml.anomaly_detector import IsolationForestAnomalyDetector
 from .ml.feature_extractor import WindowConfig
 from .repositories.db_health import check_database_health
 from .repositories.feature_repository import FeatureRepository
 from .repositories.log_repository import LogRepository
+from .schemas.blast_radius import BlastRadiusResult
+from .schemas.graph_api import BlastRadiusRetrievalResponse, TopologyResponse
 from .services.batch_manager import ParsedLogBatchManager
 from .services.drain_parser import DrainParser
+from .services.graph_analysis_service import GraphAnalysisService
 from .services.runtime_dependency_parser import RuntimeDependencyParser
 from .services.telemetry import telemetry_event, telemetry_manager
 from .services.topology_pipeline import NetworkXTopologyPipeline
@@ -99,13 +102,14 @@ topology_pipeline = NetworkXTopologyPipeline()
 log_repository = LogRepository()
 feature_repository = FeatureRepository()
 drain3_pipeline_settings = get_drain3_pipeline_settings()
+graph_scoring_settings = get_graph_scoring_settings()
 batch_manager = ParsedLogBatchManager(
     batch_size=drain3_pipeline_settings.batch_size,
     flush_interval_seconds=drain3_pipeline_settings.flush_interval_seconds,
     sink=log_repository.bulk_insert_parsed_logs,
 )
 
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[2] / "models" / "isolation_forest.pkl"
+DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "isolation_forest.pkl"
 
 anomaly_detector: Optional[IsolationForestAnomalyDetector] = None
 if DEFAULT_MODEL_PATH.exists():
@@ -120,7 +124,17 @@ window_config = WindowConfig(
     min_logs_per_window=5,  # Require at least 5 logs per window
 )
 tracking_repository = TrackingRepository()
-event_manager = EventManager(tracking_repository=tracking_repository)
+graph_analysis_service = GraphAnalysisService(
+    topology_pipeline=topology_pipeline,
+    feature_repository=feature_repository,
+    log_repository=log_repository,
+    settings=graph_scoring_settings,
+)
+event_manager = EventManager(
+    tracking_repository=tracking_repository,
+    graph_analysis_service=graph_analysis_service,
+    graph_scoring_settings=graph_scoring_settings,
+)
 
 feature_worker = FeatureExtractionWorker(
     window_config=window_config,
@@ -190,6 +204,70 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+
+
+@app.get(
+    "/api/v1/topology",
+    response_model=TopologyResponse,
+    dependencies=[Depends(require_ingestion_api_key)],
+)
+async def get_topology() -> TopologyResponse:
+    """Return the current live service topology snapshot."""
+    snapshot = topology_pipeline.get_snapshot()
+    return TopologyResponse(
+        generated_at=snapshot.get("generated_at"),
+        node_count=snapshot.get("node_count", 0),
+        edge_count=snapshot.get("edge_count", 0),
+        transaction_count=snapshot.get("transaction_count", 0),
+        direction="caller_to_callee",
+        nodes=snapshot.get("nodes", []),
+        edges=snapshot.get("edges", []),
+    )
+
+
+@app.get(
+    "/api/v1/tracking-loops/{tracking_loop_id}/blast-radius",
+    response_model=BlastRadiusRetrievalResponse,
+    dependencies=[Depends(require_ingestion_api_key)],
+)
+async def get_tracking_loop_blast_radius(
+    tracking_loop_id: int,
+) -> BlastRadiusRetrievalResponse:
+    """Return a persisted blast-radius analysis for one tracking-loop record."""
+    row = await tracking_repository.get_tracking_loop_by_id(tracking_loop_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Tracking loop not found")
+
+    payload = row.get("blast_radius")
+    if payload is None:
+        return BlastRadiusRetrievalResponse(
+            tracking_loop_id=tracking_loop_id,
+            analysis_available=False,
+            blast_radius=None,
+            triggered_at=row.get("created_at"),
+        )
+
+    try:
+        blast_radius = BlastRadiusResult.model_validate(payload)
+    except ValidationError:
+        logger.warning(
+            "Malformed blast-radius payload for tracking_loop_id=%s",
+            tracking_loop_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Stored blast-radius analysis is malformed",
+        ) from None
+
+    return BlastRadiusRetrievalResponse(
+        tracking_loop_id=tracking_loop_id,
+        analysis_available=True,
+        blast_radius=blast_radius,
+        suspected_root_service=blast_radius.suspected_root_service,
+        root_cause_confidence=blast_radius.confidence,
+        graph_analysis_version=blast_radius.algorithm_version,
+        triggered_at=row.get("created_at"),
+    )
 
 
 @app.websocket("/ws/telemetry")

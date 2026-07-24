@@ -159,6 +159,7 @@ class NetworkXTopologyPipeline:
                         "delays": [],
                         "span_evidence_count": 0,
                         "temporal_evidence_count": 0,
+                        "target_hint_evidence_count": 0,
                     },
                 )
                 stats["transition_count"] += 1
@@ -175,6 +176,8 @@ class NetworkXTopologyPipeline:
                     stats["span_evidence_count"] += 1
                 if "temporal" in contribution.evidence_types:
                     stats["temporal_evidence_count"] += 1
+                if "target_hint" in contribution.evidence_types:
+                    stats["target_hint_evidence_count"] += 1
 
         for service in sorted(node_stats):
             stats = node_stats[service]
@@ -208,11 +211,16 @@ class NetworkXTopologyPipeline:
                 average_delay_ms=(sum(delays) / len(delays)) if delays else None,
                 span_evidence_count=stats["span_evidence_count"],
                 temporal_evidence_count=stats["temporal_evidence_count"],
+                target_hint_evidence_count=stats["target_hint_evidence_count"],
             )
 
         graph.graph["transaction_count"] = len(self._transactions)
         graph.graph["generated_at"] = latest_seen
         return graph
+
+    def get_graph_copy(self) -> nx.DiGraph:
+        """Return a safe current topology copy with caller-to-callee edge direction."""
+        return self.build_graph().copy(as_view=False)
 
     def get_snapshot(self) -> dict[str, Any]:
         """Return deterministic JSON-compatible topology data."""
@@ -337,6 +345,7 @@ class NetworkXTopologyPipeline:
                     "start_offset_ms": offset_ms,
                     "span_id": stored.observation.span_id,
                     "parent_span_id": stored.observation.parent_span_id,
+                    "target_service_hint": stored.observation.target_service_hint,
                     "template_id": stored.observation.template_id,
                     "insertion_order": stored.insertion_order,
                     "_observation": stored.observation,
@@ -350,6 +359,7 @@ class NetworkXTopologyPipeline:
     ) -> list[_TransitionContribution]:
         contributions: dict[tuple[str, str], _TransitionContribution] = {}
         span_connected_orders: set[int] = set()
+        hint_connected_orders: set[int] = set()
 
         span_index: dict[str, list[dict[str, Any]]] = {}
         for entry in vector:
@@ -381,6 +391,21 @@ class NetworkXTopologyPipeline:
             span_connected_orders.add(parent["insertion_order"])
             span_connected_orders.add(child["insertion_order"])
 
+        for entry in vector:
+            target_service = self._clean_text(entry.get("target_service_hint"))
+            if target_service is None or target_service == entry["service"]:
+                continue
+            contribution = _TransitionContribution(
+                source=entry["service"],
+                target=target_service,
+                first_timestamp=entry["_timestamp"],
+                last_timestamp=entry["_timestamp"],
+                delay_ms=None,
+                evidence_types=frozenset({"target_hint"}),
+            )
+            self._merge_contribution(contributions, contribution)
+            hint_connected_orders.add(entry["insertion_order"])
+
         for source, target in zip(vector, vector[1:]):
             if source["service"] == target["service"]:
                 continue
@@ -400,6 +425,11 @@ class NetworkXTopologyPipeline:
             if (
                 source["insertion_order"] in span_connected_orders
                 and target["insertion_order"] in span_connected_orders
+            ):
+                continue
+            if (
+                source["insertion_order"] in hint_connected_orders
+                or target["insertion_order"] in hint_connected_orders
             ):
                 continue
             self._merge_contribution(contributions, contribution)
@@ -475,6 +505,7 @@ class NetworkXTopologyPipeline:
             "start_offset_ms": entry["start_offset_ms"],
             "span_id": entry["span_id"],
             "parent_span_id": entry["parent_span_id"],
+            "target_service_hint": entry["target_service_hint"],
             "template_id": entry["template_id"],
             "insertion_order": entry["insertion_order"],
         }

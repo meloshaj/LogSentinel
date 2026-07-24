@@ -24,8 +24,10 @@ from backend.app.core.database import (
 from backend.app.core.settings import (
     DatabaseSettings,
     Drain3PipelineSettings,
+    GraphScoringSettings,
     get_database_settings,
     get_drain3_pipeline_settings,
+    get_graph_scoring_settings,
 )
 
 
@@ -54,12 +56,12 @@ class TestDatabaseSettings:
         settings = DatabaseSettings()
         assert settings.user == "logsentinel"
         assert settings.password == "logsentinel_secret"
-        assert settings.host == "localhost"
+        assert settings.host == "127.0.0.1"
         assert settings.port == 5432
         assert settings.db_name == "logsentinel_db"
         assert settings.pool_size == 20
         assert settings.max_overflow == 10
-        assert settings.pool_recycle_seconds == 3600
+        assert settings.pool_recycle_seconds == 1800
         assert settings.echo_sql is False
         assert settings.database_url_override is None
 
@@ -71,7 +73,7 @@ class TestDatabaseSettings:
             port=5433,
             db_name="mydb",
         )
-        assert settings.url == "postgresql+asyncpg://u:p@dbhost:5433/mydb"
+        assert settings.url == "postgresql+asyncpg://u:p@dbhost:5433/mydb?ssl=disable"
 
     def test_url_override_takes_precedence(self) -> None:
         settings = DatabaseSettings(
@@ -202,6 +204,50 @@ class TestDrain3PipelineSettings:
         with patch.dict("os.environ", {environment_name: value}, clear=True):
             with pytest.raises(ValueError):
                 get_drain3_pipeline_settings()
+
+
+class TestGraphScoringSettings:
+    """Validate graph-scoring runtime settings."""
+
+    def test_defaults(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            settings = get_graph_scoring_settings()
+
+        assert settings.enabled is True
+        assert settings.lookback_seconds == 180
+        assert settings.timeout_seconds == 2.0
+        assert settings.max_anomaly_events == 500
+        assert settings.max_log_records == 5000
+
+    def test_reads_environment_overrides(self) -> None:
+        env = {
+            "GRAPH_SCORING_ENABLED": "false",
+            "GRAPH_SCORING_LOOKBACK_SECONDS": "240",
+            "GRAPH_SCORING_TIMEOUT_SECONDS": "1.5",
+            "GRAPH_SCORING_MAX_ANOMALY_EVENTS": "50",
+            "GRAPH_SCORING_MAX_LOG_RECORDS": "100",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            settings = get_graph_scoring_settings()
+
+        assert settings.enabled is False
+        assert settings.lookback_seconds == 240
+        assert settings.timeout_seconds == 1.5
+        assert settings.max_anomaly_events == 50
+        assert settings.max_log_records == 100
+
+    @pytest.mark.parametrize(
+        ("field_name", "value"),
+        [
+            ("lookback_seconds", 0),
+            ("timeout_seconds", 0.0),
+            ("max_anomaly_events", 0),
+            ("max_log_records", 0),
+        ],
+    )
+    def test_rejects_non_positive_values(self, field_name: str, value: float) -> None:
+        with pytest.raises(ValueError):
+            GraphScoringSettings(**{field_name: value})
 
 
 # ---------------------------------------------------------------------------

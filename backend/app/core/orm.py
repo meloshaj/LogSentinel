@@ -201,6 +201,7 @@ class TrackingLoopRecord(Base):
     )
     anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[str] = mapped_column(VARCHAR(32), nullable=False, default="triggered")
+    blast_radius: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
