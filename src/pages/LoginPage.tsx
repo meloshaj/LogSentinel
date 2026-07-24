@@ -18,6 +18,9 @@ import {
   Spinner,
 } from "./AuthShared";
 import { getAuthErrorMessage, setAuthToken } from "../utils/auth";
+import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -82,9 +85,49 @@ export function LoginPage() {
     }
   };
 
+  const handleGoogleSuccess = async (credentialResponse: any) => {
+    const credential = credentialResponse?.credential;
+    if (!credential) {
+      setErrors({ submit: "Google sign-in did not return a valid credential." });
+      return;
+    }
+    setLoading(true);
+    try {
+      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+      const response = await fetch(`${apiBase}/api/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential }),
+      });
+
+      if (!response.ok) {
+        setErrors({
+          submit: await getAuthErrorMessage(response, "Google authentication failed"),
+        });
+        setLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      if (typeof data.access_token !== "string" || !data.access_token) {
+        setErrors({ submit: "Authentication server returned an invalid token" });
+        setLoading(false);
+        return;
+      }
+
+      setLoading(false);
+      setSuccess(true);
+      setAuthToken(data.access_token);
+      setTimeout(() => navigate("/"), 1000);
+    } catch {
+      setErrors({ submit: "Unable to connect to authentication server" });
+      setLoading(false);
+    }
+  };
+
   const handleSSO = () => {
     setErrors({
-      submit: "Single sign-on is not connected yet. Use email and password to sign in.",
+      submit: "This sign-in provider is not connected yet. Use email, password, or Google to sign in.",
     });
   };
 
@@ -189,6 +232,7 @@ export function LoginPage() {
                   </label>
                   <button
                     type="button"
+                    onClick={() => navigate("/forgot-password")}
                     className="text-[13px] text-sky-600 hover:text-sky-700 font-medium transition-colors select-none cursor-pointer"
                   >
                     Forgot password?
@@ -221,11 +265,41 @@ export function LoginPage() {
             )}
 
             {!success && (
-              <SSOSection
-                onGoogle={handleSSO}
-                onMicrosoft={handleSSO}
-                onGitHub={handleSSO}
-              />
+              <>
+                {/* Divider */}
+                <div className="mt-5">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="flex-1 h-px bg-slate-300" />
+                    <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-700 uppercase select-none">
+                      or continue with
+                    </span>
+                    <div className="flex-1 h-px bg-slate-300" />
+                  </div>
+
+                  {/* Google Login button */}
+                  {GOOGLE_CLIENT_ID ? (
+                    <div className="flex justify-center">
+                      <GoogleLogin
+                        onSuccess={handleGoogleSuccess}
+                        onError={() =>
+                          setErrors({ submit: "Google sign-in failed. Please try again." })
+                        }
+                        theme="outline"
+                        size="large"
+                        width="352"
+                        text="continue_with"
+                        shape="rectangular"
+                      />
+                    </div>
+                  ) : (
+                    <SSOSection
+                      onGoogle={handleSSO}
+                      onMicrosoft={handleSSO}
+                      onGitHub={handleSSO}
+                    />
+                  )}
+                </div>
+              </>
             )}
 
             <div className="mt-6 pt-5 border-t border-slate-200">
