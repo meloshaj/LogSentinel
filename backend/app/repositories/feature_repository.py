@@ -17,10 +17,10 @@ from sqlalchemy import (
     Float,
     Integer,
     MetaData,
-    String,
     Table,
-    Text,
+    and_,
     insert,
+    join,
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB, VARCHAR
@@ -149,6 +149,55 @@ class FeatureRepository:
         stmt = (
             select(anomaly_events_table)
             .order_by(anomaly_events_table.c.created_at.desc())
+            .limit(max(0, limit))
+        )
+
+        async with self.engine.connect() as conn:
+            result = await conn.execute(stmt)
+            rows = result.mappings().all()
+
+        return [dict(row) for row in rows]
+
+    async def get_recent_anomaly_contexts(
+        self,
+        *,
+        start_time: datetime,
+        end_time: datetime,
+        limit: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Return bounded anomaly events with their originating feature windows."""
+        joined = join(
+            anomaly_events_table,
+            feature_windows_table,
+            anomaly_events_table.c.window_id == feature_windows_table.c.window_id,
+        )
+        stmt = (
+            select(
+                anomaly_events_table.c.id.label("anomaly_event_id"),
+                anomaly_events_table.c.window_id,
+                anomaly_events_table.c.event_type,
+                anomaly_events_table.c.severity,
+                anomaly_events_table.c.score,
+                anomaly_events_table.c.details,
+                anomaly_events_table.c.created_at.label("anomaly_created_at"),
+                feature_windows_table.c.start_time,
+                feature_windows_table.c.end_time,
+                feature_windows_table.c.service,
+                feature_windows_table.c.log_count,
+                feature_windows_table.c.feature_vector,
+                feature_windows_table.c.anomaly_prediction,
+            )
+            .select_from(joined)
+            .where(
+                and_(
+                    anomaly_events_table.c.created_at >= start_time,
+                    anomaly_events_table.c.created_at <= end_time,
+                )
+            )
+            .order_by(
+                anomaly_events_table.c.created_at.desc(),
+                anomaly_events_table.c.window_id.asc(),
+            )
             .limit(max(0, limit))
         )
 

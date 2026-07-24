@@ -58,14 +58,21 @@ class IsolationForestAnomalyDetectorTests(unittest.TestCase):
 
         prediction = detector.predict(normal_vectors[0])
         self.assertIn("anomaly_score", prediction)
+        self.assertIn("raw_score", prediction)
         self.assertIn("is_anomaly", prediction)
         self.assertIn("severity", prediction)
         self.assertIn("model_version", prediction)
         self.assertEqual(prediction["window_id"], "normal-1")
+        self.assertGreaterEqual(prediction["anomaly_score"], 0.0)
+        self.assertLessEqual(prediction["anomaly_score"], 1.0)
+        if prediction["raw_score"] >= 0:
+            self.assertEqual(prediction["anomaly_score"], 0.0)
 
         batch_predictions = detector.predict_batch(normal_vectors + anomaly_vectors)
         self.assertEqual(len(batch_predictions), len(normal_vectors + anomaly_vectors))
         self.assertTrue(any(item["is_anomaly"] for item in batch_predictions))
+        self.assertTrue(all("raw_score" in item for item in batch_predictions))
+        self.assertTrue(all(0.0 <= item["anomaly_score"] <= 1.0 for item in batch_predictions))
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_path = Path(tmpdir) / "isolation_forest.pkl"
@@ -75,6 +82,7 @@ class IsolationForestAnomalyDetectorTests(unittest.TestCase):
             loaded_detector = IsolationForestAnomalyDetector.load_model(model_path)
             loaded_prediction = loaded_detector.predict(normal_vectors[0])
             self.assertIn("anomaly_score", loaded_prediction)
+            self.assertIn("raw_score", loaded_prediction)
             self.assertIn("is_anomaly", loaded_prediction)
             self.assertIn("severity", loaded_prediction)
 

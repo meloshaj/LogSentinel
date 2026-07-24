@@ -85,7 +85,9 @@ class SlidingWindowFeatureExtractor:
 
         current_time = current_time or datetime.now(timezone.utc)
         windows: list[LogWindow] = []
-        start_time = self._align_to_window(self._log_buffer[0].timestamp)
+        start_time = self._last_window_end or self._align_to_window(
+            self._log_buffer[0].timestamp
+        )
 
         while True:
             end_time = start_time + timedelta(seconds=self.config.window_size_seconds)
@@ -106,7 +108,9 @@ class SlidingWindowFeatureExtractor:
                         service=self.config.service_filter,
                     )
                 )
-            start_time = end_time
+                self._windows_generated += 1
+            start_time = start_time + timedelta(seconds=self.config.stride_seconds)
+            self._last_window_end = start_time
 
         return windows
 

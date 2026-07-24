@@ -161,6 +161,57 @@ def get_drain3_pipeline_settings() -> Drain3PipelineSettings:
     )
 
 
+class GraphScoringSettings(BaseModel):
+    """Runtime controls for graph scoring integration."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable graph pathway scoring for anomaly alerts",
+    )
+    lookback_seconds: int = Field(
+        default=180,
+        gt=0,
+        description="Seconds of recent anomaly/log evidence to inspect",
+    )
+    timeout_seconds: float = Field(
+        default=2.0,
+        gt=0.0,
+        description="Maximum graph-analysis time per anomaly event",
+    )
+    max_anomaly_events: int = Field(
+        default=500,
+        gt=0,
+        description="Maximum recent anomaly events to load per analysis",
+    )
+    max_log_records: int = Field(
+        default=5000,
+        gt=0,
+        description="Maximum recent log rows to load for correlation evidence",
+    )
+
+
+def _parse_bool(value: str | None, *, default: bool) -> bool:
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"invalid boolean value: {value!r}")
+
+
+def get_graph_scoring_settings() -> GraphScoringSettings:
+    """Construct graph-scoring runtime settings from environment variables."""
+    return GraphScoringSettings(
+        enabled=_parse_bool(os.getenv("GRAPH_SCORING_ENABLED"), default=True),
+        lookback_seconds=int(os.getenv("GRAPH_SCORING_LOOKBACK_SECONDS", "180")),
+        timeout_seconds=float(os.getenv("GRAPH_SCORING_TIMEOUT_SECONDS", "2.0")),
+        max_anomaly_events=int(os.getenv("GRAPH_SCORING_MAX_ANOMALY_EVENTS", "500")),
+        max_log_records=int(os.getenv("GRAPH_SCORING_MAX_LOG_RECORDS", "5000")),
+    )
+
+
 class IngestionSecuritySettings(BaseModel):
     """Stateless API-key configuration for the ingestion endpoint."""
 
