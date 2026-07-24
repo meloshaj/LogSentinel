@@ -53,6 +53,22 @@ The frontend stores the JWT in `localStorage` as `authToken`, and protected dash
 
 Configure JWT signing with `JWT_SECRET_KEY`. The backend has a development fallback so local startup is easy, but production deployments must set a strong secret. Tokens are signed with `HS256` and currently expire after 60 minutes.
 
+Google sign-in uses a Google OAuth 2.0 Web Client ID. For local Vite development, set the same client ID in both backend and frontend shells:
+
+```powershell
+$env:GOOGLE_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com"
+$env:VITE_GOOGLE_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com"
+$env:FRONTEND_URL="http://localhost:5173"
+```
+
+For Docker, put those values in a local `.env` file before running `docker compose up --build`. The frontend value is passed as a build argument, so rebuild the image after changing it:
+
+```dotenv
+GOOGLE_CLIENT_ID=your-google-web-client-id.apps.googleusercontent.com
+VITE_GOOGLE_CLIENT_ID=your-google-web-client-id.apps.googleusercontent.com
+FRONTEND_URL=http://localhost:8080
+```
+
 Because `authToken` is stored in `localStorage`, it persists across browser refreshes and is readable by JavaScript running on the page. Keep the frontend free of XSS issues, avoid storing other secrets in the browser, and consider an HttpOnly cookie strategy before treating this as a hardened production auth model.
 
 This user dashboard JWT flow is separate from the machine-to-machine ingestion guard. `/ingest-log` continues to use the `X-API-Key` header configured by `INGEST_API_KEY` or `INGEST_API_KEYS`; dashboard JWTs are not accepted as ingestion API keys.

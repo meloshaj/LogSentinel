@@ -8,6 +8,7 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@react-oauth/google": "^0.13.5",
     "@xyflow/react": "^12.9.0",
     "lucide-react": "0.487.0",
     "motion": "^12.42.2",
