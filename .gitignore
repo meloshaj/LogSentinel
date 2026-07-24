@@ -206,6 +206,7 @@ tempCodeRunnerFile.py
 
 # Node / frontend dependencies
 node_modules/
+.pnpm-store/
 
 # Runtime parser state
 state/
