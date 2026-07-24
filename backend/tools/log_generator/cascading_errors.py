@@ -293,12 +293,15 @@ class CascadingExceptionEngine:
 
         # --- Propagate symptoms upstream ---
         visited: set[str] = {root_service}
-        frontier: list[str] = list(self._topology.upstream_of(root_service))
+        frontier: list[tuple[str, str]] = [
+            (service_name, root_service)
+            for service_name in self._topology.upstream_of(root_service)
+        ]
         hop_index = 1
 
         while frontier:
-            next_frontier: list[str] = []
-            for service_name in frontier:
+            next_frontier: list[tuple[str, str]] = []
+            for service_name, failed_dependency in frontier:
                 if service_name in visited:
                     continue
                 visited.add(service_name)
@@ -308,7 +311,7 @@ class CascadingExceptionEngine:
                 )
                 symptom_log = self._generate_symptom(
                     service_name=service_name,
-                    failed_service=root_service,
+                    failed_service=failed_dependency,
                     error_type=error_type,
                     correlation_id=correlation_id,
                     timestamp=symptom_ts,
@@ -319,7 +322,7 @@ class CascadingExceptionEngine:
                 # Continue propagating further upstream.
                 for upstream in self._topology.upstream_of(service_name):
                     if upstream not in visited:
-                        next_frontier.append(upstream)
+                        next_frontier.append((upstream, service_name))
 
             frontier = next_frontier
             hop_index += 1

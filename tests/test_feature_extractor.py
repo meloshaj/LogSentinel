@@ -41,6 +41,29 @@ class SlidingWindowFeatureExtractorTests(unittest.TestCase):
         self.assertEqual(closed_window.log_count, 6)
         self.assertIsNotNone(closed_window.feature_names)
 
+    def test_pending_windows_are_not_reemitted(self) -> None:
+        config = WindowConfig(window_size_seconds=60, stride_seconds=30)
+        extractor = SlidingWindowFeatureExtractor(config)
+
+        base_time = datetime(2026, 7, 5, 12, 0, 0, tzinfo=timezone.utc)
+        for i in range(6):
+            extractor.add_log(
+                ParsedLog(
+                    timestamp=base_time + timedelta(seconds=i),
+                    service="auth",
+                    level="error",
+                    raw_message=f"message {i}",
+                    template_id="template-1",
+                    template_text="message <*>",
+                )
+            )
+
+        first = extractor.get_pending_windows(base_time + timedelta(minutes=2))
+        second = extractor.get_pending_windows(base_time + timedelta(minutes=2))
+
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, [])
+
 
 if __name__ == "__main__":
     unittest.main()

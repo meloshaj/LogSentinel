@@ -29,6 +29,7 @@ def observation(
     environment: str | None = "test",
     span_id: str | None = None,
     parent_span_id: str | None = None,
+    target_service_hint: str | None = None,
     template_id: str = "template-1",
 ) -> TraceObservation:
     return TraceObservation(
@@ -38,6 +39,7 @@ def observation(
         template_id=template_id,
         span_id=span_id,
         parent_span_id=parent_span_id,
+        target_service_hint=target_service_hint,
         environment=environment,
         source="unit-test",
     )
@@ -223,6 +225,23 @@ def test_temporal_gateway_auth_user_produces_two_directed_edges() -> None:
     assert sorted(graph.edges) == [("auth", "user"), ("gateway", "auth")]
 
 
+def test_target_service_hint_creates_caller_to_callee_edge() -> None:
+    pipeline = NetworkXTopologyPipeline()
+    pipeline.add_observation(observation(service="inventory-db", offset_ms=0))
+    pipeline.add_observation(
+        observation(
+            service="order-service",
+            offset_ms=50,
+            target_service_hint="inventory-db",
+        )
+    )
+
+    graph = pipeline.build_graph()
+
+    assert sorted(graph.edges) == [("order-service", "inventory-db")]
+    assert edge_attrs(graph, "order-service", "inventory-db")["target_hint_evidence_count"] == 1
+
+
 def test_consecutive_duplicate_services_do_not_create_self_loops() -> None:
     pipeline = NetworkXTopologyPipeline()
     pipeline.add_observation(observation(service="gateway"))
@@ -386,6 +405,22 @@ def test_returned_graph_mutation_does_not_mutate_pipeline_state() -> None:
     graph.add_node("mutated")
 
     assert "mutated" not in pipeline.build_graph().nodes
+
+
+def test_graph_copy_preserves_attrs_and_is_safe_to_mutate() -> None:
+    pipeline = NetworkXTopologyPipeline()
+    pipeline.add_observation(observation(service="gateway"))
+    pipeline.add_observation(observation(service="auth", offset_ms=10))
+
+    graph = pipeline.get_graph_copy()
+    graph.add_node("mutated")
+    graph.edges["gateway", "auth"]["transition_count"] = 999
+
+    live_graph = pipeline.get_graph_copy()
+    assert "mutated" not in live_graph.nodes
+    assert ("gateway", "auth") in live_graph.edges
+    assert live_graph.edges["gateway", "auth"]["transition_count"] == 1
+    assert live_graph.nodes["gateway"]["service"] == "gateway"
 
 
 def test_max_transactions_evicts_deterministically() -> None:

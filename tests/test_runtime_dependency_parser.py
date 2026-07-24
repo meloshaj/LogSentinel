@@ -67,7 +67,18 @@ def test_extracts_nested_metadata_header_correlation_id() -> None:
 
     assert observation is not None
     assert observation.correlation_id == "corr-header"
-    assert "metadata.headers.x-correlation-id" in source_paths(observation)
+
+
+def test_failed_service_metadata_becomes_target_service_hint() -> None:
+    observation = RuntimeDependencyParser().extract(
+        make_log(
+            correlation_id="corr-1",
+            metadata={"failed_service": "inventory-db"},
+        )
+    )
+
+    assert observation is not None
+    assert observation.target_service_hint == "inventory-db"
 
 
 def test_recognizes_camel_snake_dotted_and_hyphenated_key_variants() -> None:

@@ -15,6 +15,7 @@ import joblib
 from sklearn.ensemble import IsolationForest
 
 from ..models import FeatureVector
+from .anomaly_scoring import normalize_isolation_forest_score
 
 logger = logging.getLogger("logsentinel.anomaly_detector")
 
@@ -64,13 +65,14 @@ class IsolationForestAnomalyDetector:
             raise ValueError("Model must be trained before prediction")
 
         row = self._to_feature_matrix([feature_vector])
-        score = float(self.model.decision_function(row)[0])
+        raw_score = float(self.model.decision_function(row)[0])
         is_anomaly = bool(self.model.predict(row)[0] == -1)
-        severity = self._severity_from_score(score, is_anomaly)
+        severity = self._severity_from_score(raw_score, is_anomaly)
 
         return {
             "window_id": feature_vector.window_id,
-            "anomaly_score": round(score, 6),
+            "raw_score": round(raw_score, 6),
+            "anomaly_score": round(normalize_isolation_forest_score(raw_score), 6),
             "is_anomaly": is_anomaly,
             "severity": severity,
             "model_version": self.model_version,
@@ -87,12 +89,15 @@ class IsolationForestAnomalyDetector:
         results: list[dict[str, Any]] = []
 
         for feature_vector, score, prediction in zip(feature_vectors, scores, predictions):
+            raw_score = float(score)
+            is_anomaly = bool(prediction == -1)
             results.append(
                 {
                     "window_id": feature_vector.window_id,
-                    "anomaly_score": round(float(score), 6),
-                    "is_anomaly": bool(prediction == -1),
-                    "severity": self._severity_from_score(float(score), bool(prediction == -1)),
+                    "raw_score": round(raw_score, 6),
+                    "anomaly_score": round(normalize_isolation_forest_score(raw_score), 6),
+                    "is_anomaly": is_anomaly,
+                    "severity": self._severity_from_score(raw_score, is_anomaly),
                     "model_version": self.model_version,
                 }
             )

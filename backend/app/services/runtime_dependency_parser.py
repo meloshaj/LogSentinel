@@ -140,6 +140,9 @@ class RuntimeDependencyParser:
         "rpc_service",
         "http_host",
         "server_address",
+        "failed_service",
+        "dependency",
+        "target",
     )
     _OPERATION_HINT_ALIASES = (
         "operation",
