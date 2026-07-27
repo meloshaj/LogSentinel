@@ -191,12 +191,15 @@ CREATE INDEX IF NOT EXISTS idx_tracking_loops_created_at
 CREATE TABLE IF NOT EXISTS users (
     id              BIGSERIAL       PRIMARY KEY,
     email           VARCHAR(255)    NOT NULL UNIQUE,
-    hashed_password VARCHAR(255)    NOT NULL,
+    hashed_password VARCHAR(255)    NULL,
     full_name       VARCHAR(255)    NULL,
     organization    VARCHAR(255)    NULL,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
+
+-- Ensure hashed_password allows NULL for Google SSO users on pre-existing DB volumes
+ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL;
 
 -- Accelerates user lookups by email
 CREATE INDEX IF NOT EXISTS idx_users_email
