@@ -14,11 +14,14 @@ import {
   LogSentinelLogo,
   InputField,
   SSOSection,
+  SSOButton,
+  MicrosoftIcon,
+  GitHubIcon,
   SuccessState,
   Spinner,
 } from "./AuthShared";
 import { getAuthErrorMessage, setAuthToken } from "../utils/auth";
-import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
+import { GoogleLogin } from "@react-oauth/google";
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
@@ -266,19 +269,19 @@ export function LoginPage() {
 
             {!success && (
               <>
-                {/* Divider */}
-                <div className="mt-5">
-                  <div className="flex items-center gap-3 mb-4">
-                    <div className="flex-1 h-px bg-slate-300" />
-                    <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-700 uppercase select-none">
-                      or continue with
-                    </span>
-                    <div className="flex-1 h-px bg-slate-300" />
-                  </div>
+                {GOOGLE_CLIENT_ID ? (
+                  <div className="mt-5">
+                    {/* Divider */}
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="flex-1 h-px bg-slate-300" />
+                      <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-700 uppercase select-none">
+                        or continue with
+                      </span>
+                      <div className="flex-1 h-px bg-slate-300" />
+                    </div>
 
-                  {/* Google Login button */}
-                  {GOOGLE_CLIENT_ID ? (
-                    <div className="flex justify-center">
+                    {/* Google OAuth widget */}
+                    <div className="flex justify-center mb-2.5">
                       <GoogleLogin
                         onSuccess={handleGoogleSuccess}
                         onError={() =>
@@ -291,14 +294,20 @@ export function LoginPage() {
                         shape="rectangular"
                       />
                     </div>
-                  ) : (
-                    <SSOSection
-                      onGoogle={handleSSO}
-                      onMicrosoft={handleSSO}
-                      onGitHub={handleSSO}
-                    />
-                  )}
-                </div>
+
+                    {/* Other SSO providers */}
+                    <div className="space-y-2.5">
+                      <SSOButton provider={{ id: "Microsoft", label: "Continue with Microsoft", icon: <MicrosoftIcon />, onLogin: handleSSO }} />
+                      <SSOButton provider={{ id: "GitHub", label: "Continue with GitHub", icon: <GitHubIcon />, onLogin: handleSSO }} />
+                    </div>
+                  </div>
+                ) : (
+                  <SSOSection
+                    onGoogle={handleSSO}
+                    onMicrosoft={handleSSO}
+                    onGitHub={handleSSO}
+                  />
+                )}
               </>
             )}
 
