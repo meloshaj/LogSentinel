@@ -12,11 +12,12 @@ from typing import Any, Optional
 
 from ..core.settings import GraphScoringSettings, get_graph_scoring_settings
 from ..ml.anomaly_scoring import normalize_prediction_anomaly_score
-from ..models import FeatureVector
+from ..models import FeatureVector, PerformanceEvent
 from ..repositories.tracking_repository import TrackingRepository
 from ..schemas.blast_radius import BlastRadiusResult
 from ..services.graph_analysis_service import GraphAnalysisService
 from ..services.telemetry import telemetry_event, telemetry_manager
+from ..services.benchmarking import BenchmarkingCollector
 
 logger = logging.getLogger("logsentinel.event_manager")
 
@@ -30,6 +31,7 @@ class EventManager:
         graph_analysis_service: Optional[GraphAnalysisService] = None,
         graph_scoring_settings: Optional[GraphScoringSettings] = None,
         telemetry_broadcaster: Any | None = None,
+        benchmarking_collector: Optional[BenchmarkingCollector] = None,
         max_queue_size: int = 10000,
     ) -> None:
         """Initialize the event manager.
@@ -42,7 +44,11 @@ class EventManager:
         self.graph_analysis_service = graph_analysis_service
         self.graph_scoring_settings = graph_scoring_settings or get_graph_scoring_settings()
         self.telemetry_broadcaster = telemetry_broadcaster or telemetry_manager
-        self.queue: asyncio.Queue[FeatureVector] = asyncio.Queue(maxsize=max_queue_size)
+        self.benchmarking_collector = benchmarking_collector
+        self.queue: asyncio.Queue[Any] = asyncio.Queue(maxsize=max_queue_size)
+        
+        if self.benchmarking_collector:
+            self.benchmarking_collector.bind_event_manager(self)
         
         self._task: asyncio.Task[None] | None = None
         self._running = False
@@ -83,17 +89,43 @@ class EventManager:
             logger.warning("EventManager queue is full; dropping feature vector event to protect memory")
             return False
 
+    def enqueue_performance_event(self, event: PerformanceEvent) -> bool:
+        """Enqueue a performance event for alerting without blocking."""
+        try:
+            self.queue.put_nowait(event)
+            return True
+        except asyncio.QueueFull:
+            logger.warning("EventManager queue is full; dropping performance event to protect memory")
+            return False
+
     async def run(self) -> None:
-        """Main worker loop that dequeues and evaluates anomaly events."""
+        """Main worker loop that dequeues and evaluates events."""
         while self._running:
             try:
-                feature_vector = await self.queue.get()
-                await self._process_event(feature_vector)
+                event = await self.queue.get()
+                if isinstance(event, FeatureVector):
+                    await self._process_event(event)
+                elif isinstance(event, PerformanceEvent):
+                    await self._process_performance_event(event)
                 self.queue.task_done()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("EventManager encountered an error processing an event")
+
+    async def _process_performance_event(self, event: PerformanceEvent) -> None:
+        """Process and broadcast a performance threshold breach alert."""
+        try:
+            payload = event.model_dump(mode="json")
+            await self.telemetry_broadcaster.broadcast(
+                telemetry_event(
+                    "infrastructure.performance.alert",
+                    payload,
+                )
+            )
+            logger.warning(f"Performance alert triggered: {event.metric_name} = {event.current_value} (threshold {event.threshold})")
+        except Exception:
+            logger.exception("Failed to broadcast performance event")
 
     async def _process_event(self, feature_vector: FeatureVector) -> None:
         """Evaluate a single feature vector and trigger tracking loops if needed."""
@@ -152,6 +184,9 @@ class EventManager:
                         "graph_analysis_version": blast_radius_result.algorithm_version,
                     }
                 )
+
+            if self.benchmarking_collector:
+                payload["system_health"] = self.benchmarking_collector.get_health_metrics()
 
             await self.telemetry_broadcaster.broadcast(
                 telemetry_event(

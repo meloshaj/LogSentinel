@@ -26,6 +26,7 @@ from .services.graph_analysis_service import GraphAnalysisService
 from .services.runtime_dependency_parser import RuntimeDependencyParser
 from .services.telemetry import telemetry_event, telemetry_manager
 from .services.topology_pipeline import NetworkXTopologyPipeline
+from .services.benchmarking import BenchmarkingCollector
 from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
 from .workers.event_manager import EventManager
@@ -95,6 +96,7 @@ class AsyncLogBuffer:
         self._queue.task_done()
 
 
+benchmarking_collector = BenchmarkingCollector()
 log_buffer = AsyncLogBuffer()
 drain_parser = DrainParser()
 runtime_dependency_parser = RuntimeDependencyParser()
@@ -107,6 +109,7 @@ batch_manager = ParsedLogBatchManager(
     batch_size=drain3_pipeline_settings.batch_size,
     flush_interval_seconds=drain3_pipeline_settings.flush_interval_seconds,
     sink=log_repository.bulk_insert_parsed_logs,
+    benchmarking_collector=benchmarking_collector,
 )
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "isolation_forest.pkl"
@@ -134,6 +137,7 @@ event_manager = EventManager(
     tracking_repository=tracking_repository,
     graph_analysis_service=graph_analysis_service,
     graph_scoring_settings=graph_scoring_settings,
+    benchmarking_collector=benchmarking_collector,
 )
 
 feature_worker = FeatureExtractionWorker(
@@ -154,6 +158,7 @@ drain_worker = DrainWorker(
     runtime_dependency_parser=runtime_dependency_parser,
     on_trace_observation=topology_pipeline.add_observation,
     queue_drain_timeout_seconds=drain3_pipeline_settings.queue_drain_timeout_seconds,
+    benchmarking_collector=benchmarking_collector,
 )
 
 
@@ -183,6 +188,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await drain_worker.stop()
         await feature_worker.stop()
         await event_manager.stop()
+        await telemetry_manager.stop()
         await dispose_engine()
 
 
@@ -302,6 +308,11 @@ async def ingest_log(payload: IngestPayload) -> JSONResponse:
     """Accept log payloads asynchronously and enqueue them for later processing."""
     normalized_payload = payload.model_dump(mode="json")
     accepted = get_log_buffer().enqueue(normalized_payload)
+    
+    # Record metrics
+    log_count = len(normalized_payload.get("logs", []))
+    benchmarking_collector.record_ingestion(log_count)
+    benchmarking_collector.set_queue_depth(get_log_buffer().queue_size())
 
     logger.info(
         "Accepted log payload",

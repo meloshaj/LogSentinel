@@ -1,5 +1,9 @@
 import { MetricCards } from "../components/dashboard/MetricCards";
 import { TrafficChart } from "../components/dashboard/TrafficChart";
+import { TopologyCanvas } from "../components/dashboard/TopologyCanvas";
+import { BenchmarkingHUD } from "../components/dashboard/BenchmarkingHUD";
+import { EventManagerPanel } from "../components/dashboard/EventManagerPanel";
+import { TopologySyncProvider } from "../hooks/useTopologySync";
 import { mockIncidents, mockLogs } from "../services/mockMonitoringData";
 import { Activity, AlertTriangle, ArrowRight, CheckCircle, Clock } from "lucide-react";
 import { useNavigate } from "react-router";
@@ -26,22 +30,36 @@ export function OverviewPage() {
   const openIncidents = mockIncidents.filter((i) => i.status !== "resolved");
 
   return (
-    <div className="space-y-5">
-      {/* Metric cards */}
-      <MetricCards />
+    <TopologySyncProvider>
+      <div className="space-y-5">
+        {/* Metric cards */}
+        <MetricCards />
 
-      {/* Quick stats row */}
-      <div className="grid grid-cols-4 gap-3">
-        <QuickStat label="Logs today" value="14.2M" color="#e6edf3" />
-        <QuickStat label="P99 Latency" value="843ms" color="#f85149" />
-        <QuickStat label="Error rate" value="11.7%" color="#d29922" />
-        <QuickStat label="Uptime (30d)" value="99.1%" color="#3fb950" />
-      </div>
+        {/* Quick stats row */}
+        <div className="grid grid-cols-4 gap-3">
+          <QuickStat label="Logs today" value="14.2M" color="#e6edf3" />
+          <QuickStat label="P99 Latency" value="843ms" color="#f85149" />
+          <QuickStat label="Error rate" value="11.7%" color="#d29922" />
+          <QuickStat label="Uptime (30d)" value="99.1%" color="#3fb950" />
+        </div>
 
-      {/* Traffic chart */}
-      <TrafficChart />
+        {/* Traffic chart */}
+        <TrafficChart />
 
-      {/* Bottom row: recent logs + open incidents */}
+        {/* Benchmarking HUD */}
+        <BenchmarkingHUD />
+
+        {/* Live Topology Canvas & Event Manager Panel */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2 h-[400px]">
+            <TopologyCanvas />
+          </div>
+          <div className="lg:col-span-1 h-[400px]">
+            <EventManagerPanel />
+          </div>
+        </div>
+
+        {/* Bottom row: recent logs + open incidents */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Recent log activity */}
         <div className="rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
@@ -126,6 +144,7 @@ export function OverviewPage() {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </TopologySyncProvider>
   );
 }
