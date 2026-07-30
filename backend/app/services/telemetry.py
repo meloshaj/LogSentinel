@@ -26,44 +26,6 @@ def telemetry_event(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-class TelemetryConnectionManager:
-    """Track active telemetry WebSocket clients and broadcast JSON events."""
+from ..websockets.broadcaster import HighLoadBroadcaster
 
-    def __init__(self) -> None:
-        self._connections: set[WebSocket] = set()
-        self._lock = asyncio.Lock()
-
-    async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
-        async with self._lock:
-            self._connections.add(websocket)
-
-    async def disconnect(self, websocket: WebSocket) -> None:
-        async with self._lock:
-            self._connections.discard(websocket)
-
-    def connection_count(self) -> int:
-        return len(self._connections)
-
-    async def broadcast(self, event: dict[str, Any]) -> None:
-        async with self._lock:
-            connections = list(self._connections)
-
-        if not connections:
-            return
-
-        stale_connections: list[WebSocket] = []
-        for websocket in connections:
-            try:
-                await websocket.send_json(event)
-            except Exception:
-                stale_connections.append(websocket)
-                logger.exception("Failed to send telemetry event to WebSocket client")
-
-        if stale_connections:
-            async with self._lock:
-                for websocket in stale_connections:
-                    self._connections.discard(websocket)
-
-
-telemetry_manager = TelemetryConnectionManager()
+telemetry_manager = HighLoadBroadcaster(frame_rate_ms=250.0)

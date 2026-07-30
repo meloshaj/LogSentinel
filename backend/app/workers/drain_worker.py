@@ -32,6 +32,7 @@ class DrainWorker:
         on_trace_observation: Optional[Callable[[TraceObservation], None]] = None,
         recent_trace_observation_limit: int = 1000,
         queue_drain_timeout_seconds: float = 30.0,
+        benchmarking_collector: Any = None,
     ) -> None:
         if queue_drain_timeout_seconds <= 0:
             raise ValueError("queue_drain_timeout_seconds must be greater than 0")
@@ -47,6 +48,7 @@ class DrainWorker:
         )
         self._on_trace_observation = on_trace_observation
         self.queue_drain_timeout_seconds = queue_drain_timeout_seconds
+        self.benchmarking_collector = benchmarking_collector
         self._task: asyncio.Task[None] | None = None
         self._running = False
         self.processed_count = 0
@@ -151,6 +153,9 @@ class DrainWorker:
 
     async def process_one(self, item: Any) -> list[ParsedLog]:
         """Process one queued payload or log entry."""
+        import time
+        start_time = time.perf_counter()
+        
         parsed_logs: list[ParsedLog] = []
         errors_before_extract = self.error_count
 
@@ -183,6 +188,10 @@ class DrainWorker:
         if not parsed_logs and self.error_count == errors_before_extract:
             self.error_count += 1
             logger.warning("Drain worker could not extract any log messages from queued item: %r", item)
+
+        if self.benchmarking_collector:
+            duration_ms = (time.perf_counter() - start_time) * 1000.0
+            self.benchmarking_collector.record_latency(duration_ms)
 
         return parsed_logs
 

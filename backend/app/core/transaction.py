@@ -19,13 +19,13 @@ import functools
 import logging
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, TypeVar, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("logsentinel.transaction")
 
-P = ParamSpec("P")
+P = TypeVar("P")
 R = TypeVar("R")
 
 # ---------------------------------------------------------------------------

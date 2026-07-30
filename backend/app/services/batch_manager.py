@@ -30,6 +30,7 @@ class ParsedLogBatchManager:
         batch_size: int = 500,
         flush_interval_seconds: float = 5.0,
         sink: BatchSink | None = None,
+        benchmarking_collector: Any = None,
     ) -> None:
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than 0")
@@ -37,6 +38,7 @@ class ParsedLogBatchManager:
         self.batch_size = batch_size
         self.flush_interval_seconds = flush_interval_seconds
         self.sink = sink
+        self.benchmarking_collector = benchmarking_collector
 
         self._buffer: list[ParsedLog] = []
         self._flushed_batches: list[list[ParsedLog]] = []
@@ -232,6 +234,9 @@ class ParsedLogBatchManager:
                 
         duration_ms = (time.perf_counter() - start_time) * 1000.0
         db_profiler.track_batch(len(batch), duration_ms)
+        
+        if self.benchmarking_collector:
+            self.benchmarking_collector.record_db_batch_duration(duration_ms)
         
         return result
 

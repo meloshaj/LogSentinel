@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -251,6 +251,37 @@ class FeatureVector(BaseModel):
     features: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional structured feature values for inspection and downstream use",
+    )
+    
+    model_config = ConfigDict()
+
+
+class PerformanceEvent(BaseModel):
+    """Performance threshold breach event."""
+    
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Event creation timestamp",
+    )
+    metric_name: str = Field(
+        ...,
+        description="Name of the breached metric (e.g., latency, queue_depth)",
+    )
+    current_value: float = Field(
+        ...,
+        description="The current value that breached the threshold",
+    )
+    threshold: float = Field(
+        ...,
+        description="The configured threshold value",
+    )
+    severity: str = Field(
+        default="warning",
+        description="Severity of the performance issue",
+    )
+    health_metrics: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Snapshot of all health metrics at the time of breach",
     )
     
     model_config = ConfigDict()
