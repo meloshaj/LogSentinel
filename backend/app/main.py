@@ -313,6 +313,16 @@ async def ingest_log(payload: IngestPayload) -> JSONResponse:
         },
     )
 
+    if not accepted:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "message": "Ingestion queue is full; retry later",
+                "accepted": False,
+                "queue_size": get_log_buffer().queue_size(),
+            },
+        )
+
     return JSONResponse(
         status_code=202,
         content={
