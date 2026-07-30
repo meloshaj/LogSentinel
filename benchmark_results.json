@@ -1,0 +1,176 @@
+{
+  "benchmark": {
+    "started_at": "2026-07-30T13:30:05.563588Z",
+    "finished_at": "2026-07-30T13:30:25.863425Z",
+    "target_base_url": "http://127.0.0.1:8000",
+    "total_records_per_run": 500,
+    "dataset_split": {
+      "normal_percent": 90,
+      "anomaly_percent": 10,
+      "anomaly_patterns": [
+        "sql_injection",
+        "stack_trace",
+        "latency_spike"
+      ]
+    },
+    "concurrency_levels": [
+      10,
+      50
+    ],
+    "monitor_pid": 6344
+  },
+  "runs": [
+    {
+      "run_id": "benchmark-10-77fa9d99aba8402b8dd8d62ba5548333",
+      "concurrency": 10,
+      "total_records": 500,
+      "successful_requests": 500,
+      "failed_requests": 0,
+      "accepted_requests": 500,
+      "rejected_requests": 0,
+      "status_distribution": {
+        "202": 500
+      },
+      "duration_seconds": 8.746,
+      "ingestion_throughput_logs_per_second": 59.24,
+      "processing_throughput_logs_per_second": 57.17,
+      "http_latency_ms": {
+        "p50": 116.797,
+        "p95": 439.409,
+        "p99": 1244.961,
+        "min": 53.867,
+        "max": 1749.981,
+        "average": 167.594
+      },
+      "e2e_persistence_latency_ms": {
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "average": 0.0
+      },
+      "resource_utilization": {
+        "peak_rss_mb": 49.06,
+        "average_rss_mb": 48.84,
+        "peak_cpu_percent": 93.9,
+        "average_cpu_percent": 52.0
+      },
+      "drain3": {
+        "template_count": 8,
+        "samples": [
+          {
+            "elapsed_seconds": 0.04430690000299364,
+            "template_count": 0,
+            "processed_count": 0
+          },
+          {
+            "elapsed_seconds": 2.237503200012725,
+            "template_count": 8,
+            "processed_count": 138
+          },
+          {
+            "elapsed_seconds": 3.512715200020466,
+            "template_count": 8,
+            "processed_count": 206
+          },
+          {
+            "elapsed_seconds": 6.003206100023817,
+            "template_count": 8,
+            "processed_count": 343
+          },
+          {
+            "elapsed_seconds": 7.294713800016325,
+            "template_count": 8,
+            "processed_count": 454
+          },
+          {
+            "elapsed_seconds": 8.426839900028426,
+            "template_count": 8,
+            "processed_count": 498
+          }
+        ],
+        "convergence_rate_templates_per_1k_logs": 16.064,
+        "processed_count_delta": 500,
+        "persisted_rows_observed": 0
+      },
+      "errors": []
+    },
+    {
+      "run_id": "benchmark-50-68e57719b7a34d06914bdd188ad45a6a",
+      "concurrency": 50,
+      "total_records": 500,
+      "successful_requests": 500,
+      "failed_requests": 0,
+      "accepted_requests": 500,
+      "rejected_requests": 0,
+      "status_distribution": {
+        "202": 500
+      },
+      "duration_seconds": 9.563,
+      "ingestion_throughput_logs_per_second": 54.95,
+      "processing_throughput_logs_per_second": 52.28,
+      "http_latency_ms": {
+        "p50": 583.042,
+        "p95": 2796.95,
+        "p99": 4164.12,
+        "min": 99.527,
+        "max": 5594.704,
+        "average": 877.124
+      },
+      "e2e_persistence_latency_ms": {
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "average": 0.0
+      },
+      "resource_utilization": {
+        "peak_rss_mb": 51.05,
+        "average_rss_mb": 50.83,
+        "peak_cpu_percent": 468.1,
+        "average_cpu_percent": 61.3
+      },
+      "drain3": {
+        "template_count": 8,
+        "samples": [
+          {
+            "elapsed_seconds": 0.14790440001524985,
+            "template_count": 8,
+            "processed_count": 500
+          },
+          {
+            "elapsed_seconds": 2.2663438000017777,
+            "template_count": 8,
+            "processed_count": 622
+          },
+          {
+            "elapsed_seconds": 3.7819655000348575,
+            "template_count": 8,
+            "processed_count": 700
+          },
+          {
+            "elapsed_seconds": 5.438637299987022,
+            "template_count": 8,
+            "processed_count": 760
+          },
+          {
+            "elapsed_seconds": 6.587971200002357,
+            "template_count": 8,
+            "processed_count": 833
+          },
+          {
+            "elapsed_seconds": 9.069149099988863,
+            "template_count": 8,
+            "processed_count": 994
+          }
+        ],
+        "convergence_rate_templates_per_1k_logs": 0.0,
+        "processed_count_delta": 500,
+        "persisted_rows_observed": 0
+      },
+      "errors": []
+    }
+  ]
+}

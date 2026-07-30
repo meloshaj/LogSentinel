@@ -196,7 +196,7 @@ def test_ingest_log_preserves_queue_full_response(monkeypatch) -> None:
     with patch.dict("os.environ", {"INGEST_API_KEY": VALID_KEY}, clear=False):
         response = client.post("/ingest-log", json=valid_payload(), headers=auth_headers())
 
-    assert response.status_code == 202
+    assert response.status_code == 503
     body = response.json()
     assert body["accepted"] is False
     assert body["queue_size"] == 10000
