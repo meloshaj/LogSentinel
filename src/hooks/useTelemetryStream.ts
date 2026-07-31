@@ -35,8 +35,8 @@ export function useTelemetryStream() {
   useEffect(() => {
     if (!latestEvent) return;
 
-    if (latestEvent.type === "frame_update" && Array.isArray(latestEvent.payload?.events)) {
-      const events = latestEvent.payload.events;
+    if ((latestEvent.type as string) === "frame_update" && Array.isArray((latestEvent.payload as any)?.events)) {
+      const events = (latestEvent.payload as any).events;
       
       let hasTrackingUpdates = false;
       let hasPerformanceUpdates = false;
@@ -70,14 +70,14 @@ export function useTelemetryStream() {
       });
     } 
     // Fallback for non-batched events if backend hasn't fully switched
-    else if (latestEvent.type === "infrastructure.tracking_loop.triggered") {
-      const payload = latestEvent.payload as TrackingLoopEvent;
+    else if ((latestEvent.type as string) === "infrastructure.tracking_loop.triggered") {
+      const payload = latestEvent.payload as unknown as TrackingLoopEvent;
       if (payload.window_id) {
         setActiveTrackingLoops(prev => ({ ...prev, [payload.window_id]: payload }));
       }
     }
-    else if (latestEvent.type === "infrastructure.performance.alert") {
-      const payload = latestEvent.payload as PerformanceEvent;
+    else if ((latestEvent.type as string) === "infrastructure.performance.alert") {
+      const payload = latestEvent.payload as unknown as PerformanceEvent;
       if (payload.metric_name) {
         setLatestPerformanceEvents(prev => ({ ...prev, [payload.metric_name]: payload }));
       }

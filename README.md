@@ -53,19 +53,35 @@ The frontend stores the JWT in `localStorage` as `authToken`, and protected dash
 
 Configure JWT signing with `JWT_SECRET_KEY`. The backend has a development fallback so local startup is easy, but production deployments must set a strong secret. Tokens are signed with `HS256` and currently expire after 60 minutes.
 
-Google sign-in uses a Google OAuth 2.0 Web Client ID. For local Vite development, set the same client ID in both backend and frontend shells:
+Google sign-in uses a Google OAuth 2.0 Web Client ID. Microsoft sign-in uses MSAL Authorization Code Flow with PKCE. For local Vite development, set the client IDs in both backend and frontend shells:
 
 ```powershell
 $env:GOOGLE_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com"
 $env:VITE_GOOGLE_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com"
+
+# Microsoft settings
+$env:VITE_MICROSOFT_AUTH_ENABLED="true"
+$env:VITE_MICROSOFT_SPA_CLIENT_ID="your-ms-client-id"
+$env:VITE_MICROSOFT_AUTHORITY="https://login.microsoftonline.com/common"
+$env:VITE_MICROSOFT_API_SCOPE="api://your-logsentinel-api-client-id/access_as_user"
+$env:VITE_MICROSOFT_REDIRECT_URI="http://localhost:5173/redirect.html"
+$env:VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI="http://localhost:5173"
 $env:FRONTEND_URL="http://localhost:5173"
 ```
 
-For Docker, put those values in a local `.env` file before running `docker compose up --build`. The frontend value is passed as a build argument, so rebuild the image after changing it:
+For Docker, put those values in a local `.env` file before running `docker compose up --build`. The frontend values are passed as build arguments, so rebuild the image after changing them:
 
 ```dotenv
 GOOGLE_CLIENT_ID=your-google-web-client-id.apps.googleusercontent.com
 VITE_GOOGLE_CLIENT_ID=your-google-web-client-id.apps.googleusercontent.com
+
+# Microsoft settings
+VITE_MICROSOFT_AUTH_ENABLED=true
+VITE_MICROSOFT_SPA_CLIENT_ID=your-ms-client-id
+VITE_MICROSOFT_AUTHORITY=https://login.microsoftonline.com/common
+VITE_MICROSOFT_API_SCOPE=api://your-logsentinel-api-client-id/access_as_user
+VITE_MICROSOFT_REDIRECT_URI=http://localhost:8080/redirect.html
+VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI=http://localhost:8080
 FRONTEND_URL=http://localhost:8080
 ```
 

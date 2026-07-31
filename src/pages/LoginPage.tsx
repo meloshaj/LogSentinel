@@ -17,11 +17,45 @@ import {
   SSOButton,
   MicrosoftIcon,
   GitHubIcon,
+  GoogleIcon,
   SuccessState,
   Spinner,
 } from "./AuthShared";
 import { getAuthErrorMessage, setAuthToken } from "../utils/auth";
 import { GoogleLogin } from "@react-oauth/google";
+import { useMicrosoftAuth } from "../hooks/useMicrosoftAuth";
+import { isMsalConfigured } from "../config/msal";
+import React from "react";
+
+function ConfiguredMicrosoftButton({ rememberMe, disabled, onSuccess, onError, onLoadingChange }: any) {
+  const microsoftAuth = useMicrosoftAuth();
+
+  React.useEffect(() => {
+    onLoadingChange(microsoftAuth.loading);
+  }, [microsoftAuth.loading, onLoadingChange]);
+
+  const handleLogin = async () => {
+    const res = await microsoftAuth.login(rememberMe);
+    if (res.success) {
+      onSuccess();
+    } else if (res.error) {
+      onError(res.error);
+    }
+  };
+
+  return <SSOButton provider={{ id: "Microsoft", label: "Continue with Microsoft", icon: <MicrosoftIcon />, onLogin: handleLogin, disabled: disabled || microsoftAuth.loading }} />;
+}
+
+function DisabledMicrosoftButton({ disabled, onError }: any) {
+  return <SSOButton provider={{ id: "Microsoft", label: "Continue with Microsoft", icon: <MicrosoftIcon />, onLogin: () => onError("Microsoft login is not currently configured"), disabled }} />;
+}
+
+function MicrosoftLoginButton(props: any) {
+  if (isMsalConfigured()) {
+    return <ConfiguredMicrosoftButton {...props} />;
+  }
+  return <DisabledMicrosoftButton {...props} />;
+}
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
@@ -34,6 +68,8 @@ export function LoginPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [msalLoading, setMsalLoading] = useState(false);
+  const isLoading = loading || msalLoading;
 
   const validate = () => {
     const e: Record<string, string> = {};
@@ -48,7 +84,16 @@ export function LoginPage() {
     ev.preventDefault();
     const errs = validate();
     setErrors(errs);
-    if (Object.keys(errs).length) return;
+    if (Object.keys(errs).length) {
+      // Focus the first invalid field
+      const firstError = Object.keys(errs)[0];
+      const elementId = firstError === 'email' ? 'email-address' : 'password';
+      const element = document.getElementById(elementId);
+      if (element) {
+        element.focus();
+      }
+      return;
+    }
     setLoading(true);
     try {
       const apiBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -76,7 +121,7 @@ export function LoginPage() {
       setLoading(false);
       setSuccess(true);
 
-      setAuthToken(data.access_token);
+      setAuthToken(data.access_token, rememberMe);
 
       // Redirect to dashboard after a short delay showing the success state
       setTimeout(() => {
@@ -86,6 +131,15 @@ export function LoginPage() {
       setErrors({ submit: "Unable to connect to authentication server" });
       setLoading(false);
     }
+  };
+
+  const handleMicrosoftSuccess = () => {
+    setSuccess(true);
+    setTimeout(() => navigate("/"), 1000);
+  };
+
+  const handleMicrosoftError = (msg: string) => {
+    setErrors({ submit: msg });
   };
 
   const handleGoogleSuccess = async (credentialResponse: any) => {
@@ -120,7 +174,7 @@ export function LoginPage() {
 
       setLoading(false);
       setSuccess(true);
-      setAuthToken(data.access_token);
+      setAuthToken(data.access_token, rememberMe);
       setTimeout(() => navigate("/"), 1000);
     } catch {
       setErrors({ submit: "Unable to connect to authentication server" });
@@ -161,7 +215,11 @@ export function LoginPage() {
             </div>
 
             {errors.submit && (
-              <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-xs flex items-center gap-2 select-none text-left">
+              <div
+                role="alert"
+                aria-live="assertive"
+                className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-xs flex items-center gap-2 select-none text-left"
+              >
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{errors.submit}</span>
               </div>
@@ -182,6 +240,8 @@ export function LoginPage() {
                   placeholder="you@company.com"
                   icon={<Mail className="w-4 h-4" />}
                   error={errors.email}
+                  disabled={isLoading}
+                  required
                 />
 
                 <InputField
@@ -192,12 +252,16 @@ export function LoginPage() {
                   placeholder="••••••••"
                   icon={<Lock className="w-4 h-4" />}
                   error={errors.password}
+                  disabled={isLoading}
+                  required
                   rightElement={
                     <button
                       type="button"
                       onClick={() => setShowPassword((v) => !v)}
                       className="text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
                       aria-label={showPassword ? "Hide password" : "Show password"}
+                      aria-pressed={showPassword}
+                      disabled={isLoading}
                     >
                       {showPassword ? (
                         <EyeOff className="w-4 h-4" />
@@ -215,6 +279,7 @@ export function LoginPage() {
                       type="checkbox"
                       checked={rememberMe}
                       onChange={(e) => setRememberMe(e.target.checked)}
+                      disabled={isLoading}
                       className="sr-only"
                     />
                     <div
@@ -222,7 +287,7 @@ export function LoginPage() {
                         "w-4 h-4 rounded border-2 flex items-center justify-center transition-all duration-150 flex-shrink-0",
                         rememberMe
                           ? "bg-sky-500 border-sky-500"
-                          : "border-slate-400 bg-white group-hover:border-slate-600",
+                          : isLoading ? "border-slate-300 bg-slate-50" : "border-slate-400 bg-white group-hover:border-slate-600",
                       ].join(" ")}
                     >
                       {rememberMe && (
@@ -236,7 +301,8 @@ export function LoginPage() {
                   <button
                     type="button"
                     onClick={() => navigate("/forgot-password")}
-                    className="text-[13px] text-sky-600 hover:text-sky-700 font-medium transition-colors select-none cursor-pointer"
+                    className="text-[13px] text-sky-600 hover:text-sky-700 font-medium transition-colors select-none cursor-pointer disabled:opacity-60"
+                    disabled={isLoading}
                   >
                     Forgot password?
                   </button>
@@ -244,17 +310,17 @@ export function LoginPage() {
 
                 <button
                   type="submit"
-                  disabled={loading}
+                  disabled={isLoading}
                   className={[
                     "w-full py-2.5 rounded-lg text-sm font-semibold",
                     "flex items-center justify-center gap-2 mt-1",
                     "transition-all duration-150 select-none cursor-pointer",
-                    loading
+                    isLoading
                       ? "bg-sky-600/40 text-sky-400/70 cursor-not-allowed"
                       : "bg-sky-500 hover:bg-sky-400 text-white shadow-lg shadow-sky-500/25 hover:shadow-sky-500/35 active:scale-[0.99]",
                   ].join(" ")}
                 >
-                  {loading ? (
+                  {isLoading ? (
                     <>
                       <Spinner /> Signing in…
                     </>
@@ -297,16 +363,28 @@ export function LoginPage() {
 
                     {/* Other SSO providers */}
                     <div className="space-y-2.5">
-                      <SSOButton provider={{ id: "Microsoft", label: "Continue with Microsoft", icon: <MicrosoftIcon />, onLogin: handleSSO }} />
-                      <SSOButton provider={{ id: "GitHub", label: "Continue with GitHub", icon: <GitHubIcon />, onLogin: handleSSO }} />
+                      <MicrosoftLoginButton rememberMe={rememberMe} disabled={isLoading} onSuccess={handleMicrosoftSuccess} onError={handleMicrosoftError} onLoadingChange={setMsalLoading} />
+                      <SSOButton provider={{ id: "GitHub", label: "Continue with GitHub", icon: <GitHubIcon />, onLogin: handleSSO, disabled: isLoading }} />
                     </div>
                   </div>
                 ) : (
-                  <SSOSection
-                    onGoogle={handleSSO}
-                    onMicrosoft={handleSSO}
-                    onGitHub={handleSSO}
-                  />
+                  <div className="mt-5">
+                    {/* Divider */}
+                    <div className="flex items-center gap-3 mb-4">
+                      <div className="flex-1 h-px bg-slate-300" />
+                      <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-700 uppercase select-none">
+                        or continue with
+                      </span>
+                      <div className="flex-1 h-px bg-slate-300" />
+                    </div>
+
+                    {/* Provider buttons */}
+                    <div className="space-y-2.5">
+                      <SSOButton provider={{ id: "Google", label: "Continue with Google", icon: <GoogleIcon />, onLogin: handleSSO, disabled: isLoading }} />
+                      <MicrosoftLoginButton rememberMe={rememberMe} disabled={isLoading} onSuccess={handleMicrosoftSuccess} onError={handleMicrosoftError} onLoadingChange={setMsalLoading} />
+                      <SSOButton provider={{ id: "GitHub", label: "Continue with GitHub", icon: <GitHubIcon />, onLogin: handleSSO, disabled: isLoading }} />
+                    </div>
+                  </div>
                 )}
               </>
             )}

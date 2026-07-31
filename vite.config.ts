@@ -8,6 +8,10 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 600,
     rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        redirect: path.resolve(__dirname, "redirect.html"),
+      },
       output: {
         manualChunks: {
           charts: ["recharts"],
@@ -21,4 +25,9 @@ export default defineConfig({
     },
   },
   assetsInclude: ["**/*.svg", "**/*.csv"],
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./tests/vitest/setup.ts'],
+    globals: true,
+  },
 });
