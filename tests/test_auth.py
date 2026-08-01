@@ -8,11 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import jwt
 import pytest
 from fastapi import status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
 from backend.app.core.database import get_async_session
 from backend.app.core.orm import UserRecord
-from backend.app.main import app
+from backend.app.main import _get_frontend_origin, app
 from backend.app.security.auth import (
     JWT_SECRET_KEY,
     JWT_ALGORITHM,
@@ -210,3 +211,75 @@ def test_get_profile_unauthorized_invalid_token(client: TestClient) -> None:
     headers = {"Authorization": "Bearer invalidtokenhere"}
     response = client.get("/api/auth/me", headers=headers)
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_auth_cors_is_limited_to_the_configured_frontend(
+    client: TestClient,
+) -> None:
+    assert _get_frontend_origin("http://localhost:5173/") == "http://localhost:5173"
+    with pytest.raises(ValueError, match=r"single HTTP\(S\) origin"):
+        _get_frontend_origin("*")
+    with pytest.raises(ValueError, match=r"single HTTP\(S\) origin"):
+        _get_frontend_origin("https://example.com/login")
+
+    cors_middleware = next(
+        middleware
+        for middleware in app.user_middleware
+        if middleware.cls is CORSMiddleware
+    )
+    allowed_origins = cors_middleware.kwargs["allow_origins"]
+    assert len(allowed_origins) == 1
+    assert "*" not in allowed_origins
+
+    allowed_response = client.options(
+        "/api/auth/login",
+        headers={
+            "Origin": allowed_origins[0],
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert allowed_response.status_code == status.HTTP_200_OK
+    assert allowed_response.headers["access-control-allow-origin"] == allowed_origins[0]
+
+    denied_response = client.options(
+        "/api/auth/login",
+        headers={
+            "Origin": "https://attacker.invalid",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert "access-control-allow-origin" not in denied_response.headers
+
+
+def test_forgot_password_never_generates_or_logs_a_reset_token(
+    client: TestClient,
+    mock_db: AsyncMock,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    user = UserRecord(
+        id=42,
+        email="reset-user@company.com",
+        hashed_password="hash",
+    )
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalar_one_or_none.return_value = user
+    mock_db.execute.return_value = mock_execute_result
+    sensitive_marker = "sensitive-reset-token-must-not-appear"
+
+    with patch(
+        "backend.app.routers.auth_router.create_access_token",
+        return_value=sensitive_marker,
+    ) as create_token:
+        response = client.post(
+            "/api/auth/forgot-password",
+            json={"email": user.email},
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert create_token.call_count == 0
+    assert sensitive_marker not in response.text
+    assert sensitive_marker not in caplog.text
+    captured = capsys.readouterr()
+    assert sensitive_marker not in captured.out
+    assert sensitive_marker not in captured.err

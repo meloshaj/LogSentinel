@@ -86,8 +86,8 @@ export function DependencyGraph({
           glowRadius,
           strokeWidth,
         },
-        sourcePosition: "right",
-        targetPosition: "left",
+        sourcePosition: Position.Right,
+        targetPosition: Position.Left,
         draggable: false,
         selectable: false,
         style: {
@@ -144,7 +144,10 @@ export function DependencyGraph({
       zoomOnPinch={reactFlowEngineConfig.zoomOnPinch}
       autoPanOnNodeDrag={reactFlowEngineConfig.autoPanOnNodeDrag}
       snapToGrid={reactFlowEngineConfig.snapToGrid}
-      snapGrid={reactFlowEngineConfig.snapGrid}
+      snapGrid={[
+        reactFlowEngineConfig.snapGrid[0],
+        reactFlowEngineConfig.snapGrid[1],
+      ]}
       proOptions={{ hideAttribution: true }}
       nodesFocusable={false}
       edgesFocusable={false}

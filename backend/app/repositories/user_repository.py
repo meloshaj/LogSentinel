@@ -41,8 +41,9 @@ class UserRepository:
         hashed_password: Optional[str] = None,
         full_name: Optional[str] = None,
         organization: Optional[str] = None,
+        commit: bool = True,
     ) -> UserRecord:
-        """Persist a new user record to the database and commit the transaction."""
+        """Persist a user, optionally leaving commit control to the caller."""
         new_user = UserRecord(
             email=email.strip().lower(),
             hashed_password=hashed_password,
@@ -50,9 +51,12 @@ class UserRepository:
             organization=organization,
         )
         db.add(new_user)
-        await db.commit()
-        await db.refresh(new_user)
-        logger.info("Successfully registered user: %s", email)
+        if commit:
+            await db.commit()
+            await db.refresh(new_user)
+            logger.info("Successfully registered user id=%s", new_user.id)
+        else:
+            await db.flush()
         return new_user
 
     @staticmethod
@@ -67,4 +71,3 @@ class UserRepository:
         await db.refresh(user)
         logger.info("Password updated for user: %s", user.email)
         return user
-

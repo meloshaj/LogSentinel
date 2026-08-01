@@ -3,7 +3,7 @@ import { BackgroundIllustration } from "../pages/AuthShared";
 
 export function AuthLayout() {
   return (
-    <div className="relative min-h-screen w-full flex flex-col items-center justify-center overflow-hidden px-4 py-12 font-[Inter,system-ui,sans-serif]">
+    <div className="relative min-h-screen w-full flex flex-col items-center justify-start sm:justify-center overflow-x-hidden overflow-y-auto px-4 py-8 sm:py-12 font-[Inter,system-ui,sans-serif]">
       {/* Base canvas */}
       <div className="fixed inset-0 bg-[#060c18]" />
 
@@ -19,7 +19,7 @@ export function AuthLayout() {
         {/* Tagline pill */}
         <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full border border-slate-700/40 bg-slate-900/50 backdrop-blur-sm">
           <div className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
-          <span className="text-[11px] font-mono tracking-[0.14em] text-slate-500 uppercase select-none">
+          <span className="text-[11px] font-mono tracking-[0.14em] text-slate-300 uppercase select-none text-center">
             Real-Time Log Intelligence &amp; Root Cause Analysis
           </span>
         </div>
@@ -28,7 +28,7 @@ export function AuthLayout() {
         <Outlet />
 
         {/* Footer trust signals */}
-        <div className="flex items-center gap-4 text-[11px] text-slate-700 font-mono select-none">
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[11px] text-slate-400 font-mono select-none text-center">
           <span>© 2025 LogSentinel Inc.</span>
           <span className="w-px h-3 bg-slate-800" />
           <span>SOC 2 Type II</span>

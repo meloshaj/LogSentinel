@@ -93,6 +93,9 @@ export function BackgroundIllustration() {
         .bg-node { animation: nodePulse 3s ease-in-out infinite; }
         .bg-stream { stroke-dasharray: 4 2.5; animation: streamSlide 5s linear infinite; }
         .bg-accent-ring { animation: accentRing 4s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .bg-node, .bg-stream, .bg-accent-ring { animation: none; }
+        }
       `}</style>
       <svg
         className="fixed inset-0 w-full h-full pointer-events-none select-none"
@@ -221,30 +224,44 @@ export function LogSentinelLogo({ large = false }: { large?: boolean }) {
 // ─── Input field ───────────────────────────────────────────────────────────
 
 interface InputFieldProps {
+  id?: string;
+  name?: string;
   label: string;
   type: string;
   value: string;
   onChange: (v: string) => void;
+  autoComplete?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   placeholder?: string;
   icon: React.ReactNode;
   error?: string;
   success?: boolean;
   rightElement?: React.ReactNode;
   optional?: boolean;
+  disabled?: boolean;
+  required?: boolean;
 }
 
 export function InputField({
+  id,
+  name,
   label,
   type,
   value,
   onChange,
+  autoComplete,
+  inputMode,
   placeholder,
   icon,
   error,
   success,
   rightElement,
   optional,
+  disabled,
+  required,
 }: InputFieldProps) {
+  const inputId = id || label.replace(/\s+/g, '-').toLowerCase();
+  const errorId = `${inputId}-error`;
   const borderClass = error
     ? "border-red-400 focus:border-red-500 focus:ring-red-500/20"
     : success
@@ -256,7 +273,7 @@ export function InputField({
   return (
     <div className="space-y-1.5 text-left">
       <div className="flex items-center justify-between">
-        <label className="text-[13px] font-semibold text-slate-700 leading-none select-none">
+        <label htmlFor={inputId} className="text-[13px] font-semibold text-slate-700 leading-none select-none">
           {label}
         </label>
         {optional && (
@@ -270,14 +287,23 @@ export function InputField({
           {icon}
         </div>
         <input
+          id={inputId}
+          name={name}
           type={type}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          autoComplete={autoComplete}
+          inputMode={inputMode}
           placeholder={placeholder}
+          disabled={disabled}
+          required={required}
+          aria-invalid={!!error}
+          aria-describedby={error ? errorId : undefined}
           className={[
             "w-full pl-10 py-2.5 bg-white border rounded-lg",
             "text-slate-900 placeholder:text-slate-400 text-sm",
             "transition-all duration-150 focus:outline-none focus:ring-2",
+            disabled ? "opacity-60 cursor-not-allowed bg-slate-50" : "",
             prClass,
             borderClass,
           ].join(" ")}
@@ -289,16 +315,25 @@ export function InputField({
         )}
         {success && !rightElement && (
           <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-            <Check className="w-4 h-4 text-emerald-400" />
+            <Check className="w-4 h-4 text-emerald-400" aria-hidden="true" />
           </div>
         )}
       </div>
-      {error && (
-        <p className="flex items-center gap-1.5 text-[12px] text-red-400 select-none">
-          <AlertCircle className="w-3 h-3 flex-shrink-0" />
-          {error}
-        </p>
-      )}
+      <div className="min-h-[18px]">
+        {error && (
+          <p
+            id={errorId}
+            role="alert"
+            className="flex items-center gap-1.5 text-[12px] text-red-600 select-none"
+          >
+            <AlertCircle
+              className="w-3 h-3 flex-shrink-0"
+              aria-hidden="true"
+            />
+            {error}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -330,7 +365,12 @@ export function PasswordStrengthBar({ password }: { password: string }) {
 
 export function Spinner() {
   return (
-    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+    <svg
+      className="animate-spin w-4 h-4"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path
         className="opacity-75"
@@ -349,6 +389,8 @@ export function SuccessState({ title, body }: { title: string; body: string }) {
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       className="flex flex-col items-center justify-center py-10 space-y-3 text-center"
+      role="status"
+      aria-live="polite"
     >
       <div className="w-13 h-13 rounded-full bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center mb-1">
         <Check className="w-6 h-6 text-emerald-400" strokeWidth={2.5} />
@@ -397,7 +439,11 @@ interface SSOProvider {
   id: string;
   label: string;
   icon: React.ReactNode;
-  onLogin: () => void;
+  onLogin: () => void | Promise<void>;
+  disabled?: boolean;
+  descriptionId?: string;
+  loading?: boolean;
+  title?: string;
 }
 
 export function SSOButton({ provider }: { provider: SSOProvider }) {
@@ -405,16 +451,20 @@ export function SSOButton({ provider }: { provider: SSOProvider }) {
     <button
       type="button"
       onClick={provider.onLogin}
+      disabled={provider.disabled}
       aria-label={`Continue with ${provider.id}`}
+      aria-describedby={provider.descriptionId}
+      aria-busy={provider.loading || undefined}
+      title={provider.title}
       className={[
         "w-full flex items-center gap-3 px-4 py-2.5 rounded-[11px]",
         "bg-slate-50 border-2 border-slate-300",
         "text-[13px] font-medium text-slate-700",
         "transition-all duration-150",
-        "hover:bg-slate-100 hover:border-slate-400 hover:text-slate-900",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2",
-        "active:scale-[0.985]",
-        "select-none cursor-pointer",
+        provider.disabled
+          ? "opacity-60 cursor-not-allowed"
+          : "hover:bg-slate-100 hover:border-slate-400 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 active:scale-[0.985] cursor-pointer",
+        "select-none",
       ].join(" ")}
     >
       <span className="flex-shrink-0 w-[18px] flex items-center justify-center">
@@ -429,15 +479,17 @@ export function SSOSection({
   onGoogle,
   onMicrosoft,
   onGitHub,
+  disabled,
 }: {
   onGoogle: () => void;
   onMicrosoft: () => void;
   onGitHub: () => void;
+  disabled?: boolean;
 }) {
   const providers: SSOProvider[] = [
-    { id: "Google",    label: "Continue with Google",    icon: <GoogleIcon />,    onLogin: onGoogle },
-    { id: "Microsoft", label: "Continue with Microsoft", icon: <MicrosoftIcon />, onLogin: onMicrosoft },
-    { id: "GitHub",    label: "Continue with GitHub",    icon: <GitHubIcon />, onLogin: onGitHub },
+    { id: "Google",    label: "Continue with Google",    icon: <GoogleIcon />,    onLogin: onGoogle, disabled },
+    { id: "Microsoft", label: "Continue with Microsoft", icon: <MicrosoftIcon />, onLogin: onMicrosoft, disabled },
+    { id: "GitHub",    label: "Continue with GitHub",    icon: <GitHubIcon />, onLogin: onGitHub, disabled },
   ];
 
   return (

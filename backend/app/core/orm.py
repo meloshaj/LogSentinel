@@ -174,6 +174,65 @@ class UserRecord(Base):
 
 
 # ---------------------------------------------------------------------------
+# External Identities — federated provider identity mappings
+# ---------------------------------------------------------------------------
+
+
+class ExternalIdentityRecord(Base):
+    """ORM model for the ``external_identities`` table.
+
+    Each row represents a single verified external provider identity
+    (e.g. Microsoft Entra, Google) linked to an internal LogSentinel
+    user.  The stable lookup key is (provider, issuer, subject).
+
+    The ``subject`` column stores the provider-stable identifier — for
+    Microsoft this is the ``sub`` claim (audience-specific pairwise ID),
+    NOT an email address.
+    """
+
+    __tablename__ = "external_identities"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(VARCHAR(32), nullable=False)
+    issuer: Mapped[str] = mapped_column(VARCHAR(512), nullable=False)
+    subject: Mapped[str] = mapped_column(VARCHAR(512), nullable=False)
+    tenant_id: Mapped[Optional[str]] = mapped_column(VARCHAR(128), nullable=True)
+    provider_object_id: Mapped[Optional[str]] = mapped_column(
+        VARCHAR(128),
+        nullable=True,
+        comment="Microsoft oid or provider-specific immutable object ID",
+    )
+    email: Mapped[Optional[str]] = mapped_column(
+        VARCHAR(255),
+        nullable=True,
+        comment="Contact email from the provider (informational only, not a lookup key)",
+    )
+    display_name: Mapped[Optional[str]] = mapped_column(VARCHAR(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "issuer", "subject",
+            name="uq_external_identities_provider_issuer_subject",
+        ),
+    )
+
+# ---------------------------------------------------------------------------
 # Tracking Loops — automated tracking for anomaly alerts
 # ---------------------------------------------------------------------------
 

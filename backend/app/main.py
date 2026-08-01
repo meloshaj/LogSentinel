@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
@@ -194,6 +196,25 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 from fastapi.middleware.cors import CORSMiddleware
 
+
+def _get_frontend_origin(value: str | None = None) -> str:
+    """Return one validated browser origin for CORS, never a wildcard."""
+    candidate = (
+        value if value is not None else os.getenv("FRONTEND_URL", "http://localhost:5173")
+    ).strip()
+    parsed = urlsplit(candidate)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("FRONTEND_URL must be a single HTTP(S) origin")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
 app = FastAPI(
     title="LogSentinel Ingestion Gateway",
     version="0.1.0",
@@ -203,7 +224,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[_get_frontend_origin()],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],

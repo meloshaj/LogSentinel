@@ -3,6 +3,7 @@ import { ChevronRight, Cpu, LogOut, Terminal, Zap } from "lucide-react";
 import { PRIMARY_NAV_ITEMS, SECONDARY_NAV_ITEMS } from "../constants/navigation";
 import type { NavigationItem } from "../constants/navigation";
 import { clearAuthToken } from "../utils/auth";
+import { clearMicrosoftAuthCache } from "../providers/MsalProviderWrapper";
 
 function NavigationLink({ item }: { item: NavigationItem }) {
   return (
@@ -36,8 +37,9 @@ function NavigationLink({ item }: { item: NavigationItem }) {
 export function Sidebar() {
   const navigate = useNavigate();
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     clearAuthToken();
+    await clearMicrosoftAuthCache();
     navigate("/login", { replace: true });
   };
 
@@ -73,7 +75,7 @@ export function Sidebar() {
           className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[#7d8590] hover:bg-[#161b22] hover:text-[#e6edf3] transition-colors cursor-pointer"
         >
           <LogOut className="w-4 h-4 shrink-0" />
-          <span style={{ fontSize: "13px", fontWeight: 400 }}>Log out</span>
+          <span style={{ fontSize: "13px", fontWeight: 400 }}>Log out of LogSentinel</span>
         </button>
         <div className="flex items-center gap-2.5 px-3 py-2 mt-1 rounded-lg bg-[#161b22]">
           <div className="flex items-center justify-center w-6 h-6 rounded-full bg-gradient-to-br from-[#1f6feb] to-[#388bfd] shrink-0">

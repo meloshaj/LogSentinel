@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -239,3 +240,148 @@ def get_ingestion_security_settings() -> IngestionSecuritySettings:
     keys.extend(_split_api_keys(os.getenv("INGEST_API_KEYS")))
 
     return IngestionSecuritySettings(api_keys=tuple(dict.fromkeys(keys)))
+
+
+class MicrosoftAuthSettings(BaseModel):
+    """Typed configuration for Microsoft Entra ID authentication.
+
+    When ``client_id`` or ``tenant_id`` is empty the Microsoft login endpoint
+    is disabled safely and returns HTTP 503. Multitenant modes must be chosen
+    explicitly; the application never defaults to ``common``.
+
+    Environment variables:
+        AZURE_CLIENT_ID          — Application (client) ID from the Entra
+                                   app registration.
+        AZURE_TENANT_ID          — Tenant ID.  Use ``common`` for multi-tenant
+                                   + personal accounts, ``organizations``
+                                   for any Entra directory, ``consumers``
+                                   for personal Microsoft accounts only, or a
+                                   specific GUID to restrict to one tenant.
+        AZURE_REQUIRED_SCOPE     — The delegated LogSentinel API scope that
+                                   must appear in the ``scp`` claim of the
+                                   incoming access token.
+        AZURE_ALLOWED_TENANTS    — Optional comma-separated list of tenant
+                                   GUIDs.  When non-empty only tokens
+                                   issued by these tenants are accepted.
+                                   Leave empty to accept any tenant
+                                   matching the authority.
+        AZURE_JWKS_TIMEOUT       — HTTP timeout (seconds) for fetching
+                                   Microsoft OIDC metadata / JWKS keys.
+        AZURE_JWKS_CACHE_TTL     — Seconds to cache the JWKS key set before
+                                   re-fetching (allows key rotation).
+    """
+
+    client_id: str = Field(
+        default="",
+        description="Application (client) ID (env: AZURE_CLIENT_ID)",
+    )
+    tenant_id: str = Field(
+        default="",
+        description=(
+            "Tenant GUID or 'common' / 'organizations' / 'consumers' "
+            "(env: AZURE_TENANT_ID)"
+        ),
+    )
+    required_scope: str = Field(
+        default="access_as_user",
+        description="Required delegated API scope in the scp claim (env: AZURE_REQUIRED_SCOPE)",
+    )
+    allowed_tenants: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Optional allow-list of tenant GUIDs (env: AZURE_ALLOWED_TENANTS)",
+    )
+    jwks_timeout_seconds: float = Field(
+        default=5.0,
+        gt=0.0,
+        description="HTTP timeout for OIDC / JWKS fetches (env: AZURE_JWKS_TIMEOUT)",
+    )
+    jwks_cache_ttl_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description="Seconds to cache the JWKS key set (env: AZURE_JWKS_CACHE_TTL)",
+    )
+
+    @field_validator("client_id")
+    @classmethod
+    def _normalize_client_id(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            return ""
+        try:
+            return str(UUID(normalized))
+        except ValueError as exc:
+            raise ValueError("AZURE_CLIENT_ID must be an application client GUID") from exc
+
+    @field_validator("required_scope")
+    @classmethod
+    def _validate_required_scope(cls, value: str) -> str:
+        if value.strip() != "access_as_user":
+            raise ValueError("AZURE_REQUIRED_SCOPE must be access_as_user")
+        return "access_as_user"
+
+    @field_validator("tenant_id")
+    @classmethod
+    def _validate_tenant_id(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            return ""
+        if normalized in {"common", "organizations", "consumers"}:
+            return normalized
+        try:
+            return str(UUID(normalized))
+        except ValueError as exc:
+            raise ValueError(
+                "AZURE_TENANT_ID must be common, organizations, consumers, or a tenant GUID"
+            ) from exc
+
+    @field_validator("allowed_tenants")
+    @classmethod
+    def _validate_allowed_tenants(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized: list[str] = []
+        for value in values:
+            try:
+                normalized.append(str(UUID(value.strip())))
+            except ValueError as exc:
+                raise ValueError(
+                    "AZURE_ALLOWED_TENANTS entries must be tenant GUIDs"
+                ) from exc
+        return tuple(normalized)
+
+    @property
+    def enabled(self) -> bool:
+        """Return whether Microsoft authentication is configured."""
+        return bool(self.client_id and self.tenant_id)
+
+    @property
+    def authority(self) -> str:
+        """Return the Microsoft identity v2.0 authority URL."""
+        return f"https://login.microsoftonline.com/{self.tenant_id}/v2.0"
+
+    @property
+    def openid_config_url(self) -> str:
+        """Return the OIDC discovery endpoint."""
+        return f"https://login.microsoftonline.com/{self.tenant_id}/v2.0/.well-known/openid-configuration"
+
+    @property
+    def jwks_url(self) -> str:
+        """Return the JWKS endpoint for the configured tenant."""
+        return f"https://login.microsoftonline.com/{self.tenant_id}/discovery/v2.0/keys"
+
+
+def _split_csv(value: str | None) -> tuple[str, ...]:
+    """Split a comma-separated env value into a tuple of trimmed non-empty strings."""
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+def get_microsoft_auth_settings() -> MicrosoftAuthSettings:
+    """Construct Microsoft authentication settings from the current environment."""
+    return MicrosoftAuthSettings(
+        client_id=os.getenv("AZURE_CLIENT_ID", ""),
+        tenant_id=os.getenv("AZURE_TENANT_ID", ""),
+        required_scope=os.getenv("AZURE_REQUIRED_SCOPE", "access_as_user"),
+        allowed_tenants=_split_csv(os.getenv("AZURE_ALLOWED_TENANTS")),
+        jwks_timeout_seconds=float(os.getenv("AZURE_JWKS_TIMEOUT", "5.0")),
+        jwks_cache_ttl_seconds=int(os.getenv("AZURE_JWKS_CACHE_TTL", "3600")),
+    )
