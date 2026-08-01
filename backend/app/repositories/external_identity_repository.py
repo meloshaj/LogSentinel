@@ -67,8 +67,9 @@ class ExternalIdentityRepository:
         provider_object_id: Optional[str] = None,
         email: Optional[str] = None,
         display_name: Optional[str] = None,
+        commit: bool = True,
     ) -> ExternalIdentityRecord:
-        """Persist a new external identity mapping and commit."""
+        """Persist an identity, optionally leaving commit control to the caller."""
         record = ExternalIdentityRecord(
             user_id=user_id,
             provider=provider,
@@ -80,11 +81,14 @@ class ExternalIdentityRepository:
             display_name=display_name,
         )
         db.add(record)
-        await db.commit()
-        await db.refresh(record)
-        logger.info(
-            "Created external identity: provider=%s user_id=%d",
-            provider,
-            user_id,
-        )
+        if commit:
+            await db.commit()
+            await db.refresh(record)
+            logger.info(
+                "Created external identity: provider=%s user_id=%d",
+                provider,
+                user_id,
+            )
+        else:
+            await db.flush()
         return record

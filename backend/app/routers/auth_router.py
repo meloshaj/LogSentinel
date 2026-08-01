@@ -6,13 +6,14 @@ user profile retrieval, Google SSO, Microsoft SSO, and password reset.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from datetime import timedelta
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
+from sqlalchemy.exc import IntegrityError
 
 from ..core.database import AsyncSessionDep
 from ..core.settings import get_microsoft_auth_settings
@@ -99,6 +100,7 @@ class MicrosoftLoginRequest(BaseModel):
     access_token: str = Field(
         ...,
         min_length=1,
+        max_length=16384,
         description="Microsoft access token issued for the LogSentinel API audience",
     )
 
@@ -228,42 +230,18 @@ async def forgot_password(
     payload: ForgotPasswordRequest,
     db: AsyncSessionDep,
 ) -> dict:
-    """Generate a password-reset token and log the reset link.
+    """Accept a password-reset request without exposing account existence.
 
     Always returns a success-shaped response regardless of whether the email
-    exists to prevent email enumeration attacks.
+    exists to prevent email enumeration attacks. Email delivery is not yet
+    configured, so this endpoint must not generate or log a bearer token.
     """
-    import jwt as pyjwt
-
     user = await UserRepository.get_user_by_email(db, payload.email)
 
     if user is not None:
-        # Create a short-lived token (15 minutes) with a reset-specific claim
-        reset_token = create_access_token(
-            data={"sub": user.email, "type": "password_reset"},
-            expires_delta=timedelta(minutes=15),
-        )
-
-        # In production you would send an email here.
-        # For now we log the link to the console so it can be used locally.
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
-        reset_link = f"{frontend_url}/reset-password?token={reset_token}"
         logger.info(
-            "──── PASSWORD RESET LINK ────\n"
-            "  Email : %s\n"
-            "  Link  : %s\n"
-            "─────────────────────────────",
-            user.email,
-            reset_link,
-        )
-        # Also print directly to ensure visibility in Docker logs
-        print(
-            f"\n{'='*50}\n"
-            f"  PASSWORD RESET LINK\n"
-            f"  Email : {user.email}\n"
-            f"  Link  : {reset_link}\n"
-            f"{'='*50}\n",
-            flush=True,
+            "Password reset requested for user_id=%s; email delivery is not configured",
+            user.id,
         )
 
     # Generic response to prevent email enumeration
@@ -330,7 +308,12 @@ def _get_microsoft_verifier() -> MicrosoftTokenVerifier:
     """Return a cached MicrosoftTokenVerifier instance."""
     global _microsoft_verifier
     if _microsoft_verifier is None:
-        settings = get_microsoft_auth_settings()
+        try:
+            settings = get_microsoft_auth_settings()
+        except (ValidationError, ValueError):
+            raise MicrosoftAuthDisabledError()
+        if not settings.enabled:
+            raise MicrosoftAuthDisabledError()
         _microsoft_verifier = MicrosoftTokenVerifier(settings)
     return _microsoft_verifier
 
@@ -352,11 +335,10 @@ async def microsoft_login(
     local or Google user, an account-linking conflict is returned rather
     than silently merging.
     """
-    verifier = _get_microsoft_verifier()
-
     # ── Verify the Microsoft access token ──────────────────────────────
     try:
-        identity = verifier.verify(payload.access_token)
+        verifier = _get_microsoft_verifier()
+        identity = await asyncio.to_thread(verifier.verify, payload.access_token)
     except MicrosoftAuthDisabledError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -414,7 +396,7 @@ async def microsoft_login(
         return TokenResponse(access_token=token)
 
     # ── New Microsoft identity — provision user ────────────────────────
-    candidate_email = identity.email
+    candidate_email = identity.email.strip().lower() if identity.email else None
 
     if not candidate_email:
         # No usable email from Microsoft claims — cannot satisfy the
@@ -435,28 +417,42 @@ async def microsoft_login(
             detail="account_linking_required",
         )
 
-    # Create the new user
-    new_user = await UserRepository.create_user(
-        db=db,
-        email=candidate_email,
-        hashed_password=None,  # SSO users have no local password
-        full_name=identity.display_name,
-    )
+    # Flush the user and external identity in one transaction. A failure in
+    # either write must never leave an orphaned passwordless user.
+    try:
+        new_user = await UserRepository.create_user(
+            db=db,
+            email=candidate_email,
+            hashed_password=None,  # SSO users have no local password
+            full_name=identity.display_name,
+            commit=False,
+        )
+        external_identity = await ExternalIdentityRepository.create_external_identity(
+            db=db,
+            user_id=new_user.id,
+            provider="microsoft",
+            issuer=identity.issuer,
+            subject=identity.subject,
+            tenant_id=identity.tenant_id,
+            provider_object_id=identity.object_id,
+            email=candidate_email,
+            display_name=identity.display_name,
+            commit=False,
+        )
+        await db.commit()
+        await db.refresh(new_user)
+        await db.refresh(external_identity)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="microsoft_identity_conflict",
+        )
+    except Exception:
+        await db.rollback()
+        raise
 
-    # Persist the external identity mapping
-    await ExternalIdentityRepository.create_external_identity(
-        db=db,
-        user_id=new_user.id,
-        provider="microsoft",
-        issuer=identity.issuer,
-        subject=identity.subject,
-        tenant_id=identity.tenant_id,
-        provider_object_id=identity.object_id,
-        email=candidate_email,
-        display_name=identity.display_name,
-    )
-
-    logger.info("Auto-created user via Microsoft SSO: %s", candidate_email)
+    logger.info("Auto-created user via Microsoft SSO: user_id=%d", new_user.id)
 
     token = create_access_token(data={"sub": new_user.email})
     return TokenResponse(access_token=token)

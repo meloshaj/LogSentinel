@@ -49,7 +49,7 @@ The React dashboard uses the backend JWT endpoints under `/api/auth` for user lo
 - `POST /api/auth/login` verifies the password and returns a bearer JWT.
 - `GET /api/auth/me` verifies `Authorization: Bearer <token>` and returns the current user.
 
-The frontend stores the JWT in `localStorage` as `authToken`, and protected dashboard routes treat that token as the only source of truth. Logout clears `authToken` and redirects back to `/login`. The legacy `isLoggedIn` flag is cleared when auth state changes and is not used for access decisions.
+The frontend stores only the internal LogSentinel JWT as `authToken`: Remember Me uses `localStorage`, while an unchecked login uses `sessionStorage`. Protected dashboard routes treat that internal token as the only source of truth. Logout clears both stores and the local MSAL cache before returning to `/login`. The legacy `isLoggedIn` flag is cleared when auth state changes and is not used for access decisions.
 
 Configure JWT signing with `JWT_SECRET_KEY`. The backend has a development fallback so local startup is easy, but production deployments must set a strong secret. Tokens are signed with `HS256` and currently expire after 60 minutes.
 
@@ -60,12 +60,18 @@ $env:GOOGLE_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com"
 $env:VITE_GOOGLE_CLIENT_ID="your-google-web-client-id.apps.googleusercontent.com"
 
 # Microsoft settings
+$env:JWT_SECRET_KEY="generate-a-strong-random-local-secret"
+$env:AZURE_CLIENT_ID="your-logsentinel-api-client-id"
+$env:AZURE_TENANT_ID="<tenant-guid-or-explicit-mode>"
+$env:AZURE_REQUIRED_SCOPE="access_as_user"
+$env:AZURE_ALLOWED_TENANTS=""
+$env:VITE_API_URL="http://localhost:8000"
 $env:VITE_MICROSOFT_AUTH_ENABLED="true"
-$env:VITE_MICROSOFT_SPA_CLIENT_ID="your-ms-client-id"
-$env:VITE_MICROSOFT_AUTHORITY="https://login.microsoftonline.com/common"
+$env:VITE_MICROSOFT_SPA_CLIENT_ID="your-spa-client-id"
+$env:VITE_MICROSOFT_AUTHORITY="https://login.microsoftonline.com/<tenant-guid-or-explicit-mode>"
 $env:VITE_MICROSOFT_API_SCOPE="api://your-logsentinel-api-client-id/access_as_user"
 $env:VITE_MICROSOFT_REDIRECT_URI="http://localhost:5173/redirect.html"
-$env:VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI="http://localhost:5173"
+$env:VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI="http://localhost:5173/login"
 $env:FRONTEND_URL="http://localhost:5173"
 ```
 
@@ -76,16 +82,24 @@ GOOGLE_CLIENT_ID=your-google-web-client-id.apps.googleusercontent.com
 VITE_GOOGLE_CLIENT_ID=your-google-web-client-id.apps.googleusercontent.com
 
 # Microsoft settings
+JWT_SECRET_KEY=generate-a-strong-random-secret
+AZURE_CLIENT_ID=your-logsentinel-api-client-id
+AZURE_TENANT_ID=<tenant-guid-or-explicit-mode>
+AZURE_REQUIRED_SCOPE=access_as_user
+AZURE_ALLOWED_TENANTS=
 VITE_MICROSOFT_AUTH_ENABLED=true
-VITE_MICROSOFT_SPA_CLIENT_ID=your-ms-client-id
-VITE_MICROSOFT_AUTHORITY=https://login.microsoftonline.com/common
+VITE_MICROSOFT_SPA_CLIENT_ID=your-spa-client-id
+VITE_MICROSOFT_AUTHORITY=https://login.microsoftonline.com/<tenant-guid-or-explicit-mode>
 VITE_MICROSOFT_API_SCOPE=api://your-logsentinel-api-client-id/access_as_user
 VITE_MICROSOFT_REDIRECT_URI=http://localhost:8080/redirect.html
-VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI=http://localhost:8080
+VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI=http://localhost:8080/login
+VITE_API_URL=http://localhost:8080
 FRONTEND_URL=http://localhost:8080
 ```
 
-Because `authToken` is stored in `localStorage`, it persists across browser refreshes and is readable by JavaScript running on the page. Keep the frontend free of XSS issues, avoid storing other secrets in the browser, and consider an HttpOnly cookie strategy before treating this as a hardened production auth model.
+Because `authToken` is browser-readable in either storage, keep the frontend free of XSS issues, avoid storing other secrets in the browser, and consider an HttpOnly cookie strategy before treating this as a fully hardened session model. MSAL owns its cache; Microsoft access and ID tokens are never passed to `setAuthToken`.
+
+The definitive Entra registration, environment, redirect URI, and live-validation contract is in [`docs/MICROSOFT_AUTH_SETUP.md`](docs/MICROSOFT_AUTH_SETUP.md).
 
 This user dashboard JWT flow is separate from the machine-to-machine ingestion guard. `/ingest-log` continues to use the `X-API-Key` header configured by `INGEST_API_KEY` or `INGEST_API_KEYS`; dashboard JWTs are not accepted as ingestion API keys.
 

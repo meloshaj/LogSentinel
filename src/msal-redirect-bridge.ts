@@ -1,6 +1,9 @@
 import { broadcastResponseToMainFrame } from "@azure/msal-browser/redirect-bridge";
 
-broadcastResponseToMainFrame().catch((e) => {
-  // Catch but do not log sensitive data or token fragments
-  console.error("Redirect bridge communication failed", e.name);
+broadcastResponseToMainFrame().catch((error: unknown) => {
+  // Report only the error class; messages can contain redirect parameters.
+  console.error(
+    "Redirect bridge communication failed",
+    error instanceof Error ? error.name : "UnknownError",
+  );
 });

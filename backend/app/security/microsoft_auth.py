@@ -28,8 +28,8 @@ import re
 import time
 import threading
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Optional
+from uuid import UUID
 
 import jwt
 from jwt import PyJWKClient
@@ -43,6 +43,8 @@ _GRAPH_AUDIENCES = frozenset({
     "https://graph.microsoft.com",
     "00000003-0000-0000-c000-000000000000",
 })
+
+_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
 
 # Multi-tenant issuer pattern: https://login.microsoftonline.com/{tenantid}/v2.0
 _MULTI_TENANT_ISSUER_RE = re.compile(
@@ -69,7 +71,7 @@ class MicrosoftAuthDisabledError(MicrosoftAuthError):
     def __init__(self) -> None:
         super().__init__(
             "microsoft_auth_disabled",
-            "Microsoft authentication is not configured. Set the AZURE_CLIENT_ID environment variable.",
+            "Microsoft authentication is not configured.",
         )
 
 
@@ -169,6 +171,8 @@ class _CachedJWKClient:
         client = self._ensure_client()
         try:
             return client.get_signing_key_from_jwt(token)
+        except jwt.InvalidTokenError:
+            raise InvalidMicrosoftTokenError("The Microsoft access token is malformed.")
         except jwt.PyJWKClientConnectionError:
             raise MicrosoftJWKSUnavailableError()
         except jwt.PyJWKClientError:
@@ -198,6 +202,17 @@ class MicrosoftTokenVerifier:
         """
         if not self._settings.enabled:
             raise MicrosoftAuthDisabledError()
+
+        # Reject malformed headers and unexpected algorithms before a token can
+        # trigger a JWKS lookup or refresh.
+        try:
+            unverified_header = jwt.get_unverified_header(access_token)
+        except jwt.InvalidTokenError:
+            raise InvalidMicrosoftTokenError("The Microsoft access token is malformed.")
+        if unverified_header.get("alg") != "RS256" or not isinstance(
+            unverified_header.get("kid"), str
+        ):
+            raise InvalidMicrosoftTokenError("The Microsoft access token header is invalid.")
 
         # ── Retrieve the signing key by kid ───────────────────────────
         signing_key = self._jwk_client.get_signing_key_from_jwt(access_token)
@@ -240,30 +255,50 @@ class MicrosoftTokenVerifier:
         iss = payload.get("iss", "")
         tid = payload.get("tid", "")
 
-        if not tid:
+        if not isinstance(iss, str):
+            raise InvalidMicrosoftTokenError("Token issuer claim is invalid.")
+
+        if not isinstance(tid, str) or not tid:
             raise InvalidMicrosoftTokenError("Token is missing the tenant ID claim.")
 
+        try:
+            normalized_tid = str(UUID(tid))
+        except (ValueError, TypeError, AttributeError):
+            raise InvalidMicrosoftTokenError("Token tenant ID is not a valid GUID.")
+
         # Multi-tenant: issuer must be https://login.microsoftonline.com/{tid}/v2.0
-        expected_issuer = f"https://login.microsoftonline.com/{tid}/v2.0"
+        expected_issuer = f"https://login.microsoftonline.com/{normalized_tid}/v2.0"
         if iss != expected_issuer:
             # Also check the generic pattern for safety
             if not _MULTI_TENANT_ISSUER_RE.match(iss):
                 raise InvalidMicrosoftTokenError("The token issuer is not a valid Microsoft identity endpoint.")
             raise InvalidMicrosoftTokenError("The token issuer does not match the token tenant.")
 
-        # ── Tenant allow-list ─────────────────────────────────────────
-        if self._settings.allowed_tenants and tid not in self._settings.allowed_tenants:
+        # ── Configured tenant mode and optional allow-list ────────────
+        configured_tenant = self._settings.tenant_id
+        if configured_tenant not in {"common", "organizations", "consumers"}:
+            if normalized_tid != configured_tenant:
+                raise InvalidMicrosoftTenantError()
+        elif configured_tenant == "consumers" and normalized_tid != _CONSUMER_TENANT_ID:
+            raise InvalidMicrosoftTenantError()
+        elif configured_tenant == "organizations" and normalized_tid == _CONSUMER_TENANT_ID:
+            raise InvalidMicrosoftTenantError()
+
+        if (
+            self._settings.allowed_tenants
+            and normalized_tid not in self._settings.allowed_tenants
+        ):
             raise InvalidMicrosoftTenantError()
 
         # ── Validate required scope ───────────────────────────────────
         scp = payload.get("scp", "")
-        scopes = set(scp.split()) if scp else set()
+        scopes = set(scp.split()) if isinstance(scp, str) else set()
         if self._settings.required_scope not in scopes:
             raise MissingRequiredScopeError()
 
         # ── Extract stable identity ───────────────────────────────────
         sub = payload.get("sub", "")
-        if not sub:
+        if not isinstance(sub, str) or not sub:
             raise InvalidMicrosoftTokenError("Token is missing the subject claim.")
 
         # ── Extract profile information (informational only) ──────────
@@ -282,7 +317,7 @@ class MicrosoftTokenVerifier:
         return VerifiedMicrosoftIdentity(
             subject=sub,
             issuer=iss,
-            tenant_id=tid,
+            tenant_id=normalized_tid,
             object_id=oid,
             email=email,
             display_name=display_name,

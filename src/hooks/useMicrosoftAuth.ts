@@ -1,183 +1,269 @@
-import { useState, useCallback } from "react";
-import { useMsal } from "@azure/msal-react";
-import { loginRequest, isMsalConfigured } from "../config/msal";
-import { setAuthToken, clearAuthToken } from "../utils/auth";
-import { useNavigate } from "react-router";
+import { useCallback, useRef, useState } from "react";
 import { InteractionRequiredAuthError } from "@azure/msal-browser";
+import { useMsal } from "@azure/msal-react";
+import { isMsalConfigured, loginRequest } from "../config/msal";
+import { setAuthToken } from "../utils/auth";
+
+export interface MicrosoftLoginResult {
+  success: boolean;
+  error?: string;
+  cancelled?: boolean;
+}
+
+const BACKEND_ERROR_MESSAGES: Record<string, string> = {
+  microsoft_auth_disabled: "Microsoft sign-in is not currently configured.",
+  invalid_microsoft_token:
+    "Microsoft sign-in could not be verified. Please try again.",
+  invalid_microsoft_tenant:
+    "This Microsoft organization is not allowed to use LogSentinel.",
+  missing_required_scope:
+    "LogSentinel API permission is missing. Ask an administrator to grant access.",
+  account_linking_required:
+    "An existing LogSentinel account uses this email. Link accounts explicitly before using Microsoft sign-in.",
+  microsoft_identity_conflict:
+    "This Microsoft identity conflicts with an existing account mapping. Contact an administrator.",
+  microsoft_onboarding_required:
+    "Microsoft did not provide the account information required to create a LogSentinel user.",
+  microsoft_jwks_unavailable:
+    "Microsoft verification is temporarily unavailable. Please try again later.",
+};
+
+export function mapMicrosoftBackendError(
+  status: number,
+  detail: unknown,
+): string {
+  if (typeof detail === "string" && BACKEND_ERROR_MESSAGES[detail]) {
+    return BACKEND_ERROR_MESSAGES[detail];
+  }
+
+  switch (status) {
+    case 401:
+      return "Microsoft sign-in could not be verified. Please try again.";
+    case 403:
+      return "This Microsoft account does not have permission to use LogSentinel.";
+    case 409:
+      return "This Microsoft account cannot be connected automatically. Contact an administrator.";
+    case 503:
+      return "Microsoft sign-in is temporarily unavailable. Please try again later.";
+    default:
+      return "Microsoft sign-in could not be completed. Please try again.";
+  }
+}
+
+function readErrorCode(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "errorCode" in error &&
+    typeof error.errorCode === "string"
+  ) {
+    return error.errorCode.toLowerCase();
+  }
+  return "";
+}
+
+function isFailedFetch(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "message" in error &&
+    error.message === "Failed to fetch"
+  );
+}
+
+export function mapMicrosoftClientError(error: unknown): string | null {
+  const errorCode = readErrorCode(error);
+
+  if (errorCode === "user_cancelled" || errorCode === "user_canceled") {
+    return null;
+  }
+
+  if (
+    errorCode === "popup_window_error" ||
+    errorCode === "empty_window_error" ||
+    errorCode === "block_nested_popups"
+  ) {
+    return "Your browser blocked the Microsoft sign-in window. Allow pop-ups for this site and try again.";
+  }
+
+  if (errorCode === "monitor_popup_timeout") {
+    return "The Microsoft sign-in window timed out. Please try again.";
+  }
+
+  if (errorCode === "consent_required") {
+    return "LogSentinel API permission must be granted before Microsoft sign-in can continue.";
+  }
+
+  if (errorCode === "interaction_required" || errorCode === "login_required") {
+    return "Microsoft needs you to sign in again. Please retry.";
+  }
+
+  if (
+    errorCode === "client_not_initialized" ||
+    errorCode === "stubbed_public_client_application_called" ||
+    errorCode === "invalid_client" ||
+    errorCode === "redirect_uri_mismatch"
+  ) {
+    return "Microsoft sign-in is unavailable because its configuration is invalid.";
+  }
+
+  if (
+    (typeof navigator !== "undefined" && !navigator.onLine) ||
+    isFailedFetch(error)
+  ) {
+    return "Unable to connect to Microsoft or the LogSentinel authentication service. Check your connection and retry.";
+  }
+
+  return "Microsoft sign-in could not be completed. Please try again.";
+}
 
 export function useMicrosoftAuth() {
   const { instance, accounts } = useMsal();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const navigate = useNavigate();
+  const operationInFlight = useRef(false);
 
-  const login = useCallback(async (rememberMe: boolean = false): Promise<{ success: boolean; error?: string }> => {
-    if (!isMsalConfigured()) {
-      const msg = "Microsoft login is not currently configured";
-      setError(msg);
-      return { success: false, error: msg };
-    }
+  const login = useCallback(
+    async (rememberMe = false): Promise<MicrosoftLoginResult> => {
+      if (operationInFlight.current) {
+        return { success: false };
+      }
 
-    setLoading(true);
-    setError(null);
+      if (!isMsalConfigured()) {
+        const message = "Microsoft sign-in is not currently configured.";
+        setError(message);
+        return { success: false, error: message };
+      }
 
-    try {
-      let microsoftAccessToken = "";
-      
-      const activeAccount = instance.getActiveAccount();
-      const account = activeAccount || accounts[0] || null;
+      operationInFlight.current = true;
+      setLoading(true);
+      setError(null);
 
-      if (account) {
-        // Ensure active account is set if we have one
-        if (instance.getActiveAccount()?.homeAccountId !== account.homeAccountId) {
+      try {
+        let microsoftAccessToken = "";
+        const activeAccount = instance.getActiveAccount();
+        const account = activeAccount ?? accounts[0] ?? null;
+
+        if (account) {
           instance.setActiveAccount(account);
-        }
-        
-        try {
-          const silentResponse = await instance.acquireTokenSilent({
-            ...loginRequest,
-            account,
-          });
-          microsoftAccessToken = silentResponse.accessToken;
-        } catch (silentError) {
-          if (silentError instanceof InteractionRequiredAuthError) {
+
+          try {
+            const silentResponse = await instance.acquireTokenSilent({
+              ...loginRequest,
+              account,
+            });
+            microsoftAccessToken = silentResponse.accessToken;
+          } catch (silentError) {
+            if (!(silentError instanceof InteractionRequiredAuthError)) {
+              throw silentError;
+            }
+
             const popupResponse = await instance.acquireTokenPopup({
               ...loginRequest,
               account,
             });
             microsoftAccessToken = popupResponse.accessToken;
-            instance.setActiveAccount(popupResponse.account);
-          } else {
-            throw silentError;
+            instance.setActiveAccount(popupResponse.account ?? account);
           }
-        }
-      } else {
-        const popupResponse = await instance.loginPopup({
-          ...loginRequest,
-          prompt: "select_account"
-        });
-        
-        if (popupResponse.account) {
-          instance.setActiveAccount(popupResponse.account);
-        }
-        
-        microsoftAccessToken = popupResponse.accessToken;
-        
-        if (!microsoftAccessToken && popupResponse.account) {
-          // If loginPopup somehow doesn't return an access token but returns an account,
-          // try silent acquisition as a fallback
-          try {
-            const silentResp = await instance.acquireTokenSilent({
-              ...loginRequest,
-              account: popupResponse.account
-            });
-            microsoftAccessToken = silentResp.accessToken;
-          } catch (err) {
-            if (err instanceof InteractionRequiredAuthError) {
-              const interactiveResp = await instance.acquireTokenPopup({
+        } else {
+          const loginResponse = await instance.loginPopup({
+            ...loginRequest,
+            prompt: "select_account",
+          });
+
+          if (!loginResponse.account) {
+            const message =
+              "Microsoft sign-in did not return an account. Please try again.";
+            setError(message);
+            return { success: false, error: message };
+          }
+
+          instance.setActiveAccount(loginResponse.account);
+          microsoftAccessToken = loginResponse.accessToken;
+
+          if (!microsoftAccessToken) {
+            try {
+              const silentResponse = await instance.acquireTokenSilent({
                 ...loginRequest,
-                account: popupResponse.account
+                account: loginResponse.account,
               });
-              microsoftAccessToken = interactiveResp.accessToken;
-            } else {
-              throw err;
+              microsoftAccessToken = silentResponse.accessToken;
+            } catch (silentError) {
+              if (!(silentError instanceof InteractionRequiredAuthError)) {
+                throw silentError;
+              }
+
+              const popupResponse = await instance.acquireTokenPopup({
+                ...loginRequest,
+                account: loginResponse.account,
+              });
+              microsoftAccessToken = popupResponse.accessToken;
+              instance.setActiveAccount(
+                popupResponse.account ?? loginResponse.account,
+              );
             }
           }
         }
-      }
 
-      if (!microsoftAccessToken) {
-        throw new Error("No access token received from Microsoft");
-      }
-
-      // Send token to LogSentinel backend
-      const apiBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
-      const response = await fetch(`${apiBase}/api/auth/microsoft`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ access_token: microsoftAccessToken }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        const detail = data.detail;
-        let errorMessage = "Microsoft authentication could not be verified";
-        
-        switch (detail) {
-          case "microsoft_auth_disabled":
-            errorMessage = "Microsoft login is not currently configured";
-            break;
-          case "invalid_microsoft_token":
-            errorMessage = "Microsoft authentication could not be verified";
-            break;
-          case "invalid_microsoft_tenant":
-            errorMessage = "this Microsoft organization is not allowed";
-            break;
-          case "missing_required_scope":
-            errorMessage = "required LogSentinel API permission is missing";
-            break;
-          case "account_linking_required":
-            errorMessage = "an existing LogSentinel account must be explicitly linked";
-            break;
-          case "microsoft_identity_conflict":
-            errorMessage = "Microsoft identity conflicts with an existing mapping";
-            break;
-          case "microsoft_onboarding_required":
-            errorMessage = "additional account information is required";
-            break;
-          case "microsoft_jwks_unavailable":
-            errorMessage = "Microsoft verification is temporarily unavailable";
-            break;
-          default:
-            if (response.status === 503) {
-              errorMessage = "Microsoft verification is temporarily unavailable";
-            } else if (typeof detail === "string") {
-              errorMessage = detail;
-            }
-            break;
+        if (!microsoftAccessToken) {
+          const message =
+            "Microsoft sign-in did not return an access token. Please try again.";
+          setError(message);
+          return { success: false, error: message };
         }
-        setError(errorMessage);
+
+        const apiBase = (
+          import.meta.env.VITE_API_URL || "http://localhost:8000"
+        ).replace(/\/+$/, "");
+        const response = await fetch(`${apiBase}/api/auth/microsoft`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ access_token: microsoftAccessToken }),
+        });
+
+        if (!response.ok) {
+          const payload = await response.json().catch(() => null);
+          const message = mapMicrosoftBackendError(
+            response.status,
+            payload && typeof payload === "object" && "detail" in payload
+              ? payload.detail
+              : undefined,
+          );
+          setError(message);
+          return { success: false, error: message };
+        }
+
+        const payload = await response.json().catch(() => null);
+        const internalToken =
+          payload &&
+          typeof payload === "object" &&
+          "access_token" in payload &&
+          typeof payload.access_token === "string"
+            ? payload.access_token
+            : "";
+
+        if (!internalToken) {
+          const message =
+            "The authentication service returned an invalid LogSentinel session. Please retry.";
+          setError(message);
+          return { success: false, error: message };
+        }
+
+        setAuthToken(internalToken, rememberMe);
+        return { success: true };
+      } catch (caughtError) {
+        const message = mapMicrosoftClientError(caughtError);
+        setError(message);
+        return message
+          ? { success: false, error: message }
+          : { success: false, cancelled: true };
+      } finally {
+        operationInFlight.current = false;
         setLoading(false);
-        return { success: false, error: errorMessage };
       }
-
-      const data = await response.json();
-      
-      if (typeof data.access_token !== "string" || !data.access_token) {
-        const msg = "Authentication server returned an invalid internal token";
-        setError(msg);
-        setLoading(false);
-        return { success: false, error: msg };
-      }
-
-      // Store internal JWT and finalize (using Remember Me)
-      setAuthToken(data.access_token, rememberMe);
-      setLoading(false);
-      return { success: true };
-
-    } catch (err: any) {
-      let msg = "Microsoft authentication could not be verified";
-      if (err.name === "BrowserAuthError" && err.errorCode === "user_cancelled") {
-        msg = ""; // Neutral cancellation
-        setError(null); 
-      } else if (err.name === "BrowserAuthError" && err.errorCode === "popup_window_error") {
-        msg = "tell the user to allow popups";
-        setError(msg);
-      } else if (err.name === "BrowserAuthError" && err.errorCode === "consent_required") {
-        msg = "explain that LogSentinel permission must be granted";
-        setError(msg);
-      } else if (!window.navigator.onLine || err.message === "Failed to fetch") {
-        msg = "connection failed; user may retry";
-        setError(msg);
-      } else {
-        setError(msg);
-      }
-      setLoading(false);
-      return { success: false, error: msg };
-    }
-  }, [instance, accounts]);
+    },
+    [accounts, instance],
+  );
 
   return { login, loading, error };
 }

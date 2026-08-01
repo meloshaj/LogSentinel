@@ -21,11 +21,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import status
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from backend.app.core.database import get_async_session
 from backend.app.core.orm import ExternalIdentityRecord, UserRecord
 from backend.app.main import app
 from backend.app.routers import auth_router as _auth_router_module
+from backend.app.repositories.external_identity_repository import ExternalIdentityRepository
 from backend.app.security.auth import create_access_token
 from backend.app.security.microsoft_auth import (
     InvalidMicrosoftTenantError,
@@ -60,8 +62,8 @@ _WRONG_RSA_PRIVATE_PEM = _WRONG_RSA_KEY.private_bytes(
 
 # ─── Test Constants ──────────────────────────────────────────────────────────
 
-_TEST_CLIENT_ID = "test-client-id-00000000"
-_TEST_TENANT_ID = "test-tenant-id-11111111"
+_TEST_CLIENT_ID = "00000000-0000-4000-8000-000000000001"
+_TEST_TENANT_ID = "11111111-1111-4111-8111-111111111111"
 _TEST_ISSUER = f"https://login.microsoftonline.com/{_TEST_TENANT_ID}/v2.0"
 _TEST_SUBJECT = "ms-subject-22222222"
 _TEST_OID = "ms-oid-33333333"
@@ -69,6 +71,17 @@ _TEST_EMAIL = "msuser@testcorp.example.com"
 _TEST_NAME = "MS Test User"
 _TEST_SCOPE = "access_as_user"
 _TEST_KID = "test-kid-44444444"
+
+
+@pytest.fixture(autouse=True)
+def _configured_test_tenant():
+    """Keep endpoint tests explicit now that production has no tenant default."""
+    with patch.dict(
+        "os.environ",
+        {"AZURE_TENANT_ID": _TEST_TENANT_ID},
+        clear=False,
+    ):
+        yield
 
 
 def _build_test_settings(
@@ -176,6 +189,20 @@ class TestMicrosoftTokenVerifier:
         with pytest.raises(MicrosoftAuthDisabledError):
             verifier.verify("any-token")
 
+    def test_missing_tenant_disables_authentication(self) -> None:
+        """A client ID alone cannot silently opt into a broad tenant mode."""
+        settings = _build_test_settings(tenant_id="")
+        assert settings.enabled is False
+
+        verifier = MicrosoftTokenVerifier(settings)
+        with pytest.raises(MicrosoftAuthDisabledError):
+            verifier.verify("any-token")
+
+    def test_client_id_must_be_an_application_guid(self) -> None:
+        """Resource URLs and placeholder text are not valid API client IDs."""
+        with pytest.raises(ValueError, match="application client GUID"):
+            _build_test_settings(client_id="https://graph.microsoft.com")
+
     def test_valid_token_new_identity(self) -> None:
         """A valid token produces a VerifiedMicrosoftIdentity."""
         settings = _build_test_settings()
@@ -223,13 +250,13 @@ class TestMicrosoftTokenVerifier:
             verifier.verify(token)
 
     def test_graph_token_rejected(self) -> None:
-        """A Microsoft Graph token is explicitly rejected."""
-        settings = _build_test_settings(client_id="https://graph.microsoft.com")
+        """A Microsoft Graph token cannot satisfy the LogSentinel audience."""
+        settings = _build_test_settings()
         verifier = MicrosoftTokenVerifier(settings)
         _mock_jwk_client(verifier)
 
         token = _build_test_token(aud="https://graph.microsoft.com")
-        with pytest.raises(InvalidMicrosoftTokenError, match="Graph"):
+        with pytest.raises(InvalidMicrosoftTokenError, match="audience"):
             verifier.verify(token)
 
     def test_wrong_issuer_rejected(self) -> None:
@@ -291,7 +318,9 @@ class TestMicrosoftTokenVerifier:
 
     def test_disallowed_tenant_rejected(self) -> None:
         """A token from a disallowed tenant is rejected."""
-        settings = _build_test_settings(allowed_tenants=("allowed-tenant-only",))
+        settings = _build_test_settings(
+            allowed_tenants=("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",),
+        )
         verifier = MicrosoftTokenVerifier(settings)
         _mock_jwk_client(verifier)
 
@@ -308,6 +337,56 @@ class TestMicrosoftTokenVerifier:
         token = _build_test_token()
         identity = verifier.verify(token)
         assert identity.tenant_id == _TEST_TENANT_ID
+
+    def test_specific_tenant_rejects_other_tenant(self) -> None:
+        """A tenant-specific authority must reject tokens from another tenant."""
+        other_tenant = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        settings = _build_test_settings(tenant_id=_TEST_TENANT_ID)
+        verifier = MicrosoftTokenVerifier(settings)
+        _mock_jwk_client(verifier)
+
+        token = _build_test_token(
+            tid=other_tenant,
+            iss=f"https://login.microsoftonline.com/{other_tenant}/v2.0",
+        )
+        with pytest.raises(InvalidMicrosoftTenantError):
+            verifier.verify(token)
+
+    def test_common_authority_accepts_valid_tenant(self) -> None:
+        """The common authority accepts a valid GUID tenant absent an allow-list."""
+        settings = _build_test_settings(tenant_id="common")
+        verifier = MicrosoftTokenVerifier(settings)
+        _mock_jwk_client(verifier)
+
+        identity = verifier.verify(_build_test_token())
+        assert identity.tenant_id == _TEST_TENANT_ID
+
+    def test_organizations_authority_rejects_consumer_tenant(self) -> None:
+        """The organizations authority must reject personal Microsoft accounts."""
+        consumer_tenant = "9188040d-6c67-4c5b-b112-36a304b66dad"
+        settings = _build_test_settings(tenant_id="organizations")
+        verifier = MicrosoftTokenVerifier(settings)
+        _mock_jwk_client(verifier)
+
+        token = _build_test_token(
+            tid=consumer_tenant,
+            iss=f"https://login.microsoftonline.com/{consumer_tenant}/v2.0",
+        )
+        with pytest.raises(InvalidMicrosoftTenantError):
+            verifier.verify(token)
+
+    def test_non_guid_tenant_claim_rejected(self) -> None:
+        """Tenant-independent validation requires tid to be a GUID."""
+        settings = _build_test_settings(tenant_id="common")
+        verifier = MicrosoftTokenVerifier(settings)
+        _mock_jwk_client(verifier)
+
+        token = _build_test_token(
+            tid="not-a-guid",
+            iss="https://login.microsoftonline.com/not-a-guid/v2.0",
+        )
+        with pytest.raises(InvalidMicrosoftTokenError, match="GUID"):
+            verifier.verify(token)
 
     def test_missing_required_scope_rejected(self) -> None:
         """A token missing the required scope is rejected."""
@@ -349,6 +428,43 @@ class TestMicrosoftTokenVerifier:
         token = _build_test_token(kid="unknown-kid")
         with pytest.raises(InvalidMicrosoftTokenError, match="signing key"):
             verifier.verify(token)
+
+    def test_malformed_token_rejected_before_jwks_lookup(self) -> None:
+        """A malformed token is controlled and never triggers a network lookup."""
+        settings = _build_test_settings()
+        verifier = MicrosoftTokenVerifier(settings)
+        verifier._jwk_client.get_signing_key_from_jwt = MagicMock()
+
+        with pytest.raises(InvalidMicrosoftTokenError, match="malformed"):
+            verifier.verify("not-a-jwt")
+        verifier._jwk_client.get_signing_key_from_jwt.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("claim", "value", "expected_error"),
+        [
+            ("tid", 123, InvalidMicrosoftTokenError),
+            ("sub", 123, InvalidMicrosoftTokenError),
+            ("scp", ["access_as_user"], MissingRequiredScopeError),
+        ],
+    )
+    def test_wrong_claim_types_are_rejected(
+        self,
+        claim: str,
+        value: Any,
+        expected_error: type[MicrosoftAuthError],
+    ) -> None:
+        """Signed tokens with malformed claim types fail closed."""
+        verifier = MicrosoftTokenVerifier(_build_test_settings())
+        _mock_jwk_client(verifier)
+        token = _build_test_token(extra_claims={claim: value})
+
+        with pytest.raises(expected_error):
+            verifier.verify(token)
+
+    def test_required_scope_configuration_is_fail_closed(self) -> None:
+        """The API never accepts a different delegated permission by configuration."""
+        with pytest.raises(ValueError, match="access_as_user"):
+            _build_test_settings(required_scope="User.Read")
 
     def test_jwks_unavailable_raises(self) -> None:
         """JWKS unavailability raises the correct error."""
@@ -452,6 +568,26 @@ class TestMicrosoftEndpoint:
                 "/api/auth/microsoft",
                 json={"access_token": "any-token"},
             )
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["detail"] == "microsoft_auth_disabled"
+
+    def test_missing_tenant_configuration_is_disabled(
+        self, client: TestClient,
+    ) -> None:
+        """A configured API ID without an explicit tenant fails closed."""
+        with patch.dict(
+            "os.environ",
+            {
+                "AZURE_CLIENT_ID": _TEST_CLIENT_ID,
+                "AZURE_TENANT_ID": "",
+            },
+            clear=False,
+        ):
+            response = client.post(
+                "/api/auth/microsoft",
+                json={"access_token": "any-token"},
+            )
+
         assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
         assert response.json()["detail"] == "microsoft_auth_disabled"
 
@@ -559,6 +695,46 @@ class TestMicrosoftEndpoint:
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert response.json()["detail"] == "invalid_microsoft_token"
 
+    def test_real_malformed_token_returns_401_without_jwks_request(
+        self, client: TestClient,
+    ) -> None:
+        """Malformed compact JWT input is mapped through the real verifier."""
+        with patch.dict(
+            "os.environ",
+            {
+                "AZURE_CLIENT_ID": _TEST_CLIENT_ID,
+                "AZURE_TENANT_ID": _TEST_TENANT_ID,
+            },
+            clear=False,
+        ):
+            response = client.post(
+                "/api/auth/microsoft",
+                json={"access_token": "not-a-jwt"},
+            )
+
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert response.json()["detail"] == "invalid_microsoft_token"
+
+    def test_invalid_backend_tenant_configuration_is_controlled(
+        self, client: TestClient,
+    ) -> None:
+        """An invalid tenant setting must not expose a validation traceback."""
+        with patch.dict(
+            "os.environ",
+            {
+                "AZURE_CLIENT_ID": _TEST_CLIENT_ID,
+                "AZURE_TENANT_ID": "not-a-supported-tenant",
+            },
+            clear=False,
+        ):
+            response = client.post(
+                "/api/auth/microsoft",
+                json={"access_token": "not-a-jwt"},
+            )
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+        assert response.json()["detail"] == "microsoft_auth_disabled"
+
     def test_disallowed_tenant_returns_403(
         self, client: TestClient,
     ) -> None:
@@ -640,6 +816,35 @@ class TestMicrosoftEndpoint:
 
         assert response.status_code == status.HTTP_409_CONFLICT
         assert response.json()["detail"] == "account_linking_required"
+
+    def test_new_identity_writes_user_and_mapping_atomically(
+        self, client: TestClient, mock_db: AsyncMock,
+    ) -> None:
+        """A mapping uniqueness failure rolls back the passwordless user."""
+        identity = _make_verified_identity(email="race@company.com")
+        no_result = MagicMock()
+        no_result.scalar_one_or_none.return_value = None
+        mock_db.execute.side_effect = [no_result, no_result]
+
+        integrity_error = IntegrityError("insert", {}, Exception("duplicate"))
+        with patch.object(
+            MicrosoftTokenVerifier, "verify", return_value=identity,
+        ), patch.object(
+            ExternalIdentityRepository,
+            "create_external_identity",
+            side_effect=integrity_error,
+        ), patch.dict(
+            "os.environ", {"AZURE_CLIENT_ID": _TEST_CLIENT_ID}, clear=False,
+        ):
+            response = client.post(
+                "/api/auth/microsoft",
+                json={"access_token": "concurrent-first-login"},
+            )
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json()["detail"] == "microsoft_identity_conflict"
+        mock_db.rollback.assert_awaited_once()
+        mock_db.commit.assert_not_awaited()
 
     def test_no_email_returns_onboarding_required(
         self, client: TestClient, mock_db: AsyncMock,

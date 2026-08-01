@@ -93,6 +93,9 @@ export function BackgroundIllustration() {
         .bg-node { animation: nodePulse 3s ease-in-out infinite; }
         .bg-stream { stroke-dasharray: 4 2.5; animation: streamSlide 5s linear infinite; }
         .bg-accent-ring { animation: accentRing 4s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .bg-node, .bg-stream, .bg-accent-ring { animation: none; }
+        }
       `}</style>
       <svg
         className="fixed inset-0 w-full h-full pointer-events-none select-none"
@@ -222,10 +225,13 @@ export function LogSentinelLogo({ large = false }: { large?: boolean }) {
 
 interface InputFieldProps {
   id?: string;
+  name?: string;
   label: string;
   type: string;
   value: string;
   onChange: (v: string) => void;
+  autoComplete?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   placeholder?: string;
   icon: React.ReactNode;
   error?: string;
@@ -238,10 +244,13 @@ interface InputFieldProps {
 
 export function InputField({
   id,
+  name,
   label,
   type,
   value,
   onChange,
+  autoComplete,
+  inputMode,
   placeholder,
   icon,
   error,
@@ -279,9 +288,12 @@ export function InputField({
         </div>
         <input
           id={inputId}
+          name={name}
           type={type}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          autoComplete={autoComplete}
+          inputMode={inputMode}
           placeholder={placeholder}
           disabled={disabled}
           required={required}
@@ -303,16 +315,25 @@ export function InputField({
         )}
         {success && !rightElement && (
           <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-            <Check className="w-4 h-4 text-emerald-400" />
+            <Check className="w-4 h-4 text-emerald-400" aria-hidden="true" />
           </div>
         )}
       </div>
-      {error && (
-        <p id={errorId} className="flex items-center gap-1.5 text-[12px] text-red-400 select-none">
-          <AlertCircle className="w-3 h-3 flex-shrink-0" />
-          {error}
-        </p>
-      )}
+      <div className="min-h-[18px]">
+        {error && (
+          <p
+            id={errorId}
+            role="alert"
+            className="flex items-center gap-1.5 text-[12px] text-red-600 select-none"
+          >
+            <AlertCircle
+              className="w-3 h-3 flex-shrink-0"
+              aria-hidden="true"
+            />
+            {error}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -344,7 +365,12 @@ export function PasswordStrengthBar({ password }: { password: string }) {
 
 export function Spinner() {
   return (
-    <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none">
+    <svg
+      className="animate-spin w-4 h-4"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+    >
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path
         className="opacity-75"
@@ -413,8 +439,11 @@ interface SSOProvider {
   id: string;
   label: string;
   icon: React.ReactNode;
-  onLogin: () => void;
+  onLogin: () => void | Promise<void>;
   disabled?: boolean;
+  descriptionId?: string;
+  loading?: boolean;
+  title?: string;
 }
 
 export function SSOButton({ provider }: { provider: SSOProvider }) {
@@ -424,6 +453,9 @@ export function SSOButton({ provider }: { provider: SSOProvider }) {
       onClick={provider.onLogin}
       disabled={provider.disabled}
       aria-label={`Continue with ${provider.id}`}
+      aria-describedby={provider.descriptionId}
+      aria-busy={provider.loading || undefined}
+      title={provider.title}
       className={[
         "w-full flex items-center gap-3 px-4 py-2.5 rounded-[11px]",
         "bg-slate-50 border-2 border-slate-300",

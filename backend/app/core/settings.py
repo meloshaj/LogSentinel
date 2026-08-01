@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -244,16 +245,18 @@ def get_ingestion_security_settings() -> IngestionSecuritySettings:
 class MicrosoftAuthSettings(BaseModel):
     """Typed configuration for Microsoft Entra ID authentication.
 
-    When ``client_id`` is empty the Microsoft login endpoint is disabled
-    safely and returns HTTP 503.  All other fields have secure defaults.
+    When ``client_id`` or ``tenant_id`` is empty the Microsoft login endpoint
+    is disabled safely and returns HTTP 503. Multitenant modes must be chosen
+    explicitly; the application never defaults to ``common``.
 
     Environment variables:
         AZURE_CLIENT_ID          — Application (client) ID from the Entra
                                    app registration.
         AZURE_TENANT_ID          — Tenant ID.  Use ``common`` for multi-tenant
                                    + personal accounts, ``organizations``
-                                   for any Entra directory, or a specific
-                                   GUID to restrict to a single tenant.
+                                   for any Entra directory, ``consumers``
+                                   for personal Microsoft accounts only, or a
+                                   specific GUID to restrict to one tenant.
         AZURE_REQUIRED_SCOPE     — The delegated LogSentinel API scope that
                                    must appear in the ``scp`` claim of the
                                    incoming access token.
@@ -273,8 +276,11 @@ class MicrosoftAuthSettings(BaseModel):
         description="Application (client) ID (env: AZURE_CLIENT_ID)",
     )
     tenant_id: str = Field(
-        default="common",
-        description="Tenant ID or 'common' / 'organizations' (env: AZURE_TENANT_ID)",
+        default="",
+        description=(
+            "Tenant GUID or 'common' / 'organizations' / 'consumers' "
+            "(env: AZURE_TENANT_ID)"
+        ),
     )
     required_scope: str = Field(
         default="access_as_user",
@@ -295,10 +301,56 @@ class MicrosoftAuthSettings(BaseModel):
         description="Seconds to cache the JWKS key set (env: AZURE_JWKS_CACHE_TTL)",
     )
 
+    @field_validator("client_id")
+    @classmethod
+    def _normalize_client_id(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            return ""
+        try:
+            return str(UUID(normalized))
+        except ValueError as exc:
+            raise ValueError("AZURE_CLIENT_ID must be an application client GUID") from exc
+
+    @field_validator("required_scope")
+    @classmethod
+    def _validate_required_scope(cls, value: str) -> str:
+        if value.strip() != "access_as_user":
+            raise ValueError("AZURE_REQUIRED_SCOPE must be access_as_user")
+        return "access_as_user"
+
+    @field_validator("tenant_id")
+    @classmethod
+    def _validate_tenant_id(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not normalized:
+            return ""
+        if normalized in {"common", "organizations", "consumers"}:
+            return normalized
+        try:
+            return str(UUID(normalized))
+        except ValueError as exc:
+            raise ValueError(
+                "AZURE_TENANT_ID must be common, organizations, consumers, or a tenant GUID"
+            ) from exc
+
+    @field_validator("allowed_tenants")
+    @classmethod
+    def _validate_allowed_tenants(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized: list[str] = []
+        for value in values:
+            try:
+                normalized.append(str(UUID(value.strip())))
+            except ValueError as exc:
+                raise ValueError(
+                    "AZURE_ALLOWED_TENANTS entries must be tenant GUIDs"
+                ) from exc
+        return tuple(normalized)
+
     @property
     def enabled(self) -> bool:
         """Return whether Microsoft authentication is configured."""
-        return bool(self.client_id)
+        return bool(self.client_id and self.tenant_id)
 
     @property
     def authority(self) -> str:
@@ -327,7 +379,7 @@ def get_microsoft_auth_settings() -> MicrosoftAuthSettings:
     """Construct Microsoft authentication settings from the current environment."""
     return MicrosoftAuthSettings(
         client_id=os.getenv("AZURE_CLIENT_ID", ""),
-        tenant_id=os.getenv("AZURE_TENANT_ID", "common"),
+        tenant_id=os.getenv("AZURE_TENANT_ID", ""),
         required_scope=os.getenv("AZURE_REQUIRED_SCOPE", "access_as_user"),
         allowed_tenants=_split_csv(os.getenv("AZURE_ALLOWED_TENANTS")),
         jwks_timeout_seconds=float(os.getenv("AZURE_JWKS_TIMEOUT", "5.0")),
