@@ -104,7 +104,7 @@ export function mapMicrosoftClientError(error: unknown): string | null {
     errorCode === "invalid_client" ||
     errorCode === "redirect_uri_mismatch"
   ) {
-    return "Microsoft sign-in is unavailable because its configuration is invalid.";
+    return `Microsoft sign-in is unavailable because its configuration is invalid. (${errorCode})`;
   }
 
   if (

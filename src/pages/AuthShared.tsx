@@ -194,17 +194,17 @@ export function BackgroundIllustration() {
 export function LogSentinelLogo({ large = false }: { large?: boolean }) {
   return (
     <div className={`flex items-center ${large ? "gap-3.5" : "gap-2.5"}`}>
-      <div className={`flex-shrink-0 rounded-xl overflow-hidden ${large ? "w-24 h-24" : "w-16 h-16"}`} style={{ 
-        background: 'transparent',
-      }}>
+      <div
+        className={`flex-shrink-0 rounded-xl overflow-hidden ${large ? "w-24 h-24" : "w-16 h-16"}`}
+        style={{
+          background: '#ffffff',
+          boxShadow: '0 0 0 1px rgba(148, 163, 184, 0.15), 0 4px 12px rgba(0, 0, 0, 0.25)',
+        }}
+      >
         <img
           src={logoSrc}
           alt="LogSentinel logo"
-          className="w-full h-full object-cover select-none"
-          style={{ 
-            filter: 'brightness(1.1) contrast(1.05)',
-            mixBlendMode: 'lighten'
-          }}
+          className="w-full h-full object-contain select-none"
         />
       </div>
       <div>
@@ -212,7 +212,7 @@ export function LogSentinelLogo({ large = false }: { large?: boolean }) {
           Log<span className="text-sky-400">Sentinel</span>
         </div>
         {large && (
-          <p className="text-[10px] font-mono tracking-[0.12em] text-slate-600 mt-1 uppercase select-none">
+          <p className="text-[10px] font-mono tracking-[0.12em] text-slate-400 mt-1 uppercase select-none">
             Log Intelligence Platform
           </p>
         )}
@@ -302,7 +302,7 @@ export function InputField({
           className={[
             "w-full pl-10 py-2.5 bg-white border rounded-lg",
             "text-slate-900 placeholder:text-slate-400 text-sm",
-            "transition-all duration-150 focus:outline-none focus:ring-2",
+            "transition-all duration-200 focus:outline-none focus:ring-4",
             disabled ? "opacity-60 cursor-not-allowed bg-slate-50" : "",
             prClass,
             borderClass,
@@ -324,7 +324,7 @@ export function InputField({
           <p
             id={errorId}
             role="alert"
-            className="flex items-center gap-1.5 text-[12px] text-red-600 select-none"
+            className="flex items-center gap-1.5 text-[12px] text-red-400 select-none"
           >
             <AlertCircle
               className="w-3 h-3 flex-shrink-0"
@@ -392,11 +392,11 @@ export function SuccessState({ title, body }: { title: string; body: string }) {
       role="status"
       aria-live="polite"
     >
-      <div className="w-13 h-13 rounded-full bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center mb-1">
-        <Check className="w-6 h-6 text-emerald-400" strokeWidth={2.5} />
+      <div className="w-13 h-13 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-1">
+        <Check className="w-6 h-6 text-emerald-500" strokeWidth={2.5} />
       </div>
       <p className="text-slate-900 font-semibold select-none">{title}</p>
-      <p className="text-sm text-slate-600 max-w-[240px] select-none">{body}</p>
+      <p className="text-sm text-slate-500 max-w-[240px] select-none">{body}</p>
     </motion.div>
   );
 }
@@ -458,12 +458,12 @@ export function SSOButton({ provider }: { provider: SSOProvider }) {
       title={provider.title}
       className={[
         "w-full flex items-center gap-3 px-4 py-2.5 rounded-[11px]",
-        "bg-slate-50 border-2 border-slate-300",
+        "bg-white border border-slate-200",
         "text-[13px] font-medium text-slate-700",
         "transition-all duration-150",
         provider.disabled
           ? "opacity-60 cursor-not-allowed"
-          : "hover:bg-slate-100 hover:border-slate-400 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 active:scale-[0.985] cursor-pointer",
+          : "hover:bg-slate-50 hover:border-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 active:scale-[0.985] cursor-pointer",
         "select-none",
       ].join(" ")}
     >
@@ -496,11 +496,11 @@ export function SSOSection({
     <div className="mt-5">
       {/* Divider */}
       <div className="flex items-center gap-3 mb-4">
-        <div className="flex-1 h-px bg-slate-300" />
-        <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-700 uppercase select-none">
+        <div className="flex-1 h-px bg-slate-200" />
+        <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase select-none">
           or continue with
         </span>
-        <div className="flex-1 h-px bg-slate-300" />
+        <div className="flex-1 h-px bg-slate-200" />
       </div>
 
       {/* Provider buttons */}
