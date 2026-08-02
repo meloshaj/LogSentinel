@@ -351,8 +351,8 @@ export function LoginPage() {
       transition={{ duration: reduceMotion ? 0 : 0.28, ease: "easeOut" }}
       className="w-full max-w-[420px] relative z-10"
     >
-      <div className="relative bg-white rounded-2xl overflow-hidden shadow-[0_24px_64px_rgba(0,0,0,0.3)] border-2 border-sky-600">
-        <div className="bg-gradient-to-br from-slate-800 to-slate-900 px-5 sm:px-8 pt-7 sm:pt-8 pb-6">
+      <div className="relative bg-white rounded-2xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-slate-200">
+        <div className="bg-slate-50 px-5 sm:px-8 pt-7 sm:pt-8 pb-6 border-b border-slate-100">
           <LogSentinelLogo large />
         </div>
 
@@ -373,7 +373,7 @@ export function LoginPage() {
                 tabIndex={-1}
                 role="alert"
                 aria-live="assertive"
-                className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-start gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
               >
                 <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
                 <span>{errors.submit}</span>
@@ -481,7 +481,7 @@ export function LoginPage() {
                 <button
                   type="button"
                   onClick={() => navigate("/forgot-password")}
-                  className="text-[13px] text-sky-700 hover:text-sky-800 font-medium transition-colors select-none cursor-pointer disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+                  className="text-[13px] text-sky-600 hover:text-sky-700 font-medium transition-colors select-none cursor-pointer disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
                   disabled={isLoading}
                 >
                   Forgot password?
@@ -498,8 +498,8 @@ export function LoginPage() {
                   "transition-all duration-150 select-none cursor-pointer",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2",
                   isLoading
-                    ? "bg-sky-100 text-sky-700 cursor-not-allowed"
-                    : "bg-sky-600 hover:bg-sky-700 text-white shadow-lg shadow-sky-500/25 active:scale-[0.99]",
+                    ? "bg-sky-100 text-sky-400 cursor-not-allowed"
+                    : "bg-sky-500 hover:bg-sky-400 text-white shadow-lg shadow-sky-500/25 active:scale-[0.99]",
                 ].join(" ")}
               >
                 {operation === "email" ? (
@@ -518,11 +518,11 @@ export function LoginPage() {
           {!success && (
             <div className="mt-5">
               <div className="flex items-center gap-3 mb-4" aria-hidden="true">
-                <div className="flex-1 h-px bg-slate-300" />
-                <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-700 uppercase select-none">
+                <div className="flex-1 h-px bg-slate-200" />
+                <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase select-none">
                   or continue with
                 </span>
-                <div className="flex-1 h-px bg-slate-300" />
+                <div className="flex-1 h-px bg-slate-200" />
               </div>
 
               <div className="space-y-2.5">
@@ -542,13 +542,13 @@ export function LoginPage() {
                       }}
                     />
                   ) : (
-                    <div className="w-full overflow-hidden flex justify-center">
+                    <div className="w-full overflow-hidden flex justify-center rounded-lg border border-slate-200 bg-white" style={{ height: "40px" }}>
                       <GoogleLogin
                         onSuccess={handleGoogleSuccess}
                         onError={handleGoogleError}
                         theme="outline"
                         size="large"
-                        width="100%"
+                        width={356}
                         text="continue_with"
                         shape="rectangular"
                       />
@@ -597,7 +597,7 @@ export function LoginPage() {
                 type="button"
                 onClick={() => navigate("/register")}
                 disabled={isLoading}
-                className="text-sky-700 hover:text-sky-800 font-medium transition-colors select-none cursor-pointer disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+                className="text-sky-600 hover:text-sky-700 font-medium transition-colors select-none cursor-pointer disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
               >
                 Create a free workspace
               </button>

@@ -36,6 +36,20 @@ function isSupportedAuthority(authority: string): boolean {
   }
 }
 
+function sanitizeSameOriginUrl(configuredValue: string | undefined, defaultPath: string): string {
+  if (configuredValue) {
+    try {
+      const url = new URL(configuredValue);
+      if (url.hostname === window.location.hostname || url.origin === window.location.origin) {
+        return `${window.location.origin}${url.pathname}`;
+      }
+    } catch {
+      // Fall through to default
+    }
+  }
+  return `${window.location.origin}${defaultPath}`;
+}
+
 function isSameOriginUrl(value: string, requiredPath?: string): boolean {
   try {
     const url = new URL(value);
@@ -55,12 +69,14 @@ export const msalConfig = {
   clientId: import.meta.env.VITE_MICROSOFT_SPA_CLIENT_ID?.trim() || "",
   authority: import.meta.env.VITE_MICROSOFT_AUTHORITY?.trim() || "",
   apiScope: import.meta.env.VITE_MICROSOFT_API_SCOPE?.trim() || "",
-  redirectUri:
-    import.meta.env.VITE_MICROSOFT_REDIRECT_URI?.trim() ||
-    `${window.location.origin}/redirect.html`,
-  postLogoutRedirectUri:
-    import.meta.env.VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI?.trim() ||
-    `${window.location.origin}/login`,
+  redirectUri: sanitizeSameOriginUrl(
+    import.meta.env.VITE_MICROSOFT_REDIRECT_URI?.trim(),
+    "/redirect.html",
+  ),
+  postLogoutRedirectUri: sanitizeSameOriginUrl(
+    import.meta.env.VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI?.trim(),
+    "/login",
+  ),
 };
 
 export const msalInstanceConfig: Configuration = {

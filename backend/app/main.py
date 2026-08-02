@@ -197,23 +197,31 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 from fastapi.middleware.cors import CORSMiddleware
 
 
-def _get_frontend_origin(value: str | None = None) -> str:
-    """Return one validated browser origin for CORS, never a wildcard."""
-    candidate = (
-        value if value is not None else os.getenv("FRONTEND_URL", "http://localhost:5173")
-    ).strip()
-    parsed = urlsplit(candidate)
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not parsed.netloc
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in {"", "/"}
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError("FRONTEND_URL must be a single HTTP(S) origin")
-    return f"{parsed.scheme}://{parsed.netloc}"
+def _get_frontend_origins(value: str | None = None) -> list[str]:
+    """Return validated browser origins for CORS."""
+    candidate_str = (
+        value if value is not None else os.getenv("FRONTEND_URL", "http://localhost:5173,http://localhost:8080")
+    )
+    origins = []
+    for candidate in candidate_str.split(","):
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        parsed = urlsplit(candidate)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(f"FRONTEND_URL contains invalid origin: {candidate}")
+        origins.append(f"{parsed.scheme}://{parsed.netloc}")
+    if not origins:
+        origins = ["http://localhost:5173", "http://localhost:8080"]
+    return origins
 
 app = FastAPI(
     title="LogSentinel Ingestion Gateway",
@@ -224,7 +232,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[_get_frontend_origin()],
+    allow_origins=_get_frontend_origins(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
