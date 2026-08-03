@@ -147,12 +147,33 @@ export function LoginPage() {
   const isLoading = operation !== null;
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    const errorMsg = params.get("error");
+    if (token) {
+      setAuthToken(token, rememberMe);
+      setSuccess(true);
+      navigationTimerRef.current = window.setTimeout(() => {
+        navigate("/");
+      }, 1500);
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (errorMsg) {
+      if (errorMsg.includes("different provider")) {
+        setErrors({ conflict: decodeURIComponent(errorMsg) });
+      } else {
+        setErrors({ submit: decodeURIComponent(errorMsg) });
+      }
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     return () => {
       if (navigationTimerRef.current !== null) {
         window.clearTimeout(navigationTimerRef.current);
       }
     };
-  }, []);
+  }, [navigate, rememberMe]);
 
   useEffect(() => {
     if (errors.submit) {
@@ -238,9 +259,15 @@ export function LoginPage() {
       });
 
       if (!response.ok) {
-        setErrors({
-          submit: await getAuthErrorMessage(response, "Authentication failed"),
-        });
+        if (response.status === 409) {
+          setErrors({
+            conflict: await getAuthErrorMessage(response, "Account conflict"),
+          });
+        } else {
+          setErrors({
+            submit: await getAuthErrorMessage(response, "Authentication failed"),
+          });
+        }
         return;
       }
 
@@ -296,12 +323,18 @@ export function LoginPage() {
       });
 
       if (!response.ok) {
-        setErrors({
-          submit: await getAuthErrorMessage(
-            response,
-            "Google authentication failed",
-          ),
-        });
+        if (response.status === 409) {
+          setErrors({
+            conflict: await getAuthErrorMessage(response, "Account conflict"),
+          });
+        } else {
+          setErrors({
+            submit: await getAuthErrorMessage(
+              response,
+              "Google authentication failed",
+            ),
+          });
+        }
         return;
       }
 
@@ -377,6 +410,18 @@ export function LoginPage() {
               >
                 <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
                 <span>{errors.submit}</span>
+              </div>
+            )}
+            {errors.conflict && (
+              <div
+                ref={errorSummaryRef}
+                tabIndex={-1}
+                role="alert"
+                aria-live="assertive"
+                className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 text-xs flex items-start gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+              >
+                <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>{errors.conflict}</span>
               </div>
             )}
           </div>
@@ -493,8 +538,8 @@ export function LoginPage() {
                 disabled={isLoading}
                 aria-busy={operation === "email" || undefined}
                 className={[
-                  "w-full py-2.5 rounded-lg text-sm font-semibold",
-                  "flex items-center justify-center gap-2 mt-1",
+                  "w-full py-3 rounded-lg text-sm font-semibold",
+                  "flex items-center justify-center gap-2 mt-2",
                   "transition-all duration-150 select-none cursor-pointer",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2",
                   isLoading
@@ -516,11 +561,11 @@ export function LoginPage() {
           )}
 
           {!success && (
-            <div className="mt-5">
-              <div className="flex items-center gap-3 mb-4" aria-hidden="true">
+            <div className="mt-8">
+              <div className="flex items-center gap-4 mb-6" aria-hidden="true">
                 <div className="flex-1 h-px bg-slate-200" />
-                <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase select-none">
-                  or continue with
+                <span className="text-[12px] font-medium text-slate-400 select-none">
+                  OR CONTINUE WITH
                 </span>
                 <div className="flex-1 h-px bg-slate-200" />
               </div>
@@ -581,9 +626,15 @@ export function LoginPage() {
                     id: "GitHub",
                     label: "Continue with GitHub",
                     icon: <GitHubIcon />,
-                    onLogin: () => undefined,
-                    disabled: true,
-                    title: "GitHub sign-in is not configured.",
+                    onLogin: () => {
+                      const apiBase = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+                      window.location.href = `${apiBase}/api/auth/github`;
+                    },
+                    disabled: isLoading,
+                    bgClass: "bg-[#24292f]",
+                    borderClass: "border-[#24292f]",
+                    textClass: "text-white",
+                    hoverClass: "hover:bg-[#2c3238] hover:border-[#2c3238]",
                   }}
                 />
               </div>

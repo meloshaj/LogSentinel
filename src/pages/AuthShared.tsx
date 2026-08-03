@@ -444,9 +444,18 @@ interface SSOProvider {
   descriptionId?: string;
   loading?: boolean;
   title?: string;
+  bgClass?: string;
+  borderClass?: string;
+  textClass?: string;
+  hoverClass?: string;
 }
 
 export function SSOButton({ provider }: { provider: SSOProvider }) {
+  const bgClass = provider.bgClass || "bg-white";
+  const borderClass = provider.borderClass || "border-slate-200";
+  const textClass = provider.textClass || "text-slate-700";
+  const hoverClass = provider.hoverClass || "hover:bg-slate-50 hover:border-slate-300";
+
   return (
     <button
       type="button"
@@ -458,12 +467,13 @@ export function SSOButton({ provider }: { provider: SSOProvider }) {
       title={provider.title}
       className={[
         "w-full flex items-center gap-3 px-4 py-2.5 rounded-[11px]",
-        "bg-white border border-slate-200",
-        "text-[13px] font-medium text-slate-700",
-        "transition-all duration-150",
+        "border transition-all duration-150 text-[13px] font-medium",
+        bgClass,
+        borderClass,
+        textClass,
         provider.disabled
           ? "opacity-60 cursor-not-allowed"
-          : "hover:bg-slate-50 hover:border-slate-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 active:scale-[0.985] cursor-pointer",
+          : `${hoverClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 active:scale-[0.985] cursor-pointer`,
         "select-none",
       ].join(" ")}
     >

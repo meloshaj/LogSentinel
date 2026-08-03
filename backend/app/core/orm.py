@@ -174,6 +174,46 @@ class UserRecord(Base):
 
 
 # ---------------------------------------------------------------------------
+# Accounts — multi-provider OAuth accounts linked to users
+# ---------------------------------------------------------------------------
+
+
+class AccountRecord(Base):
+    """ORM model for the ``accounts`` table to support OAuth providers."""
+
+    __tablename__ = "accounts"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    provider: Mapped[str] = mapped_column(VARCHAR(32), nullable=False)
+    provider_account_id: Mapped[str] = mapped_column(VARCHAR(512), nullable=False)
+    access_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider", "provider_account_id",
+            name="uq_accounts_provider_provider_account_id",
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # External Identities — federated provider identity mappings
 # ---------------------------------------------------------------------------
 

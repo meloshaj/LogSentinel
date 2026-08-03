@@ -57,6 +57,16 @@ class ExternalIdentityRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_all_by_user_id(
+        db: AsyncSession,
+        user_id: int,
+    ) -> list[ExternalIdentityRecord]:
+        """Look up all external identities for a specific user."""
+        stmt = select(ExternalIdentityRecord).where(ExternalIdentityRecord.user_id == user_id)
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
     async def create_external_identity(
         db: AsyncSession,
         user_id: int,

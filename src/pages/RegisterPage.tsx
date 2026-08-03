@@ -168,9 +168,15 @@ export function RegisterPage() {
       });
 
       if (!response.ok) {
-        setErrors({
-          submit: await getAuthErrorMessage(response, "Registration failed"),
-        });
+        if (response.status === 409) {
+          setErrors({
+            conflict: await getAuthErrorMessage(response, "Account conflict"),
+          });
+        } else {
+          setErrors({
+            submit: await getAuthErrorMessage(response, "Registration failed"),
+          });
+        }
         setLoading(false);
         return;
       }
@@ -243,12 +249,18 @@ export function RegisterPage() {
       });
 
       if (!response.ok) {
-        setErrors({
-          submit: await getAuthErrorMessage(
-            response,
-            "Google authentication failed",
-          ),
-        });
+        if (response.status === 409) {
+          setErrors({
+            conflict: await getAuthErrorMessage(response, "Account conflict"),
+          });
+        } else {
+          setErrors({
+            submit: await getAuthErrorMessage(
+              response,
+              "Google authentication failed",
+            ),
+          });
+        }
         return;
       }
 
@@ -328,6 +340,12 @@ export function RegisterPage() {
             <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 select-none text-left">
               <AlertCircle className="w-4 h-4 shrink-0" />
               <span>{errors.submit}</span>
+            </div>
+          )}
+          {errors.conflict && (
+            <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 text-xs flex items-center gap-2 select-none text-left">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errors.conflict}</span>
             </div>
           )}
 
@@ -476,8 +494,8 @@ export function RegisterPage() {
                 type="submit"
                 disabled={loading}
                 className={[
-                  "w-full py-2.5 rounded-lg text-sm font-semibold",
-                  "flex items-center justify-center gap-2 mt-1",
+                  "w-full py-3 rounded-lg text-sm font-semibold",
+                  "flex items-center justify-center gap-2 mt-2",
                   "transition-all duration-150 select-none cursor-pointer",
                   loading
                     ? "bg-sky-100 text-sky-400 cursor-not-allowed"
@@ -498,11 +516,11 @@ export function RegisterPage() {
           )}
 
           {!success && (
-            <div className="mt-6">
-              <div className="flex items-center gap-3 mb-5" aria-hidden="true">
+            <div className="mt-8">
+              <div className="flex items-center gap-4 mb-6" aria-hidden="true">
                 <div className="flex-1 h-px bg-slate-200" />
-                <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase select-none">
-                  or continue with
+                <span className="text-[12px] font-medium text-slate-400 select-none">
+                  OR CONTINUE WITH
                 </span>
                 <div className="flex-1 h-px bg-slate-200" />
               </div>
@@ -556,9 +574,15 @@ export function RegisterPage() {
                     id: "GitHub",
                     label: "Continue with GitHub",
                     icon: <GitHubIcon />,
-                    onLogin: () => undefined,
-                    disabled: true,
-                    title: "GitHub sign-in is not configured.",
+                    onLogin: () => {
+                      const apiBase = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+                      window.location.href = `${apiBase}/api/auth/github`;
+                    },
+                    disabled: loading,
+                    bgClass: "bg-[#24292f]",
+                    borderClass: "border-[#24292f]",
+                    textClass: "text-white",
+                    hoverClass: "hover:bg-[#2c3238] hover:border-[#2c3238]",
                   }}
                 />
               </div>
