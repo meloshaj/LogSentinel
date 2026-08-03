@@ -191,28 +191,25 @@ export function BackgroundIllustration() {
 
 // ─── Logo ──────────────────────────────────────────────────────────────────
 
-export function LogSentinelLogo({ large = false }: { large?: boolean }) {
+export function LogSentinelLogo({ large = false, dark = true }: { large?: boolean; dark?: boolean }) {
   return (
-    <div className={`flex items-center ${large ? "gap-3.5" : "gap-2.5"}`}>
+    <div className="flex items-center gap-4">
       <div
-        className={`flex-shrink-0 rounded-xl overflow-hidden ${large ? "w-24 h-24" : "w-16 h-16"}`}
-        style={{
-          background: '#ffffff',
-          boxShadow: '0 0 0 1px rgba(148, 163, 184, 0.15), 0 4px 12px rgba(0, 0, 0, 0.25)',
-        }}
+        className={`flex-shrink-0 rounded-xl overflow-hidden ${large ? "w-16 h-16" : "w-9 h-9"} flex items-center justify-center bg-white shadow-lg border border-slate-200/90`}
       >
         <img
           src={logoSrc}
           alt="LogSentinel logo"
-          className="w-full h-full object-contain select-none"
+          className="w-full h-full object-cover select-none"
+          style={{ objectPosition: "50% 35%", transform: "scale(1.25)", transformOrigin: "50% 35%" }}
         />
       </div>
       <div>
-        <div className={`font-semibold tracking-tight leading-none ${large ? "text-[1.15rem]" : "text-sm"} text-white select-none`}>
+        <div className={`font-extrabold tracking-tight leading-none ${large ? "text-3xl sm:text-[2rem]" : "text-lg"} ${dark ? "text-white" : "text-slate-900"} select-none`}>
           Log<span className="text-sky-400">Sentinel</span>
         </div>
         {large && (
-          <p className="text-[10px] font-mono tracking-[0.12em] text-slate-400 mt-1 uppercase select-none">
+          <p className={`text-[11px] font-mono tracking-[0.16em] ${dark ? "text-slate-300" : "text-slate-600"} mt-1.5 uppercase font-semibold select-none`}>
             Log Intelligence Platform
           </p>
         )}
@@ -249,7 +246,7 @@ export function InputField({
   type,
   value,
   onChange,
-  autoComplete,
+  autoComplete = "one-time-code",
   inputMode,
   placeholder,
   icon,
@@ -260,24 +257,25 @@ export function InputField({
   disabled,
   required,
 }: InputFieldProps) {
+
   const inputId = id || label.replace(/\s+/g, '-').toLowerCase();
   const errorId = `${inputId}-error`;
   const borderClass = error
-    ? "border-red-400 focus:border-red-500 focus:ring-red-500/20"
+    ? "border-red-400 focus:border-red-500 focus:ring-red-500/20 bg-red-50/20"
     : success
-    ? "border-emerald-400 focus:border-emerald-500 focus:ring-emerald-500/20"
-    : "border-slate-300 focus:border-sky-500 focus:ring-sky-500/20";
+    ? "border-emerald-400 focus:border-emerald-500 focus:ring-emerald-500/20 bg-emerald-50/20"
+    : "border-slate-300 focus:border-sky-500 focus:ring-sky-500/20 bg-slate-50/30 focus:bg-white";
 
   const prClass = rightElement ? "pr-10" : "pr-3.5";
 
   return (
-    <div className="space-y-1.5 text-left">
+    <div className="space-y-1 text-left">
       <div className="flex items-center justify-between">
-        <label htmlFor={inputId} className="text-[13px] font-semibold text-slate-700 leading-none select-none">
+        <label htmlFor={inputId} className="text-xs font-semibold text-slate-800 leading-none select-none">
           {label}
         </label>
         {optional && (
-          <span className="text-[11px] font-mono text-slate-400 tracking-wide select-none">
+          <span className="text-[10px] font-mono font-medium text-slate-500 tracking-wider select-none">
             OPTIONAL
           </span>
         )}
@@ -300,10 +298,10 @@ export function InputField({
           aria-invalid={!!error}
           aria-describedby={error ? errorId : undefined}
           className={[
-            "w-full pl-10 py-2.5 bg-white border rounded-lg",
-            "text-slate-900 placeholder:text-slate-400 text-sm",
-            "transition-all duration-200 focus:outline-none focus:ring-4",
-            disabled ? "opacity-60 cursor-not-allowed bg-slate-50" : "",
+            "w-full pl-10 py-2.5 border rounded-lg",
+            "text-slate-900 placeholder:text-slate-400 text-xs sm:text-sm font-medium",
+            "transition-all duration-200 focus:outline-none focus:ring-2",
+            disabled ? "opacity-60 cursor-not-allowed bg-slate-100" : "",
             prClass,
             borderClass,
           ].join(" ")}
@@ -315,25 +313,23 @@ export function InputField({
         )}
         {success && !rightElement && (
           <div className="absolute right-3.5 top-1/2 -translate-y-1/2">
-            <Check className="w-4 h-4 text-emerald-400" aria-hidden="true" />
+            <Check className="w-4 h-4 text-emerald-500" aria-hidden="true" />
           </div>
         )}
       </div>
-      <div className="min-h-[18px]">
-        {error && (
-          <p
-            id={errorId}
-            role="alert"
-            className="flex items-center gap-1.5 text-[12px] text-red-400 select-none"
-          >
-            <AlertCircle
-              className="w-3 h-3 flex-shrink-0"
-              aria-hidden="true"
-            />
-            {error}
-          </p>
-        )}
-      </div>
+      {error && (
+        <p
+          id={errorId}
+          role="alert"
+          className="flex items-center gap-1.5 text-xs text-red-600 font-medium mt-1 select-none"
+        >
+          <AlertCircle
+            className="w-3.5 h-3.5 flex-shrink-0"
+            aria-hidden="true"
+          />
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -344,17 +340,17 @@ export function PasswordStrengthBar({ password }: { password: string }) {
   if (!password) return null;
   const { score, label, color } = getPasswordStrength(password);
   return (
-    <div className="mt-2 space-y-1.5 text-left">
+    <div className="mt-1.5 space-y-1 text-left">
       <div className="flex gap-1">
         {[1, 2, 3, 4].map((i) => (
           <div
             key={i}
-            className="h-[3px] flex-1 rounded-full transition-all duration-300"
-            style={{ backgroundColor: i <= score ? color : "rgba(51,65,85,0.7)" }}
+            className="h-1 flex-1 rounded-full transition-all duration-300"
+            style={{ backgroundColor: i <= score ? color : "#e2e8f0" }}
           />
         ))}
       </div>
-      <p className="text-[11px] font-mono select-none" style={{ color }}>
+      <p className="text-[11px] font-semibold select-none" style={{ color }}>
         {label}
       </p>
     </div>
@@ -388,15 +384,15 @@ export function SuccessState({ title, body }: { title: string; body: string }) {
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="flex flex-col items-center justify-center py-10 space-y-3 text-center"
+      className="flex flex-col items-center justify-center py-6 space-y-2 text-center"
       role="status"
       aria-live="polite"
     >
-      <div className="w-13 h-13 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mb-1">
-        <Check className="w-6 h-6 text-emerald-500" strokeWidth={2.5} />
+      <div className="w-12 h-12 rounded-full bg-emerald-100/80 border border-emerald-200 flex items-center justify-center mb-1">
+        <Check className="w-6 h-6 text-emerald-600" strokeWidth={2.5} />
       </div>
-      <p className="text-slate-900 font-semibold select-none">{title}</p>
-      <p className="text-sm text-slate-500 max-w-[240px] select-none">{body}</p>
+      <p className="text-slate-900 font-bold text-base select-none">{title}</p>
+      <p className="text-xs sm:text-sm text-slate-600 max-w-[260px] font-medium select-none">{body}</p>
     </motion.div>
   );
 }
@@ -452,9 +448,9 @@ interface SSOProvider {
 
 export function SSOButton({ provider }: { provider: SSOProvider }) {
   const bgClass = provider.bgClass || "bg-white";
-  const borderClass = provider.borderClass || "border-slate-200";
-  const textClass = provider.textClass || "text-slate-700";
-  const hoverClass = provider.hoverClass || "hover:bg-slate-50 hover:border-slate-300";
+  const borderClass = provider.borderClass || "border-slate-300";
+  const textClass = provider.textClass || "text-slate-800";
+  const hoverClass = provider.hoverClass || "hover:bg-slate-50 hover:border-slate-400";
 
   return (
     <button
@@ -466,14 +462,14 @@ export function SSOButton({ provider }: { provider: SSOProvider }) {
       aria-busy={provider.loading || undefined}
       title={provider.title}
       className={[
-        "w-full flex items-center gap-3 px-4 py-2.5 rounded-[11px]",
-        "border transition-all duration-150 text-[13px] font-medium",
+        "w-full flex items-center gap-3 px-4 py-2.5 rounded-lg shadow-sm",
+        "border transition-all duration-150 text-xs sm:text-sm font-semibold",
         bgClass,
         borderClass,
         textClass,
         provider.disabled
           ? "opacity-60 cursor-not-allowed"
-          : `${hoverClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2 active:scale-[0.985] cursor-pointer`,
+          : `${hoverClass} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-1 active:scale-[0.99] cursor-pointer`,
         "select-none",
       ].join(" ")}
     >
@@ -503,18 +499,18 @@ export function SSOSection({
   ];
 
   return (
-    <div className="mt-5">
+    <div className="mt-4">
       {/* Divider */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="flex items-center gap-3 mb-3">
         <div className="flex-1 h-px bg-slate-200" />
-        <span className="text-[11px] font-semibold tracking-[0.08em] text-slate-500 uppercase select-none">
+        <span className="text-[10px] font-bold tracking-[0.08em] text-slate-500 uppercase select-none">
           or continue with
         </span>
         <div className="flex-1 h-px bg-slate-200" />
       </div>
 
       {/* Provider buttons */}
-      <div className="space-y-2.5">
+      <div className="space-y-2">
         {providers.map((p) => (
           <SSOButton key={p.id} provider={p} />
         ))}
@@ -522,3 +518,4 @@ export function SSOSection({
     </div>
   );
 }
+

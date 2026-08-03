@@ -384,47 +384,46 @@ export function LoginPage() {
       transition={{ duration: reduceMotion ? 0 : 0.28, ease: "easeOut" }}
       className="w-full max-w-[420px] relative z-10"
     >
-      <div className="relative bg-white rounded-2xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-slate-200">
-        <div className="bg-slate-50 px-5 sm:px-8 pt-7 sm:pt-8 pb-6 border-b border-slate-100">
-          <LogSentinelLogo large />
+      <div className="relative bg-white rounded-2xl overflow-hidden border border-slate-700/80 shadow-[0_0_50px_-10px_rgba(14,165,233,0.3)]">
+        {/* Sleek Dark Card Header */}
+        <div className="bg-[#0b132a] px-6 sm:px-8 py-7 sm:py-8 border-b border-slate-800/80 flex items-center justify-between">
+          <LogSentinelLogo large dark />
         </div>
 
-        <div className="p-5 sm:p-8">
-          <div className="mb-6 text-left">
-            <h1 className="text-[1.4rem] font-semibold text-slate-900 tracking-tight leading-tight select-none">
+        <div className="p-6 sm:p-7">
+          <div className="mb-4 text-left">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-tight select-none">
               Welcome back
             </h1>
-            <p className="text-sm text-slate-600 mt-1 select-none">
+            <p className="text-xs text-slate-600 mt-1 font-medium select-none">
               Sign in to your workspace to continue
             </p>
           </div>
 
-          <div className="mb-4 min-h-[42px]">
-            {errors.submit && (
-              <div
-                ref={errorSummaryRef}
-                tabIndex={-1}
-                role="alert"
-                aria-live="assertive"
-                className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-start gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-              >
-                <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>{errors.submit}</span>
-              </div>
-            )}
-            {errors.conflict && (
-              <div
-                ref={errorSummaryRef}
-                tabIndex={-1}
-                role="alert"
-                aria-live="assertive"
-                className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 text-xs flex items-start gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-              >
-                <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
-                <span>{errors.conflict}</span>
-              </div>
-            )}
-          </div>
+          {errors.submit && (
+            <div
+              ref={errorSummaryRef}
+              tabIndex={-1}
+              role="alert"
+              aria-live="assertive"
+              className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2 text-left shadow-sm"
+            >
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" aria-hidden="true" />
+              <span className="font-medium">{errors.submit}</span>
+            </div>
+          )}
+          {errors.conflict && (
+            <div
+              ref={errorSummaryRef}
+              tabIndex={-1}
+              role="alert"
+              aria-live="assertive"
+              className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2 text-left shadow-sm"
+            >
+              <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" aria-hidden="true" />
+              <span className="font-medium">{errors.conflict}</span>
+            </div>
+          )}
 
           {success ? (
             <div
@@ -441,7 +440,8 @@ export function LoginPage() {
             <form
               onSubmit={handleSubmit}
               noValidate
-              className="space-y-4"
+              autoComplete="off"
+              className="space-y-3.5"
               aria-busy={isLoading}
             >
               <InputField
@@ -451,10 +451,10 @@ export function LoginPage() {
                 type="email"
                 value={email}
                 onChange={setEmail}
-                autoComplete="username"
+                autoComplete="one-time-code"
                 inputMode="email"
                 placeholder="you@company.com"
-                icon={<Mail className="w-4 h-4" aria-hidden="true" />}
+                icon={<Mail className="w-4 h-4 text-slate-400" aria-hidden="true" />}
                 error={errors.email}
                 disabled={isLoading}
                 required
@@ -467,17 +467,18 @@ export function LoginPage() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={setPassword}
-                autoComplete="current-password"
+                autoComplete="new-password"
                 placeholder="••••••••"
-                icon={<Lock className="w-4 h-4" aria-hidden="true" />}
+                icon={<Lock className="w-4 h-4 text-slate-400" aria-hidden="true" />}
                 error={errors.password}
                 disabled={isLoading}
                 required
                 rightElement={
+
                   <button
                     type="button"
                     onClick={() => setShowPassword((visible) => !visible)}
-                    className="text-slate-600 hover:text-slate-900 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+                    className="text-slate-400 hover:text-slate-700 transition-colors cursor-pointer rounded p-0.5"
                     aria-label={showPassword ? "Hide password" : "Show password"}
                     aria-pressed={showPassword}
                     disabled={isLoading}
@@ -492,7 +493,7 @@ export function LoginPage() {
               />
 
               <div className="flex items-center justify-between gap-3 pt-0.5">
-                <label className="flex items-center gap-2.5 cursor-pointer group">
+                <label className="flex items-center gap-2 cursor-pointer group">
                   <input
                     type="checkbox"
                     checked={rememberMe}
@@ -503,30 +504,29 @@ export function LoginPage() {
                   <span
                     aria-hidden="true"
                     className={[
-                      "w-4 h-4 rounded border-2 flex items-center justify-center transition-all duration-150 flex-shrink-0",
-                      "peer-focus-visible:ring-2 peer-focus-visible:ring-sky-500 peer-focus-visible:ring-offset-2",
+                      "w-4 h-4 rounded border flex items-center justify-center transition-all duration-150 flex-shrink-0",
                       rememberMe
                         ? "bg-sky-500 border-sky-500"
                         : isLoading
-                          ? "border-slate-300 bg-slate-50"
-                          : "border-slate-400 bg-white group-hover:border-slate-600",
+                          ? "border-slate-300 bg-slate-100"
+                          : "border-slate-300 bg-white group-hover:border-slate-400",
                     ].join(" ")}
                   >
                     {rememberMe && (
                       <Check
-                        className="w-2.5 h-2.5 text-white"
+                        className="w-3 h-3 text-white"
                         strokeWidth={3}
                       />
                     )}
                   </span>
-                  <span className="text-[13px] text-slate-700 font-medium select-none">
+                  <span className="text-xs text-slate-700 font-semibold select-none">
                     Remember me
                   </span>
                 </label>
                 <button
                   type="button"
                   onClick={() => navigate("/forgot-password")}
-                  className="text-[13px] text-sky-600 hover:text-sky-700 font-medium transition-colors select-none cursor-pointer disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+                  className="text-xs text-sky-600 hover:text-sky-700 font-semibold transition-colors select-none cursor-pointer disabled:opacity-60"
                   disabled={isLoading}
                 >
                   Forgot password?
@@ -538,13 +538,13 @@ export function LoginPage() {
                 disabled={isLoading}
                 aria-busy={operation === "email" || undefined}
                 className={[
-                  "w-full py-3 rounded-lg text-sm font-semibold",
+                  "w-full py-2.5 rounded-lg text-sm font-bold",
                   "flex items-center justify-center gap-2 mt-2",
-                  "transition-all duration-150 select-none cursor-pointer",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-2",
+                  "transition-all duration-150 select-none cursor-pointer shadow-md",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:ring-offset-1",
                   isLoading
-                    ? "bg-sky-100 text-sky-400 cursor-not-allowed"
-                    : "bg-sky-500 hover:bg-sky-400 text-white shadow-lg shadow-sky-500/25 active:scale-[0.99]",
+                    ? "bg-sky-100 text-sky-400 cursor-not-allowed shadow-none"
+                    : "bg-sky-500 hover:bg-sky-400 text-white shadow-sky-500/20 active:scale-[0.99]",
                 ].join(" ")}
               >
                 {operation === "email" ? (
@@ -561,16 +561,16 @@ export function LoginPage() {
           )}
 
           {!success && (
-            <div className="mt-8">
-              <div className="flex items-center gap-4 mb-6" aria-hidden="true">
+            <div className="mt-4">
+              <div className="flex items-center gap-3 mb-3" aria-hidden="true">
                 <div className="flex-1 h-px bg-slate-200" />
-                <span className="text-[12px] font-medium text-slate-400 select-none">
+                <span className="text-[10px] font-bold tracking-wider text-slate-500 uppercase select-none">
                   OR CONTINUE WITH
                 </span>
                 <div className="flex-1 h-px bg-slate-200" />
               </div>
 
-              <div className="space-y-2.5">
+              <div className="space-y-2">
                 {googleClientId ? (
                   operation ? (
                     <SSOButton
@@ -587,13 +587,13 @@ export function LoginPage() {
                       }}
                     />
                   ) : (
-                    <div className="w-full overflow-hidden flex justify-center rounded-lg border border-slate-200 bg-white" style={{ height: "40px" }}>
+                    <div className="w-full overflow-hidden flex justify-center rounded-lg border border-slate-300 bg-white shadow-sm" style={{ height: "38px" }}>
                       <GoogleLogin
                         onSuccess={handleGoogleSuccess}
                         onError={handleGoogleError}
                         theme="outline"
                         size="large"
-                        width={356}
+                        width={336}
                         text="continue_with"
                         shape="rectangular"
                       />
@@ -631,24 +631,24 @@ export function LoginPage() {
                       window.location.href = `${apiBase}/api/auth/github`;
                     },
                     disabled: isLoading,
-                    bgClass: "bg-[#24292f]",
-                    borderClass: "border-[#24292f]",
+                    bgClass: "bg-[#181d24]",
+                    borderClass: "border-[#181d24]",
                     textClass: "text-white",
-                    hoverClass: "hover:bg-[#2c3238] hover:border-[#2c3238]",
+                    hoverClass: "hover:bg-[#22272e] hover:border-[#22272e]",
                   }}
                 />
               </div>
             </div>
           )}
 
-          <div className="mt-6 pt-5 border-t border-slate-200">
-            <p className="text-[13px] text-center text-slate-600 select-none">
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <p className="text-xs text-center text-slate-600 font-medium select-none">
               No account yet?{" "}
               <button
                 type="button"
                 onClick={() => navigate("/register")}
                 disabled={isLoading}
-                className="text-sky-600 hover:text-sky-700 font-medium transition-colors select-none cursor-pointer disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 rounded"
+                className="text-sky-600 hover:text-sky-700 font-bold transition-colors select-none cursor-pointer disabled:opacity-60"
               >
                 Create a free workspace
               </button>
@@ -659,3 +659,4 @@ export function LoginPage() {
     </motion.div>
   );
 }
+

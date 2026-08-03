@@ -63,30 +63,29 @@ export function ForgotPasswordPage() {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -14 }}
       transition={{ duration: 0.28, ease: "easeOut" }}
-      className="w-full max-w-[420px] relative z-10"
-    >
-      <div className="relative bg-white rounded-2xl overflow-hidden shadow-[0_24px_64px_rgba(0,0,0,0.3)] border-[3px] border-sky-600">
+      className="w-full max-w-[420px] relative z-10">
+      <div className="relative bg-white rounded-2xl overflow-hidden border border-slate-700/80 shadow-[0_0_50px_-10px_rgba(14,165,233,0.3)]">
         {/* Header */}
-        <div className="bg-gradient-to-br from-slate-800 to-slate-900 px-8 pt-8 pb-6">
-          <LogSentinelLogo large />
+        <div className="bg-[#0b132a] px-6 sm:px-8 py-7 sm:py-8 border-b border-slate-800/80 flex items-center justify-between">
+          <LogSentinelLogo large dark />
         </div>
 
         {/* Content */}
-        <div className="p-8">
-          <div className="mb-6 text-left">
-            <h1 className="text-[1.4rem] font-semibold text-slate-900 tracking-tight leading-tight select-none">
+        <div className="p-6 sm:p-7">
+          <div className="mb-4 text-left">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-tight select-none">
               Reset your password
             </h1>
-            <p className="text-sm text-slate-600 mt-1 select-none">
+            <p className="text-xs text-slate-600 mt-1 font-medium select-none">
               Enter your email address and we'll send you a link to reset your
               password
             </p>
           </div>
 
           {errors.submit && (
-            <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-500 text-xs flex items-center gap-2 select-none text-left">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{errors.submit}</span>
+            <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2 select-none text-left shadow-sm">
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+              <span className="font-medium">{errors.submit}</span>
             </div>
           )}
 
@@ -96,14 +95,15 @@ export function ForgotPasswordPage() {
               body="If an account exists with that email, we've sent a password reset link. Check your inbox (and spam folder)."
             />
           ) : (
-            <form onSubmit={handleSubmit} noValidate className="space-y-4">
+            <form onSubmit={handleSubmit} noValidate autoComplete="off" className="space-y-3.5">
+
               <InputField
                 label="Email address"
                 type="email"
                 value={email}
                 onChange={setEmail}
                 placeholder="you@company.com"
-                icon={<Mail className="w-4 h-4" />}
+                icon={<Mail className="w-4 h-4 text-slate-400" />}
                 error={errors.email}
               />
 
@@ -111,12 +111,12 @@ export function ForgotPasswordPage() {
                 type="submit"
                 disabled={loading}
                 className={[
-                  "w-full py-2.5 rounded-lg text-sm font-semibold",
-                  "flex items-center justify-center gap-2 mt-1",
-                  "transition-all duration-150 select-none cursor-pointer",
+                  "w-full py-2.5 rounded-lg text-sm font-bold",
+                  "flex items-center justify-center gap-2 mt-2",
+                  "transition-all duration-150 select-none cursor-pointer shadow-md",
                   loading
-                    ? "bg-sky-600/40 text-sky-400/70 cursor-not-allowed"
-                    : "bg-sky-500 hover:bg-sky-400 text-white shadow-lg shadow-sky-500/25 hover:shadow-sky-500/35 active:scale-[0.99]",
+                    ? "bg-sky-100 text-sky-400 cursor-not-allowed shadow-none"
+                    : "bg-sky-500 hover:bg-sky-400 text-white shadow-sky-500/20 active:scale-[0.99]",
                 ].join(" ")}
               >
                 {loading ? (
@@ -132,10 +132,10 @@ export function ForgotPasswordPage() {
             </form>
           )}
 
-          <div className="mt-6 pt-5 border-t border-slate-200">
+          <div className="mt-4 pt-4 border-t border-slate-100">
             <button
               onClick={() => navigate("/login")}
-              className="flex items-center gap-2 text-[13px] text-sky-600 hover:text-sky-700 font-medium transition-colors select-none cursor-pointer mx-auto"
+              className="flex items-center gap-2 text-xs text-sky-600 hover:text-sky-700 font-semibold transition-colors select-none cursor-pointer mx-auto"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
               Back to sign in
@@ -144,5 +144,6 @@ export function ForgotPasswordPage() {
         </div>
       </div>
     </motion.div>
+
   );
 }
