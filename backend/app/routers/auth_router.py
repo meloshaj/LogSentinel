@@ -16,9 +16,10 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from ..core.database import AsyncSessionDep
-from ..core.settings import get_microsoft_auth_settings
+from ..core.settings import get_microsoft_auth_settings, get_github_auth_settings
 from ..repositories.external_identity_repository import ExternalIdentityRepository
 from ..repositories.user_repository import UserRepository
+from ..repositories.account_repository import AccountRepository
 from ..security.auth import (
     create_access_token,
     get_current_user,
@@ -122,10 +123,19 @@ async def register_user(
     # Check if a user already exists with this email
     existing_user = await UserRepository.get_user_by_email(db, payload.email)
     if existing_user is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A user with this email address already exists",
-        )
+        identities = await ExternalIdentityRepository.get_all_by_user_id(db, existing_user.id)
+        if identities:
+            # User has an OAuth identity, so standard signup should not be allowed
+            provider = identities[0].provider.capitalize()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"This email is already registered using {provider} Login. Please sign in with {provider}.",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A user with this email address already exists",
+            )
 
     # Hash the password and save
     hashed = hash_password(payload.password)
@@ -147,6 +157,15 @@ async def login_user(
 ) -> TokenResponse:
     """Authenticate email & password and return a signed JWT access token."""
     user = await UserRepository.get_user_by_email(db, payload.email)
+    if user is not None and not user.hashed_password:
+        identities = await ExternalIdentityRepository.get_all_by_user_id(db, user.id)
+        if identities:
+            provider = identities[0].provider.capitalize()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"This email is already registered using {provider} Login. Please sign in with {provider}.",
+            )
+
     if user is None or not user.hashed_password or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -209,14 +228,58 @@ async def google_login(
     full_name: str | None = idinfo.get("name")
 
     # Find or create user
-    user = await UserRepository.get_user_by_email(db, email)
-    if user is None:
-        user = await UserRepository.create_user(
-            db=db,
-            email=email,
-            hashed_password=None,
-            full_name=full_name,
-        )
+    ext_identity = await ExternalIdentityRepository.get_by_provider_identity(
+        db,
+        provider="google",
+        issuer=idinfo.get("iss", "accounts.google.com"),
+        subject=idinfo.get("sub", ""),
+    )
+
+    if ext_identity is not None:
+        user = await UserRepository.get_user_by_id(db, ext_identity.user_id)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="google_identity_conflict",
+            )
+    else:
+        user = await UserRepository.get_user_by_email(db, email)
+        if user is not None:
+            # User exists but has no google external identity (likely standard signup)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This email is registered with a standard password. Please sign in with your password.",
+            )
+        
+        try:
+            user = await UserRepository.create_user(
+                db=db,
+                email=email,
+                hashed_password=None,
+                full_name=full_name,
+                commit=False,
+            )
+            external_identity = await ExternalIdentityRepository.create_external_identity(
+                db=db,
+                user_id=user.id,
+                provider="google",
+                issuer=idinfo.get("iss", "accounts.google.com"),
+                subject=idinfo.get("sub", ""),
+                email=email,
+                display_name=full_name,
+                commit=False,
+            )
+            await db.commit()
+            await db.refresh(user)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="google_identity_conflict",
+            )
+        except Exception:
+            await db.rollback()
+            raise
         logger.info("Auto-created user via Google SSO: %s", email)
 
     token = create_access_token(data={"sub": user.email})
@@ -456,3 +519,185 @@ async def microsoft_login(
 
     token = create_access_token(data={"sub": new_user.email})
     return TokenResponse(access_token=token)
+
+
+# ─── GitHub SSO ──────────────────────────────────────────────────────────────
+
+from fastapi.responses import RedirectResponse
+import httpx
+import urllib.parse
+
+from fastapi import Request
+import secrets
+
+@router.get("/github")
+async def github_login_redirect(request: Request):
+    """Redirect user to GitHub OAuth authorization page."""
+    settings = get_github_auth_settings()
+    if not settings.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GitHub SSO is not configured.",
+        )
+
+    # Capture the frontend origin so we can redirect back to the correct port
+    referer = request.headers.get("referer")
+    if referer:
+        parsed = urllib.parse.urlparse(referer)
+        frontend_origin = f"{parsed.scheme}://{parsed.netloc}"
+    else:
+        frontend_origin = os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")[0].strip()
+
+    state = secrets.token_urlsafe(32)
+    github_auth_url = "https://github.com/login/oauth/authorize"
+    params = {
+        "client_id": settings.client_id,
+        "redirect_uri": settings.callback_url,
+        "scope": "read:user user:email",
+        "state": state,
+    }
+    url = f"{github_auth_url}?{urllib.parse.urlencode(params)}"
+    response = RedirectResponse(url)
+    response.set_cookie(
+        key="github_oauth_state",
+        value=state,
+        httponly=True,
+        max_age=600,
+        secure=settings.callback_url.startswith("https"),
+        samesite="lax",
+    )
+    response.set_cookie(
+        key="github_oauth_origin",
+        value=frontend_origin,
+        httponly=True,
+        max_age=600,
+        secure=settings.callback_url.startswith("https"),
+        samesite="lax",
+    )
+    return response
+
+
+@router.get("/callback/github")
+async def github_login_callback(
+    request: Request,
+    code: str,
+    state: str,
+    db: AsyncSessionDep,
+):
+    """Handle GitHub OAuth callback, exchange code for token, and authenticate user."""
+    settings = get_github_auth_settings()
+    if not settings.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GitHub SSO is not configured.",
+        )
+
+    cookie_state = request.cookies.get("github_oauth_state")
+    if not state or not cookie_state or state != cookie_state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid state token (CSRF check failed)",
+        )
+
+    # 1. Exchange code for access token
+    token_url = "https://github.com/login/oauth/access_token"
+    async with httpx.AsyncClient() as client:
+        token_res = await client.post(
+            token_url,
+            headers={"Accept": "application/json"},
+            data={
+                "client_id": settings.client_id,
+                "client_secret": settings.client_secret,
+                "code": code,
+                "redirect_uri": settings.callback_url,
+            },
+        )
+        if token_res.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to retrieve GitHub access token")
+        
+        token_data = token_res.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            gh_error = token_data.get("error_description") or token_data.get("error") or "No access token returned from GitHub"
+            logger.error("GitHub token exchange failed: %s (raw response: %s)", gh_error, token_data)
+            raise HTTPException(status_code=400, detail=f"GitHub OAuth error: {gh_error}")
+
+        # 2. Fetch user profile
+        user_res = await client.get(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
+        )
+        if user_res.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to retrieve GitHub user profile")
+        
+        github_user = user_res.json()
+        github_id = str(github_user["id"])
+        full_name = github_user.get("name") or github_user.get("login")
+        
+        # 3. Fetch primary email
+        email_res = await client.get(
+            "https://api.github.com/user/emails",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/vnd.github.v3+json",
+            },
+        )
+        if email_res.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to retrieve GitHub emails")
+            
+        emails = email_res.json()
+        primary_email = next(
+            (e["email"] for e in emails if e.get("primary") and e.get("verified")), None
+        )
+        if not primary_email:
+            raise HTTPException(status_code=400, detail="No primary email found on GitHub account")
+            
+    # 4. Handle Account Linking & Unified User Logic
+    account = await AccountRepository.get_account_by_provider(db, "github", github_id)
+    if account is not None:
+        user = await UserRepository.get_user_by_id(db, account.user_id)
+        if user is None:
+            raise HTTPException(status_code=409, detail="GitHub identity conflict: user missing")
+    else:
+        user = await UserRepository.get_user_by_email(db, primary_email)
+        if user is not None:
+            # Email conflict: User exists but not linked to this GitHub account
+            frontend_url = request.cookies.get("github_oauth_origin") or os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")[-1].strip()
+            error_msg = urllib.parse.quote("This email is already registered using a different provider. Please sign in with your primary method.")
+            return RedirectResponse(f"{frontend_url}/login?error={error_msg}", status_code=303)
+            
+        # New User
+        try:
+            user = await UserRepository.create_user(
+                db=db,
+                email=primary_email,
+                hashed_password=None,
+                full_name=full_name,
+                commit=False,
+            )
+            await AccountRepository.create_account(
+                db=db,
+                user_id=user.id,
+                provider="github",
+                provider_account_id=github_id,
+                access_token=access_token,
+                commit=False,
+            )
+            await db.commit()
+            await db.refresh(user)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="GitHub identity conflict during creation")
+        except Exception:
+            await db.rollback()
+            raise
+            
+        logger.info("Auto-created user via GitHub SSO: %s", primary_email)
+
+    # 5. Issue session token and redirect
+    token = create_access_token(data={"sub": user.email})
+    frontend_url = request.cookies.get("github_oauth_origin") or os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")[-1].strip()
+    return RedirectResponse(f"{frontend_url}/login?token={token}", status_code=303)

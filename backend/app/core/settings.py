@@ -242,6 +242,37 @@ def get_ingestion_security_settings() -> IngestionSecuritySettings:
     return IngestionSecuritySettings(api_keys=tuple(dict.fromkeys(keys)))
 
 
+class GitHubAuthSettings(BaseModel):
+    """Configuration for GitHub OAuth."""
+
+    client_id: str = Field(
+        default="",
+        description="GitHub OAuth Client ID (env: GITHUB_CLIENT_ID)",
+    )
+    client_secret: str = Field(
+        default="",
+        description="GitHub OAuth Client Secret (env: GITHUB_CLIENT_SECRET)",
+    )
+    callback_url: str = Field(
+        default="",
+        description="GitHub OAuth Callback URL (env: GITHUB_CALLBACK_URL)",
+    )
+
+    @property
+    def enabled(self) -> bool:
+        """Return whether GitHub authentication is configured."""
+        return bool(self.client_id and self.client_secret and self.callback_url)
+
+
+def get_github_auth_settings() -> GitHubAuthSettings:
+    """Construct GitHub authentication settings from the current environment."""
+    return GitHubAuthSettings(
+        client_id=os.getenv("GITHUB_CLIENT_ID", ""),
+        client_secret=os.getenv("GITHUB_CLIENT_SECRET", ""),
+        callback_url=os.getenv("GITHUB_CALLBACK_URL", ""),
+    )
+
+
 class MicrosoftAuthSettings(BaseModel):
     """Typed configuration for Microsoft Entra ID authentication.
 
