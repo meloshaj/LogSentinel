@@ -319,33 +319,33 @@ export function RegisterPage() {
       transition={{ duration: 0.28, ease: "easeOut" }}
       className="w-full max-w-[460px] relative z-10"
     >
-      <div className="relative bg-white rounded-2xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.08)] border border-slate-200">
-        {/* Lighter header section for logo */}
-        <div className="bg-slate-50 px-8 pt-8 pb-6 border-b border-slate-100">
-          <LogSentinelLogo large />
+      <div className="relative bg-white rounded-2xl overflow-hidden border border-slate-700/80 shadow-[0_0_50px_-10px_rgba(14,165,233,0.3)]">
+        {/* Sleek Dark Card Header */}
+        <div className="bg-[#0b132a] px-6 sm:px-8 py-7 sm:py-8 border-b border-slate-800/80 flex items-center justify-between">
+          <LogSentinelLogo large dark />
         </div>
 
         {/* Form content */}
-        <div className="p-8">
-          <div className="mb-5 text-left">
-            <h1 className="text-[1.4rem] font-semibold text-slate-900 tracking-tight leading-tight select-none">
+        <div className="p-6 sm:p-7">
+          <div className="mb-4 text-left">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight leading-tight select-none">
               Create account
             </h1>
-            <p className="text-sm text-slate-600 mt-1 select-none">
+            <p className="text-xs text-slate-600 mt-1 font-medium select-none">
               Start monitoring your infrastructure in minutes
             </p>
           </div>
 
           {errors.submit && (
-            <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center gap-2 select-none text-left">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{errors.submit}</span>
+            <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2 select-none text-left shadow-sm">
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+              <span className="font-medium">{errors.submit}</span>
             </div>
           )}
           {errors.conflict && (
-            <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-600 text-xs flex items-center gap-2 select-none text-left">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{errors.conflict}</span>
+            <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2 select-none text-left shadow-sm">
+              <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
+              <span className="font-medium">{errors.conflict}</span>
             </div>
           )}
 
@@ -355,16 +355,17 @@ export function RegisterPage() {
               body="Your workspace is ready. Redirecting you to the dashboard..."
             />
           ) : (
-            <form onSubmit={handleSubmit} noValidate className="space-y-3">
+            <form onSubmit={handleSubmit} noValidate autoComplete="off" className="space-y-3">
+
               {/* Row 1: Name + Email */}
-              <div className="grid grid-cols-2 gap-2.5 items-start">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
                 <InputField
                   label="Full name"
                   type="text"
                   value={fullName}
                   onChange={setFullName}
                   placeholder="Alex Chen"
-                  icon={<User className="w-4 h-4" />}
+                  icon={<User className="w-4 h-4 text-slate-400" />}
                   error={errors.fullName}
                   disabled={loading}
                 />
@@ -374,7 +375,7 @@ export function RegisterPage() {
                   value={email}
                   onChange={setEmail}
                   placeholder="you@company.com"
-                  icon={<Mail className="w-4 h-4" />}
+                  icon={<Mail className="w-4 h-4 text-slate-400" />}
                   error={errors.email}
                   disabled={loading}
                 />
@@ -386,13 +387,13 @@ export function RegisterPage() {
                 value={org}
                 onChange={setOrg}
                 placeholder="Acme Corp"
-                icon={<Building2 className="w-4 h-4" />}
+                icon={<Building2 className="w-4 h-4 text-slate-400" />}
                 optional
                 disabled={loading}
               />
 
               {/* Row 2: Password + Confirm */}
-              <div className="grid grid-cols-2 gap-2.5 items-start">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
                 <div className="text-left">
                   <InputField
                     label="Password"
@@ -400,14 +401,14 @@ export function RegisterPage() {
                     value={password}
                     onChange={setPassword}
                     placeholder="Min. 8 chars"
-                    icon={<Lock className="w-4 h-4" />}
+                    icon={<Lock className="w-4 h-4 text-slate-400" />}
                     error={errors.password}
                     disabled={loading}
                     rightElement={
                       <button
                         type="button"
                         onClick={() => setShowPw((v) => !v)}
-                        className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+                        className="text-slate-400 hover:text-slate-700 transition-colors cursor-pointer p-0.5"
                         aria-label={showPw ? "Hide password" : "Show password"}
                       >
                         {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -422,7 +423,7 @@ export function RegisterPage() {
                   value={confirmPw}
                   onChange={setConfirmPw}
                   placeholder="Repeat password"
-                  icon={<Lock className="w-4 h-4" />}
+                  icon={<Lock className="w-4 h-4 text-slate-400" />}
                   error={errors.confirmPw}
                   success={pwMatch}
                   disabled={loading}
@@ -430,7 +431,7 @@ export function RegisterPage() {
                     <button
                       type="button"
                       onClick={() => setShowConfirm((v) => !v)}
-                      className="text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+                      className="text-slate-400 hover:text-slate-700 transition-colors cursor-pointer p-0.5"
                       aria-label={showConfirm ? "Hide password" : "Show password"}
                     >
                       {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -440,7 +441,7 @@ export function RegisterPage() {
               </div>
 
               {/* Terms */}
-              <div className="pt-1 text-left">
+              <div className="pt-0.5 text-left">
                 <label className="flex items-start gap-2.5 cursor-pointer group">
                   <input
                     type="checkbox"
@@ -451,55 +452,53 @@ export function RegisterPage() {
                   />
                   <div
                     className={[
-                      "mt-0.5 w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all duration-150",
+                      "mt-0.5 w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-all duration-150",
                       agreed
                         ? "bg-sky-500 border-sky-500"
                         : errors.agreed
-                        ? "border-red-400 bg-white"
+                        ? "border-red-400 bg-red-50/20"
                         : "border-slate-300 bg-white group-hover:border-slate-400",
                     ].join(" ")}
                   >
                     {agreed && (
-                      <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+                      <Check className="w-3 h-3 text-white" strokeWidth={3} />
                     )}
                   </div>
-                  <span className="text-[13px] text-slate-700 leading-relaxed select-none">
+                  <span className="text-xs text-slate-700 font-medium leading-relaxed select-none">
                     I agree to the{" "}
                     <button
                       type="button"
-                      className="text-sky-600 hover:text-sky-700 font-medium transition-colors underline-offset-2 hover:underline select-none cursor-pointer"
+                      className="text-sky-600 hover:text-sky-700 font-semibold transition-colors underline-offset-2 hover:underline select-none cursor-pointer"
                     >
                       Terms of Service
                     </button>{" "}
                     and{" "}
                     <button
                       type="button"
-                      className="text-sky-600 hover:text-sky-700 font-medium transition-colors underline-offset-2 hover:underline select-none cursor-pointer"
+                      className="text-sky-600 hover:text-sky-700 font-semibold transition-colors underline-offset-2 hover:underline select-none cursor-pointer"
                     >
                       Privacy Policy
                     </button>
                   </span>
                 </label>
-                <div className="min-h-[18px]">
-                  {errors.agreed && (
-                    <p className="flex items-center gap-1.5 text-[12px] text-red-500 mt-1 ml-[26px] select-none">
-                      <AlertCircle className="w-3 h-3 flex-shrink-0" />
-                      {errors.agreed}
-                    </p>
-                  )}
-                </div>
+                {errors.agreed && (
+                  <p className="flex items-center gap-1.5 text-xs text-red-600 font-medium mt-1 ml-6 select-none">
+                    <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                    {errors.agreed}
+                  </p>
+                )}
               </div>
 
               <button
                 type="submit"
                 disabled={loading}
                 className={[
-                  "w-full py-3 rounded-lg text-sm font-semibold",
+                  "w-full py-2.5 rounded-lg text-sm font-bold",
                   "flex items-center justify-center gap-2 mt-2",
-                  "transition-all duration-150 select-none cursor-pointer",
+                  "transition-all duration-150 select-none cursor-pointer shadow-md",
                   loading
-                    ? "bg-sky-100 text-sky-400 cursor-not-allowed"
-                    : "bg-sky-500 hover:bg-sky-400 text-white shadow-lg shadow-sky-500/25 active:scale-[0.99]",
+                    ? "bg-sky-100 text-sky-400 cursor-not-allowed shadow-none"
+                    : "bg-sky-500 hover:bg-sky-400 text-white shadow-sky-500/20 active:scale-[0.99]",
                 ].join(" ")}
               >
                 {loading ? (
@@ -516,16 +515,16 @@ export function RegisterPage() {
           )}
 
           {!success && (
-            <div className="mt-8">
-              <div className="flex items-center gap-4 mb-6" aria-hidden="true">
+            <div className="mt-4">
+              <div className="flex items-center gap-3 mb-3" aria-hidden="true">
                 <div className="flex-1 h-px bg-slate-200" />
-                <span className="text-[12px] font-medium text-slate-400 select-none">
+                <span className="text-[10px] font-bold tracking-wider text-slate-500 uppercase select-none">
                   OR CONTINUE WITH
                 </span>
                 <div className="flex-1 h-px bg-slate-200" />
               </div>
 
-              <div className="space-y-2.5">
+              <div className="space-y-2">
                 {googleClientId ? (
                   loading ? (
                     <SSOButton
@@ -538,13 +537,13 @@ export function RegisterPage() {
                       }}
                     />
                   ) : (
-                    <div className="w-full overflow-hidden flex justify-center rounded-lg border border-slate-200 bg-white" style={{ height: "40px" }}>
+                    <div className="w-full overflow-hidden flex justify-center rounded-lg border border-slate-300 bg-white shadow-sm" style={{ height: "38px" }}>
                       <GoogleLogin
                         onSuccess={handleGoogleSuccess}
                         onError={handleGoogleError}
                         theme="outline"
                         size="large"
-                        width={396}
+                        width={376}
                         text="continue_with"
                         shape="rectangular"
                       />
@@ -579,24 +578,24 @@ export function RegisterPage() {
                       window.location.href = `${apiBase}/api/auth/github`;
                     },
                     disabled: loading,
-                    bgClass: "bg-[#24292f]",
-                    borderClass: "border-[#24292f]",
+                    bgClass: "bg-[#181d24]",
+                    borderClass: "border-[#181d24]",
                     textClass: "text-white",
-                    hoverClass: "hover:bg-[#2c3238] hover:border-[#2c3238]",
+                    hoverClass: "hover:bg-[#22272e] hover:border-[#22272e]",
                   }}
                 />
               </div>
             </div>
           )}
 
-          <div className="mt-5 pt-5 border-t border-slate-200">
-            <p className="text-[13px] text-center text-slate-600 select-none">
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <p className="text-xs text-center text-slate-600 font-medium select-none">
               Already have an account?{" "}
               <button
                 type="button"
                 onClick={() => navigate("/login")}
                 disabled={loading}
-                className="text-sky-600 hover:text-sky-700 font-medium transition-colors select-none cursor-pointer"
+                className="text-sky-600 hover:text-sky-700 font-bold transition-colors select-none cursor-pointer"
               >
                 Sign in
               </button>
@@ -607,3 +606,4 @@ export function RegisterPage() {
     </motion.div>
   );
 }
+
