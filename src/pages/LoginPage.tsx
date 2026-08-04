@@ -587,13 +587,13 @@ export function LoginPage() {
                       }}
                     />
                   ) : (
-                    <div className="w-full overflow-hidden flex justify-center rounded-lg border border-slate-300 bg-white shadow-sm" style={{ height: "38px" }}>
+                    <div className="w-full flex justify-center">
                       <GoogleLogin
                         onSuccess={handleGoogleSuccess}
                         onError={handleGoogleError}
                         theme="outline"
                         size="large"
-                        width={336}
+                        width={364}
                         text="continue_with"
                         shape="rectangular"
                       />

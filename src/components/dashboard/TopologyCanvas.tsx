@@ -16,6 +16,8 @@ import '@xyflow/react/dist/style.css';
 import { useTelemetryStream } from '../../hooks/useTelemetryStream';
 import { useTopologySync } from '../../hooks/useTopologySync';
 
+import { useThemeMode } from '../../hooks/useThemeMode';
+
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "#f85149", // red
   high: "#ffa657",     // orange
@@ -30,13 +32,13 @@ function ServiceNode({ data }: NodeProps) {
   const color = SEVERITY_COLORS[data.severity as string] || SEVERITY_COLORS.normal;
   
   return (
-    <div className={`px-4 py-2 rounded-lg border-2 bg-[#0d1117] text-white flex flex-col items-center justify-center relative ${isRoot ? 'animate-pulse' : ''}`}
+    <div className={`px-4 py-2 rounded-lg border-2 bg-[#0d1117] text-[#e6edf3] flex flex-col items-center justify-center relative ${isRoot ? 'animate-pulse' : ''}`}
          style={{ borderColor: color, boxShadow: isRoot ? `0 0 15px ${color}` : 'none' }}>
       <Handle type="target" position={Position.Top} style={{ background: '#555' }} />
       <div className="text-sm font-bold">{data.serviceName as string}</div>
-      <div className="text-xs text-gray-400 mt-1 uppercase tracking-widest">{data.severity as string}</div>
+      <div className="text-xs text-[#7d8590] mt-1 uppercase tracking-widest">{data.severity as string}</div>
       {data.anomalyScore !== undefined && (
-        <div className="text-[10px] text-gray-500 mt-1">Score: {Number(data.anomalyScore).toFixed(2)}</div>
+        <div className="text-[10px] text-[#7d8590] mt-1">Score: {Number(data.anomalyScore).toFixed(2)}</div>
       )}
       <Handle type="source" position={Position.Bottom} style={{ background: '#555' }} />
     </div>
@@ -48,9 +50,10 @@ const nodeTypes = {
 };
 
 function TopologyCanvasInner() {
-  const { activeTrackingLoops, connectionStatus } = useTelemetryStream();
+  const { connectionStatus, activeTrackingLoops } = useTelemetryStream();
   const { selectedNodeId } = useTopologySync();
   const { setCenter } = useReactFlow();
+  const { themeMode } = useThemeMode();
   
   const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
@@ -142,10 +145,11 @@ function TopologyCanvasInner() {
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         fitView
+        colorMode={themeMode}
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#21262d" gap={16} />
-        <Controls style={{ fill: '#484f58' }} />
+        <Controls />
       </ReactFlow>
     </div>
   );

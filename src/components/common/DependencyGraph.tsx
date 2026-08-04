@@ -3,6 +3,7 @@ import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edg
 import { DEPENDENCY_NODE_STATUS } from "../../constants/statusConfig";
 import { reactFlowEngineConfig } from "../../config/reactFlow";
 import type { ServiceGraph } from "../../types/monitoring";
+import { useThemeMode } from '../../hooks/useThemeMode';
 
 interface DependencyGraphProps {
   graph: ServiceGraph;
@@ -69,6 +70,7 @@ export function DependencyGraph({
   strokeWidth = 1.5,
   labelOffset = 26,
 }: DependencyGraphProps) {
+  const { themeMode } = useThemeMode();
   const { nodes, edges, nodeTypes } = useMemo(() => {
     const mappedNodes: Node<ServiceNodeData>[] = graph.nodes.map((node) => {
       const status = DEPENDENCY_NODE_STATUS[node.id] ?? { fill: "#1c2128", stroke: "#484f58" };
@@ -138,6 +140,7 @@ export function DependencyGraph({
       nodesConnectable={reactFlowEngineConfig.nodesConnectable}
       elementsSelectable={reactFlowEngineConfig.elementsSelectable}
       elevateNodesOnSelect={reactFlowEngineConfig.elevateNodesOnSelect}
+      colorMode={themeMode}
       panOnDrag={reactFlowEngineConfig.panOnDrag}
       panOnScroll={reactFlowEngineConfig.panOnScroll}
       zoomOnScroll={reactFlowEngineConfig.zoomOnScroll}
