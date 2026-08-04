@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useTelemetrySocket } from "./useTelemetrySocket";
 
 export type BlastRadiusNode = {
@@ -14,8 +14,8 @@ export type TrackingLoopEvent = {
   anomaly_score: number;
   severity: string;
   status: string;
-  blast_radius?: { blast_radius: BlastRadiusNode[] };
-  suspected_root_service?: string;
+  blast_radius?: BlastRadiusNode[] | null;
+  suspected_root_service?: string | null;
 };
 
 export type PerformanceEvent = {
@@ -48,12 +48,8 @@ function isBlastRadiusNode(value: unknown): value is BlastRadiusNode {
   );
 }
 
-function isBlastRadius(value: unknown): value is { blast_radius: BlastRadiusNode[] } {
-  return (
-    isRecord(value) &&
-    Array.isArray(value.blast_radius) &&
-    value.blast_radius.every(isBlastRadiusNode)
-  );
+function isBlastRadius(value: unknown): value is BlastRadiusNode[] {
+  return Array.isArray(value) && value.every(isBlastRadiusNode);
 }
 
 function isTrackingLoopEvent(value: unknown): value is TrackingLoopEvent {
@@ -64,9 +60,8 @@ function isTrackingLoopEvent(value: unknown): value is TrackingLoopEvent {
     typeof value.anomaly_score === "number" &&
     typeof value.severity === "string" &&
     typeof value.status === "string" &&
-    (value.blast_radius === undefined || isBlastRadius(value.blast_radius)) &&
-    (value.suspected_root_service === undefined ||
-      typeof value.suspected_root_service === "string")
+    (value.blast_radius === undefined || value.blast_radius === null || isBlastRadius(value.blast_radius)) &&
+    (value.suspected_root_service === undefined || value.suspected_root_service === null || typeof value.suspected_root_service === "string")
   );
 }
 
@@ -78,7 +73,7 @@ function isPerformanceEvent(value: unknown): value is PerformanceEvent {
     typeof value.current_value === "number" &&
     typeof value.threshold === "number" &&
     typeof value.severity === "string" &&
-    (value.health_metrics === undefined || isRecord(value.health_metrics))
+    (value.health_metrics === undefined || value.health_metrics === null || isRecord(value.health_metrics))
   );
 }
 
@@ -93,6 +88,37 @@ export function useTelemetryStream() {
   const [activeTrackingLoops, setActiveTrackingLoops] = useState<Record<string, TrackingLoopEvent>>({});
   const [latestPerformanceEvents, setLatestPerformanceEvents] = useState<Record<string, PerformanceEvent>>({});
 
+  const pendingTrackingUpdates = useRef<TrackingLoopEvent[]>([]);
+  const pendingPerformanceUpdates = useRef<PerformanceEvent[]>([]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (pendingTrackingUpdates.current.length > 0) {
+        setActiveTrackingLoops((prev) => {
+          const next = { ...prev };
+          pendingTrackingUpdates.current.forEach((e) => {
+            next[e.window_id] = e;
+          });
+          return next;
+        });
+        pendingTrackingUpdates.current = [];
+      }
+
+      if (pendingPerformanceUpdates.current.length > 0) {
+        setLatestPerformanceEvents((prev) => {
+          const next = { ...prev };
+          pendingPerformanceUpdates.current.forEach((e) => {
+            next[e.metric_name] = e;
+          });
+          return next;
+        });
+        pendingPerformanceUpdates.current = [];
+      }
+    }, 500); // 2 updates per second
+
+    return () => clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     if (!latestEvent) return;
 
@@ -101,50 +127,33 @@ export function useTelemetryStream() {
       const events = getFrameEvents(latestEvent.payload);
       if (!events) return;
 
-      let hasTrackingUpdates = false;
-      let hasPerformanceUpdates = false;
-      // Using functional state updates to avoid dependency on current state values directly
-      setActiveTrackingLoops((prev) => {
-        const next = { ...prev };
-        events.forEach((event) => {
-          if (
-            isRecord(event) &&
-            event.type === "infrastructure.tracking_loop.triggered" &&
-            isTrackingLoopEvent(event.payload)
-          ) {
-            next[event.payload.window_id] = event.payload;
-            hasTrackingUpdates = true;
-          }
-        });
-        return hasTrackingUpdates ? next : prev;
-      });
-
-      setLatestPerformanceEvents((prev) => {
-        const next = { ...prev };
-        events.forEach((event) => {
-          if (
-            isRecord(event) &&
-            event.type === "infrastructure.performance.alert" &&
-            isPerformanceEvent(event.payload)
-          ) {
-            next[event.payload.metric_name] = event.payload;
-            hasPerformanceUpdates = true;
-          }
-        });
-        return hasPerformanceUpdates ? next : prev;
+      events.forEach((event) => {
+        if (
+          isRecord(event) &&
+          event.type === "infrastructure.tracking_loop.triggered" &&
+          isTrackingLoopEvent(event.payload)
+        ) {
+          pendingTrackingUpdates.current.push(event.payload);
+        } else if (
+          isRecord(event) &&
+          event.type === "infrastructure.performance.alert" &&
+          isPerformanceEvent(event.payload)
+        ) {
+          pendingPerformanceUpdates.current.push(event.payload);
+        }
       });
     }
     // Fallback for non-batched events if backend hasn't fully switched
     else if (eventType === "infrastructure.tracking_loop.triggered") {
       const payload = latestEvent.payload;
       if (isTrackingLoopEvent(payload)) {
-        setActiveTrackingLoops(prev => ({ ...prev, [payload.window_id]: payload }));
+        pendingTrackingUpdates.current.push(payload);
       }
     }
     else if (eventType === "infrastructure.performance.alert") {
       const payload = latestEvent.payload;
       if (isPerformanceEvent(payload)) {
-        setLatestPerformanceEvents(prev => ({ ...prev, [payload.metric_name]: payload }));
+        pendingPerformanceUpdates.current.push(payload);
       }
     }
 

@@ -1,6 +1,6 @@
 import { LogStream } from "../components/logs/LogStream";
 import { LiveTelemetryStatus } from "../components/logs/LiveTelemetryStatus";
-import { mockLogs } from "../services/mockMonitoringData";
+import { useLiveLogs } from "../hooks/useLiveLogs";
 import { Download, Search, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
 
@@ -8,7 +8,8 @@ const services = ["All Services", "api-gateway", "auth-service", "payment-servic
 const timeRanges = ["Last 15 min", "Last 1 hour", "Last 6 hours", "Last 24 hours"];
 
 function LogHistoryTable() {
-  const rows = mockLogs.slice(0, 10);
+  const { filteredLogs } = useLiveLogs();
+  const rows = filteredLogs.slice(-10).reverse();
   const levelColor: Record<string, string> = { INFO: "#79c0ff", WARN: "#d29922", ERROR: "#f85149", DEBUG: "#7d8590" };
   const levelBg: Record<string, string> = { INFO: "rgba(31,111,235,0.15)", WARN: "rgba(210,153,34,0.15)", ERROR: "rgba(218,54,51,0.15)", DEBUG: "rgba(125,133,144,0.1)" };
 

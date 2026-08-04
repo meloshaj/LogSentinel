@@ -1,5 +1,7 @@
-import { mockAnomalies, mockTimeSeriesData } from "../services/mockMonitoringData";
 import type { ServiceAnomaly } from "../types/monitoring";
+import { useTelemetryStream } from "../hooks/useTelemetryStream";
+import { useLiveLogs } from "../hooks/useLiveLogs";
+import { useMemo } from "react";
 import { AlertTriangle, ArrowRight, TrendingUp, Zap } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
@@ -59,9 +61,48 @@ function AnomalyCard({ anomaly }: { anomaly: ServiceAnomaly }) {
 }
 
 export function AnomaliesPage() {
-  const critical = mockAnomalies.filter((a) => a.status === "Critical");
-  const warning = mockAnomalies.filter((a) => a.status === "Warning");
-  const normal = mockAnomalies.filter((a) => a.status === "Normal");
+  const { activeTrackingLoops } = useTelemetryStream();
+  const { filteredLogs } = useLiveLogs();
+
+  const timeSeriesData = useMemo(() => {
+    if (filteredLogs.length === 0) return [];
+    const buckets: Record<string, { time: string, errors: number, anomalies: number }> = {};
+    filteredLogs.forEach(log => {
+      const minute = log.timestamp.split(':').slice(0, 2).join(':');
+      if (!buckets[minute]) buckets[minute] = { time: minute, errors: 0, anomalies: 0 };
+      if (log.level === 'ERROR') buckets[minute].errors += 1;
+    });
+    activeTrackingLoops.forEach(loop => {
+      // Just mock mapping anomalies count to current time for trend graph
+      const time = new Date().toLocaleTimeString().split(':').slice(0,2).join(':');
+      if (!buckets[time]) buckets[time] = { time, errors: 0, anomalies: 0 };
+      buckets[time].anomalies += 1;
+    });
+    return Object.values(buckets).slice(-20);
+  }, [filteredLogs, activeTrackingLoops]);
+
+  const anomalies: ServiceAnomaly[] = activeTrackingLoops.flatMap(loop => {
+    if (!loop.blast_radius?.blast_radius) return [];
+    return loop.blast_radius.blast_radius.map(node => {
+      let status: "Normal" | "Warning" | "Critical" = "Normal";
+      if (loop.severity === "critical" || loop.severity === "high") status = "Critical";
+      else if (loop.severity === "medium") status = "Warning";
+
+      return {
+        id: `${loop.window_id}-${node.service_name}`,
+        name: node.service_name,
+        score: Math.min(1.0, node.impact_score / 100),
+        status,
+        explanation: `ML model detected ${loop.severity} anomaly pattern in tracking loop ${loop.window_id.substring(0,6)}...`,
+        errorRate: 0,
+        latency: 0
+      };
+    });
+  }).sort((a, b) => b.score - a.score);
+
+  const critical = anomalies.filter((a) => a.status === "Critical");
+  const warning = anomalies.filter((a) => a.status === "Warning");
+  const normal = anomalies.filter((a) => a.status === "Normal");
 
   return (
     <div className="space-y-5">
@@ -92,7 +133,7 @@ export function AnomaliesPage() {
         </div>
         <div className="px-4 pb-4 pt-2">
           <ResponsiveContainer width="100%" height={140}>
-            <AreaChart data={mockTimeSeriesData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
+            <AreaChart data={timeSeriesData.length > 0 ? timeSeriesData : [{ time: '00:00', errors: 0, anomalies: 0 }]} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="anom-grad-errors" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#da3633" stopOpacity={0.3} />
@@ -124,7 +165,12 @@ export function AnomaliesPage() {
           </span>
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {mockAnomalies.map((a) => <AnomalyCard key={a.id} anomaly={a} />)}
+          {anomalies.map((a) => <AnomalyCard key={a.id} anomaly={a} />)}
+          {anomalies.length === 0 && (
+            <div className="col-span-full flex items-center justify-center py-12 text-[#7d8590]">
+              <span style={{ fontSize: "12px" }}>No anomalies detected across any services.</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

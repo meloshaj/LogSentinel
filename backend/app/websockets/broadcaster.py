@@ -79,7 +79,9 @@ class HighLoadBroadcaster:
                 consolidated_payload = {
                     "type": "frame_update",
                     "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "events": batch
+                    "payload": {
+                        "events": batch
+                    }
                 }
                 
                 stale_connections: list[WebSocket] = []

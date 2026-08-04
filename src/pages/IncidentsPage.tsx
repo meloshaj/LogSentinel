@@ -1,5 +1,5 @@
-import { mockIncidents } from "../services/mockMonitoringData";
 import type { Incident } from "../types/monitoring";
+import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { Bell, CheckCircle, Clock, Flame, XCircle, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 
@@ -92,8 +92,30 @@ function IncidentCard({ incident }: { incident: Incident }) {
 }
 
 export function IncidentsPage() {
-  const open = mockIncidents.filter((i) => i.status !== "resolved");
-  const resolved = mockIncidents.filter((i) => i.status === "resolved");
+  const { activeTrackingLoops, latestPerformanceEvents } = useTelemetryStream();
+
+  // Derive incidents from live tracking loops and performance alerts
+  const incidents: Incident[] = [
+    ...activeTrackingLoops.map(loop => ({
+      id: loop.window_id,
+      service: loop.suspected_root_service || "multiple-services",
+      severity: (loop.severity === "medium" || loop.severity === "low" || loop.severity === "high" || loop.severity === "critical" ? loop.severity : "medium") as any,
+      timestamp: new Date().toLocaleTimeString(),
+      description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(0)}`,
+      status: (loop.status === "open" || loop.status === "investigating" || loop.status === "resolved" ? loop.status : "open") as any
+    })),
+    ...latestPerformanceEvents.map(event => ({
+      id: event.metric_name,
+      service: "infrastructure",
+      severity: (event.severity === "medium" || event.severity === "low" || event.severity === "high" || event.severity === "critical" ? event.severity : "medium") as any,
+      timestamp: new Date().toLocaleTimeString(),
+      description: `Performance alert: ${event.metric_name} is ${event.current_value.toFixed(0)} (threshold ${event.threshold})`,
+      status: "open" as any
+    }))
+  ];
+
+  const open = incidents.filter((i) => i.status !== "resolved");
+  const resolved = incidents.filter((i) => i.status === "resolved");
 
   return (
     <div className="space-y-5">
@@ -106,8 +128,8 @@ export function IncidentsPage() {
       <div className="grid grid-cols-4 gap-3">
         {[
           { label: "Open", count: open.length, color: "#f85149" },
-          { label: "Investigating", count: mockIncidents.filter(i => i.status === "investigating").length, color: "#d29922" },
-          { label: "Critical", count: mockIncidents.filter(i => i.severity === "critical").length, color: "#f85149" },
+          { label: "Investigating", count: incidents.filter(i => i.status === "investigating").length, color: "#d29922" },
+          { label: "Critical", count: incidents.filter(i => i.severity === "critical").length, color: "#f85149" },
           { label: "Resolved (24h)", count: resolved.length, color: "#3fb950" },
         ].map((s) => (
           <div key={s.label} className="flex flex-col items-center justify-center p-4 rounded-xl bg-[#161b22] border border-[#21262d]">

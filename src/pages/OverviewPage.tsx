@@ -4,7 +4,7 @@ import { TopologyCanvas } from "../components/dashboard/TopologyCanvas";
 import { BenchmarkingHUD } from "../components/dashboard/BenchmarkingHUD";
 import { EventManagerPanel } from "../components/dashboard/EventManagerPanel";
 import { TopologySyncProvider } from "../hooks/useTopologySync";
-import { mockIncidents, mockLogs } from "../services/mockMonitoringData";
+import { useLiveLogs } from "../hooks/useLiveLogs";
 import { Activity, AlertTriangle, ArrowRight, CheckCircle, Clock } from "lucide-react";
 import { useNavigate } from "react-router";
 
@@ -26,8 +26,9 @@ function QuickStat({ label, value, colorClass }: { label: string; value: string;
 
 export function OverviewPage() {
   const navigate = useNavigate();
-  const recentLogs = mockLogs.slice(-6).reverse();
-  const openIncidents = mockIncidents.filter((i) => i.status !== "resolved");
+  const { filteredLogs } = useLiveLogs();
+  const recentLogs = filteredLogs.slice(-6).reverse();
+  const openIncidents: any[] = []; // Live incidents to be integrated later
 
   return (
     <TopologySyncProvider>

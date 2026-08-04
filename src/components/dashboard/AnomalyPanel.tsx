@@ -1,5 +1,5 @@
-import { mockAnomalies } from "../../services/mockMonitoringData";
 import type { ServiceAnomaly } from "../../types/monitoring";
+import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { AlertTriangle, CheckCircle, TrendingUp, Zap } from "lucide-react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip } from "recharts";
 
@@ -60,10 +60,33 @@ function ServiceCard({ anomaly }: { anomaly: ServiceAnomaly }) {
   );
 }
 
-const chartData = mockAnomalies.map((a) => ({ name: a.name.split("-")[0], score: Math.round(a.score * 100) }));
-
 export function AnomalyPanel() {
-  const criticalCount = mockAnomalies.filter((a) => a.status === "Critical").length;
+  const { activeTrackingLoops } = useTelemetryStream();
+
+  // Derive anomalies from live tracking loops
+  const anomalies: ServiceAnomaly[] = activeTrackingLoops.flatMap(loop => {
+    if (!loop.blast_radius?.blast_radius) return [];
+    
+    return loop.blast_radius.blast_radius.map(node => {
+      // Map severity string to our Status type
+      let status: "Normal" | "Warning" | "Critical" = "Normal";
+      if (loop.severity === "critical" || loop.severity === "high") status = "Critical";
+      else if (loop.severity === "medium") status = "Warning";
+
+      return {
+        id: `${loop.window_id}-${node.service_name}`,
+        name: node.service_name,
+        score: Math.min(1.0, node.impact_score / 100),
+        status,
+        explanation: `ML model detected ${loop.severity} anomaly pattern in tracking loop ${loop.window_id.substring(0,6)}...`,
+        errorRate: 0,
+        latency: 0
+      };
+    });
+  }).sort((a, b) => b.score - a.score).slice(0, 10); // Keep top 10
+
+  const chartData = anomalies.map((a) => ({ name: a.name.split("-")[0], score: Math.round(a.score * 100) }));
+  const criticalCount = anomalies.filter((a) => a.status === "Critical").length;
 
   return (
     <div className="flex flex-col rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
@@ -98,7 +121,7 @@ export function AnomalyPanel() {
               />
               <Bar key="score" dataKey="score" radius={[3, 3, 0, 0]}>
                 {chartData.map((entry, idx) => {
-                  const a = mockAnomalies[idx];
+                  const a = anomalies[idx];
                   const color = a.status === "Critical" ? "#da3633" : a.status === "Warning" ? "#d29922" : "#3fb950";
                   return <Cell key={idx} fill={color} fillOpacity={0.85} />;
                 })}
@@ -110,7 +133,7 @@ export function AnomalyPanel() {
 
       {/* Service cards */}
       <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2">
-        {mockAnomalies.map((a) => (
+        {anomalies.map((a) => (
           <ServiceCard key={a.id} anomaly={a} />
         ))}
       </div>

@@ -1,7 +1,7 @@
 {
-  "run_id": "ml-eval-bc0fd8a677ff",
-  "started_at": "2026-07-30T13:31:20.586586Z",
-  "finished_at": "2026-07-30T13:31:22.136963Z",
+  "run_id": "ml-eval-c49179342263",
+  "started_at": "2026-08-04T12:39:18.490760Z",
+  "finished_at": "2026-08-04T12:39:19.790077Z",
   "dataset": {
     "total_records": 5000,
     "normal_count": 4250,
@@ -533,11 +533,11 @@
     }
   },
   "timing": {
-    "dataset_generation": 0.095,
-    "drain3_parsing": 0.571,
-    "feature_extraction": 0.15,
-    "model_training": 0.564,
-    "scoring": 0.135,
-    "threshold_sweep": 0.012
+    "dataset_generation": 0.093,
+    "drain3_parsing": 0.552,
+    "feature_extraction": 0.233,
+    "model_training": 0.367,
+    "scoring": 0.04,
+    "threshold_sweep": 0.005
   }
 }

@@ -1,4 +1,5 @@
-import { mockTimeSeriesData } from "../services/mockMonitoringData";
+import { useLiveLogs } from "../hooks/useLiveLogs";
+import { useMemo } from "react";
 import { BarChart2, TrendingDown, TrendingUp } from "lucide-react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell,
@@ -27,6 +28,20 @@ const healthData = [
 ];
 
 export function AnalyticsPage() {
+  const { filteredLogs } = useLiveLogs();
+
+  const timeSeriesData = useMemo(() => {
+    if (filteredLogs.length === 0) return [];
+    const buckets: Record<string, { time: string, logs: number, errors: number }> = {};
+    filteredLogs.forEach(log => {
+      const minute = log.timestamp.split(':').slice(0, 2).join(':');
+      if (!buckets[minute]) buckets[minute] = { time: minute, logs: 0, errors: 0 };
+      buckets[minute].logs += 1;
+      if (log.level === 'ERROR') buckets[minute].errors += 1;
+    });
+    return Object.values(buckets).slice(-20);
+  }, [filteredLogs]);
+
   return (
     <div className="space-y-5">
       <div>
@@ -61,7 +76,7 @@ export function AnalyticsPage() {
         </div>
         <div className="px-4 pb-4 pt-2">
           <ResponsiveContainer width="100%" height={160}>
-            <AreaChart data={mockTimeSeriesData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
+            <AreaChart data={timeSeriesData.length > 0 ? timeSeriesData : [{ time: '00:00', logs: 0, errors: 0 }]} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
               <defs>
                 <linearGradient id="ana-grad-logs" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#388bfd" stopOpacity={0.25} />

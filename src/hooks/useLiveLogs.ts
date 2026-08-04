@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { mockLogs } from "../services/mockMonitoringData";
 import type { LogEntry, LogLevel } from "../types/monitoring";
 
 type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
@@ -112,9 +111,13 @@ function extractLogEntries(eventData: string | ArrayBuffer | Blob): Promise<LogE
       const message =
         typeof payload.template === "string" && payload.template
           ? payload.template
-          : typeof payload.message === "string" && payload.message
-            ? payload.message
-            : `[template ${payload.template_id ?? "unknown"}]`;
+          : typeof payload.template_text === "string" && payload.template_text
+            ? payload.template_text
+            : typeof payload.message === "string" && payload.message
+              ? payload.message
+              : typeof payload.raw_message === "string" && payload.raw_message
+                ? payload.raw_message
+                : `[template ${payload.template_id ?? "unknown"}]`;
 
       const levelRaw = typeof payload.level === "string" ? payload.level.toUpperCase() : "INFO";
 
@@ -139,6 +142,16 @@ function extractLogEntries(eventData: string | ArrayBuffer | Blob): Promise<LogE
 
     try {
       const parsed = JSON.parse(trimmed) as unknown;
+
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        if (record.type === "frame_update" && record.payload) {
+          const framePayload = record.payload as Record<string, unknown>;
+          if (Array.isArray(framePayload.events)) {
+            return Promise.resolve(framePayload.events.flatMap(parseTelemetryEnvelope));
+          }
+        }
+      }
 
       // Handle arrays of telemetry events
       if (Array.isArray(parsed)) {
@@ -176,7 +189,7 @@ function extractLogEntries(eventData: string | ArrayBuffer | Blob): Promise<LogE
 }
 
 export function useLiveLogs() {
-  const [logs, setLogs] = useState<LogEntry[]>(mockLogs);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState<LogLevel | "ALL">("ALL");
   const [newIds, setNewIds] = useState<Set<string>>(new Set());

@@ -1,5 +1,5 @@
-import { mockIncidents } from "../../services/mockMonitoringData";
 import type { Incident } from "../../types/monitoring";
+import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { Bell, CheckCircle, Clock, Flame, XCircle } from "lucide-react";
 
 const SEVERITY_CONFIG = {
@@ -53,7 +53,29 @@ function IncidentRow({ incident }: { incident: Incident }) {
 }
 
 export function IncidentsPanel() {
-  const openCount = mockIncidents.filter((i) => i.status !== "resolved").length;
+  const { activeTrackingLoops, latestPerformanceEvents } = useTelemetryStream();
+
+  // Derive incidents from live tracking loops and performance alerts
+  const incidents: Incident[] = [
+    ...activeTrackingLoops.map(loop => ({
+      id: loop.window_id,
+      service: loop.suspected_root_service || "multiple-services",
+      severity: (loop.severity === "medium" || loop.severity === "low" || loop.severity === "high" || loop.severity === "critical" ? loop.severity : "medium") as any,
+      timestamp: new Date().toLocaleTimeString(),
+      description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(0)}`,
+      status: (loop.status === "open" || loop.status === "investigating" || loop.status === "resolved" ? loop.status : "open") as any
+    })),
+    ...latestPerformanceEvents.map(event => ({
+      id: event.metric_name,
+      service: "infrastructure",
+      severity: (event.severity === "medium" || event.severity === "low" || event.severity === "high" || event.severity === "critical" ? event.severity : "medium") as any,
+      timestamp: new Date().toLocaleTimeString(),
+      description: `Performance alert: ${event.metric_name} is ${event.current_value.toFixed(0)} (threshold ${event.threshold})`,
+      status: "open" as any
+    }))
+  ];
+
+  const openCount = incidents.filter((i) => i.status !== "resolved").length;
 
   return (
     <div className="flex flex-col rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
@@ -77,9 +99,9 @@ export function IncidentsPanel() {
       {/* Summary row */}
       <div className="grid grid-cols-3 divide-x divide-[#21262d] border-b border-[#21262d]">
         {[
-          { label: "Critical", count: mockIncidents.filter(i => i.severity === "critical").length, color: "#f85149" },
-          { label: "Investigating", count: mockIncidents.filter(i => i.status === "investigating").length, color: "#d29922" },
-          { label: "Resolved (24h)", count: mockIncidents.filter(i => i.status === "resolved").length, color: "#3fb950" },
+          { label: "Critical", count: incidents.filter(i => i.severity === "critical").length, color: "#f85149" },
+          { label: "Investigating", count: incidents.filter(i => i.status === "investigating").length, color: "#d29922" },
+          { label: "Resolved (24h)", count: incidents.filter(i => i.status === "resolved").length, color: "#3fb950" },
         ].map((item) => (
           <div key={item.label} className="flex flex-col items-center py-2">
             <span style={{ fontSize: "18px", fontWeight: 700, color: item.color }}>{item.count}</span>
@@ -90,7 +112,11 @@ export function IncidentsPanel() {
 
       {/* Incident list */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-        {mockIncidents.map((incident) => (
+        {incidents.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-[#7d8590] py-8">
+            <span style={{ fontSize: "11px" }}>No active incidents</span>
+          </div>
+        ) : incidents.map((incident) => (
           <IncidentRow key={incident.id} incident={incident} />
         ))}
       </div>

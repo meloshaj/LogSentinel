@@ -1,6 +1,7 @@
-import { mockRootCauses, serviceGraph } from "../services/mockMonitoringData";
 import { DependencyGraph } from "../components/common/DependencyGraph";
 import { Brain, ChevronRight, Lightbulb, Network, Sparkles, Target, Wrench } from "lucide-react";
+import { useTelemetryStream } from "../hooks/useTelemetryStream";
+import type { RootCause, ServiceGraph } from "../types/monitoring";
 
 const AI_SUMMARIES = [
   {
@@ -28,6 +29,58 @@ const FIXES = [
 ];
 
 export function AIAnalysisPage() {
+  const { activeTrackingLoops } = useTelemetryStream();
+
+  // Create a dynamic graph representing current blast radius from live telemetry
+  const dynamicGraph: ServiceGraph = { nodes: [], edges: [] };
+  const rootCauses: RootCause[] = [];
+  
+  if (activeTrackingLoops.length > 0) {
+    const loop = activeTrackingLoops[0]; // just show first loop for analysis
+    const nodesMap = new Map<string, any>();
+    
+    // Add suspected root
+    if (loop.suspected_root_service) {
+      nodesMap.set(loop.suspected_root_service, {
+        id: loop.suspected_root_service,
+        status: loop.severity === 'critical' ? 'Critical' : 'Warning'
+      });
+      rootCauses.push({
+        id: loop.window_id,
+        service: loop.suspected_root_service,
+        probability: Math.min(1.0, loop.anomaly_score / 100),
+        issue: `Detected ${loop.severity} anomaly pattern in ${loop.suspected_root_service}`,
+        affectedDeps: loop.blast_radius?.blast_radius?.map(r => r.service_name).filter(n => n !== loop.suspected_root_service) || []
+      });
+    }
+
+    loop.blast_radius?.blast_radius?.forEach(node => {
+      nodesMap.set(node.service_name, {
+        id: node.service_name,
+        status: node.impact_score > 80 ? 'Critical' : node.impact_score > 50 ? 'Warning' : 'Normal'
+      });
+    });
+    
+    // Arrange nodes in a circle
+    const nodes = Array.from(nodesMap.values());
+    const cx = 200, cy = 140, r = 100;
+    nodes.forEach((n, i) => {
+      const angle = (Math.PI * 2 * i) / nodes.length;
+      n.x = cx + Math.cos(angle) * r;
+      n.y = cy + Math.sin(angle) * r;
+      dynamicGraph.nodes.push(n);
+    });
+
+    // connect them to the root
+    if (loop.suspected_root_service) {
+      nodes.forEach(n => {
+        if (n.id !== loop.suspected_root_service) {
+          dynamicGraph.edges.push({ from: loop.suspected_root_service!, to: n.id });
+        }
+      });
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between">
@@ -55,7 +108,12 @@ export function AIAnalysisPage() {
           <span className="ml-auto text-[#484f58]" style={{ fontSize: "10px" }}>ML-ranked - confidence based on log patterns</span>
         </div>
         <div className="p-4 space-y-2">
-          {mockRootCauses.map((rc, idx) => {
+          {rootCauses.length === 0 && (
+            <div className="text-center py-8 text-[#7d8590]" style={{ fontSize: "12px" }}>
+              No root causes detected at this time.
+            </div>
+          )}
+          {rootCauses.map((rc, idx) => {
             const pct = Math.round(rc.probability * 100);
             const color = pct >= 85 ? "#f85149" : pct >= 65 ? "#d29922" : "#7d8590";
             return (
@@ -111,7 +169,7 @@ export function AIAnalysisPage() {
             <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Service Dependency Graph</span>
           </div>
           <div className="bg-[#0d1117]" style={{ height: 280 }}>
-            <DependencyGraph graph={serviceGraph} glowRadius={20} nodeRadius={14} strokeWidth={2} labelOffset={28} />
+            <DependencyGraph graph={dynamicGraph} glowRadius={20} nodeRadius={14} strokeWidth={2} labelOffset={28} />
           </div>
           <div className="flex gap-4 px-4 py-2 border-t border-[#21262d]">
             {[{ color: "#f85149", label: "Critical path" }, { color: "#d29922", label: "Warning" }, { color: "#3fb950", label: "Healthy" }].map((i) => (
