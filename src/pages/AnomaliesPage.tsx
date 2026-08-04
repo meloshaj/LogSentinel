@@ -47,7 +47,7 @@ function AnomalyCard({ anomaly }: { anomaly: ServiceAnomaly }) {
           { label: "Score", value: anomaly.score.toFixed(2), alert: anomaly.score > 0.6 },
         ].map((m) => (
           <div key={m.label} className="p-2 rounded-lg bg-[#0d1117] text-center">
-            <div style={{ fontSize: "13px", fontWeight: 700, color: m.alert ? cfg.color : "#e6edf3" }}>{m.value}</div>
+            <div style={{ fontSize: "13px", fontWeight: 700, color: cfg.color }}>{m.value}</div>
             <div className="text-[#484f58]" style={{ fontSize: "9px" }}>{m.label}</div>
           </div>
         ))}

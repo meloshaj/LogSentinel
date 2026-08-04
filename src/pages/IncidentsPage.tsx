@@ -124,24 +124,23 @@ export function IncidentsPage() {
           <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Incident Timeline</span>
           <span className="text-[#484f58] ml-auto" style={{ fontSize: "10px" }}>Today - 14:00-14:33</span>
         </div>
-        <div className="p-4">
-          <div className="relative">
-            {/* Vertical line */}
-            <div className="absolute left-[11px] top-0 bottom-0 w-px bg-[#21262d]" />
-            <div className="space-y-3">
-              {TIMELINE_EVENTS.map((ev, idx) => {
-                const dot = ev.type === "error" ? "#f85149" : ev.type === "warn" ? "#d29922" : ev.type === "alert" ? "#bc8cff" : "#7d8590";
-                return (
-                  <div key={idx} className="flex items-start gap-3 pl-1">
-                    <span className="w-5 h-5 rounded-full border-2 border-[#0d1117] shrink-0 mt-0.5" style={{ background: dot, minWidth: 20 }} />
-                    <div>
-                      <span className="text-[#484f58] mr-2" style={{ fontSize: "10px", fontFamily: "monospace" }}>{ev.time}</span>
-                      <span className="text-[#c9d1d9]" style={{ fontSize: "11px" }}>{ev.event}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+        <div className="p-3">
+          <div className="space-y-2">
+            {TIMELINE_EVENTS.map((ev, idx) => {
+              const bg = ev.type === "error" ? "bg-red-500/10 border-red-500/20 text-red-400" : ev.type === "warn" ? "bg-orange-500/10 border-orange-500/20 text-orange-400" : ev.type === "alert" ? "bg-purple-500/10 border-purple-500/20 text-purple-400" : "bg-gray-500/10 border-gray-500/20 text-gray-400";
+              const dot = ev.type === "error" ? "bg-red-500" : ev.type === "warn" ? "bg-orange-500" : ev.type === "alert" ? "bg-purple-500" : "bg-gray-500";
+              
+              return (
+                <div key={idx} className="flex items-center gap-3 p-2.5 rounded-lg border bg-[#0d1117] border-[#21262d] hover:border-[#30363d] transition-colors">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
+                  <span className="text-[#484f58] shrink-0" style={{ fontSize: "10px", fontFamily: "monospace" }}>{ev.time}</span>
+                  <span className="text-[#c9d1d9] truncate" style={{ fontSize: "12px" }}>{ev.event}</span>
+                  <span className={`ml-auto px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${bg}`}>
+                    {ev.type}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

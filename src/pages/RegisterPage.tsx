@@ -317,7 +317,7 @@ export function RegisterPage() {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -14 }}
       transition={{ duration: 0.28, ease: "easeOut" }}
-      className="w-full max-w-[460px] relative z-10"
+      className="w-full max-w-[456px] relative z-10"
     >
       <div className="relative bg-white rounded-2xl overflow-hidden border border-slate-700/80 shadow-[0_0_50px_-10px_rgba(14,165,233,0.3)]">
         {/* Sleek Dark Card Header */}
@@ -537,13 +537,13 @@ export function RegisterPage() {
                       }}
                     />
                   ) : (
-                    <div className="w-full overflow-hidden flex justify-center rounded-lg border border-slate-300 bg-white shadow-sm" style={{ height: "38px" }}>
+                    <div className="w-full flex justify-center">
                       <GoogleLogin
                         onSuccess={handleGoogleSuccess}
                         onError={handleGoogleError}
                         theme="outline"
                         size="large"
-                        width={376}
+                        width={400}
                         text="continue_with"
                         shape="rectangular"
                       />

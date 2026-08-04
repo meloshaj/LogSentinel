@@ -436,3 +436,16 @@ textarea {
     line-height: 1.5;
   }
 }
+
+.react-flow__controls button {
+  background-color: var(--app-surface) !important;
+  border-bottom: 1px solid var(--app-border) !important;
+  color: var(--app-text) !important;
+  fill: var(--app-text) !important;
+}
+.react-flow__controls button svg {
+  fill: var(--app-text) !important;
+}
+.react-flow__controls button:hover {
+  background-color: var(--app-surface-hover) !important;
+}

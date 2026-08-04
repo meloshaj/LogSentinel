@@ -15,11 +15,11 @@ const SEVERITY_COLOR: Record<string, string> = {
   low: "#7d8590",
 };
 
-function QuickStat({ label, value, color }: { label: string; value: string; color: string }) {
+function QuickStat({ label, value, colorClass }: { label: string; value: string; colorClass: string }) {
   return (
     <div className="flex flex-col gap-1 p-3 rounded-lg bg-[#0d1117] border border-[#21262d]">
-      <span className="text-[#484f58]" style={{ fontSize: "10px" }}>{label}</span>
-      <span style={{ fontSize: "20px", fontWeight: 700, color }}>{value}</span>
+      <span className="text-[#484f58] text-[10px]">{label}</span>
+      <span className={`text-[20px] font-bold ${colorClass}`}>{value}</span>
     </div>
   );
 }
@@ -37,10 +37,10 @@ export function OverviewPage() {
 
         {/* Quick stats row */}
         <div className="grid grid-cols-4 gap-3">
-          <QuickStat label="Logs today" value="14.2M" color="#e6edf3" />
-          <QuickStat label="P99 Latency" value="843ms" color="#f85149" />
-          <QuickStat label="Error rate" value="11.7%" color="#d29922" />
-          <QuickStat label="Uptime (30d)" value="99.1%" color="#3fb950" />
+          <QuickStat label="Logs today" value="14.2M" colorClass="text-[#e6edf3]" />
+          <QuickStat label="P99 Latency" value="843ms" colorClass="text-[#f85149]" />
+          <QuickStat label="Error rate" value="11.7%" colorClass="text-[#d29922]" />
+          <QuickStat label="Uptime (30d)" value="99.1%" colorClass="text-[#3fb950]" />
         </div>
 
         {/* Traffic chart */}
