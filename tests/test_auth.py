@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.core.database import get_async_session
 from backend.app.core.orm import UserRecord
-from backend.app.main import _get_frontend_origin, app
+from backend.app.main import _get_frontend_origins, app
 from backend.app.security.auth import (
     JWT_SECRET_KEY,
     JWT_ALGORITHM,
@@ -216,11 +216,11 @@ def test_get_profile_unauthorized_invalid_token(client: TestClient) -> None:
 def test_auth_cors_is_limited_to_the_configured_frontend(
     client: TestClient,
 ) -> None:
-    assert _get_frontend_origin("http://localhost:5173/") == "http://localhost:5173"
-    with pytest.raises(ValueError, match=r"single HTTP\(S\) origin"):
-        _get_frontend_origin("*")
-    with pytest.raises(ValueError, match=r"single HTTP\(S\) origin"):
-        _get_frontend_origin("https://example.com/login")
+    assert _get_frontend_origins("http://localhost:5173/") == ["http://localhost:5173"]
+    with pytest.raises(ValueError, match=r"invalid origin"):
+        _get_frontend_origins("*")
+    with pytest.raises(ValueError, match=r"invalid origin"):
+        _get_frontend_origins("https://example.com/login")
 
     cors_middleware = next(
         middleware
@@ -228,7 +228,7 @@ def test_auth_cors_is_limited_to_the_configured_frontend(
         if middleware.cls is CORSMiddleware
     )
     allowed_origins = cors_middleware.kwargs["allow_origins"]
-    assert len(allowed_origins) == 1
+    assert len(allowed_origins) >= 1
     assert "*" not in allowed_origins
 
     allowed_response = client.options(

@@ -65,9 +65,9 @@ export function AnomalyPanel() {
 
   // Derive anomalies from live tracking loops
   const anomalies: ServiceAnomaly[] = activeTrackingLoops.flatMap(loop => {
-    if (!loop.blast_radius?.blast_radius) return [];
+    if (!loop.blast_radius) return [];
     
-    return loop.blast_radius.blast_radius.map(node => {
+    return loop.blast_radius.map((node: any) => {
       // Map severity string to our Status type
       let status: "Normal" | "Warning" | "Critical" = "Normal";
       if (loop.severity === "critical" || loop.severity === "high") status = "Critical";

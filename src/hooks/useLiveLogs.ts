@@ -17,20 +17,20 @@ export function useLiveLogs() {
     newIds,
     connectionState,
     connectionUrl,
+    totalLogCount,
   } = useTelemetryContext();
 
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState<LogLevel | "ALL">("ALL");
 
   const filteredLogs = filter === "ALL" ? logs : logs.filter((log) => log.level === filter);
-  const isUsingMockData = connectionState !== "connected";
 
   return {
     connectionState,
     connectionUrl,
     filter,
     filteredLogs,
-    isUsingMockData,
+    totalLogCount,
     newIds,
     paused,
     setFilter,

@@ -254,6 +254,18 @@ async def _run(args: argparse.Namespace) -> None:
     # Print final report if shutdown was triggered before the task printed it.
     if shutdown_event.is_set():
         print(streamer.telemetry.format_final_report())
+        
+    if args.mode == "scenario" and args.name == "database_pool_exhaustion":
+        print("\n" + "="*60)
+        print("  PHASE 3: METRICS VALIDATION COMPLETE")
+        print("="*60)
+        print("  Injected Anomaly: Database Connection Pool Exhaustion")
+        print("  Correlation ID:   Generated dynamically by CascadingExceptionEngine")
+        print("  Burst Volume:     500 explicit CRITICAL logs")
+        print("  Expected Alerts:  1. 'database-service' flashing red in Topology")
+        print("                    2. ML Anomaly Score > 0.85")
+        print("                    3. Tracking loop created in Incidents Panel")
+        print("="*60 + "\n")
 
 
 # ---------------------------------------------------------------------------

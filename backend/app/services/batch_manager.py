@@ -18,8 +18,12 @@ BatchSink = Callable[[list[ParsedLog]], Any]
 
 
 class ParsedLogBatchManager:
-    """Buffer parsed logs and serialize all flushes through one async path.
-
+    """
+    Buffer parsed logs and serialize all flushes through one async path.
+    
+    This manager provides an efficient mechanism to collect individual parsed logs
+    and dispatch them in batches to a persistent storage sink (like PostgreSQL).
+    
     Production sinks should be asynchronous. Synchronous sinks remain supported
     temporarily for compatibility, but they are invoked on the event-loop thread
     and therefore must not perform blocking work.
@@ -32,6 +36,18 @@ class ParsedLogBatchManager:
         sink: BatchSink | None = None,
         benchmarking_collector: Any = None,
     ) -> None:
+        """
+        Initialize the batch manager.
+        
+        Args:
+            batch_size: The maximum number of records to accumulate before forcing a flush.
+            flush_interval_seconds: The maximum time to wait before flushing an incomplete batch.
+            sink: The callback function invoked to persist a batch of logs.
+            benchmarking_collector: Optional collector for tracking latency metrics.
+            
+        Raises:
+            ValueError: If batch_size is not strictly positive.
+        """
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than 0")
 

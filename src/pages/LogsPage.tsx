@@ -109,7 +109,7 @@ export function LogsPage() {
       {/* Live stream */}
       <LiveTelemetryStatus />
 
-      {/* Mock live stream */}
+      {/* Live stream view */}
       <div style={{ height: 400 }}>
         <LogStream />
       </div>

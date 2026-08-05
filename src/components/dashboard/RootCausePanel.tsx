@@ -1,22 +1,22 @@
 import { Network, Target, Loader2 } from "lucide-react";
 import { DependencyGraph } from "../common/DependencyGraph";
-import { serviceGraph } from "../../services/mockMonitoringData"; // DependencyGraph still needs this for now until we update it
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
+import { useTopology } from "../../hooks/useTopology";
 
 export function RootCausePanel() {
   const { activeTrackingLoops } = useTelemetryStream();
 
   // Extract root causes from active tracking loops
   const rootCauses = activeTrackingLoops.flatMap(loop => {
-    if (!loop.blast_radius?.blast_radius) return [];
+    if (!loop.blast_radius) return [];
     
-    return loop.blast_radius.blast_radius
-      .filter(node => node.impact_classification === "root")
-      .map(node => {
+    return loop.blast_radius
+      .filter((node: any) => node.impact_classification === "root")
+      .map((node: any) => {
         // Find direct dependencies affected by this root
-        const affectedDeps = loop.blast_radius!.blast_radius
-          .filter(n => n.impact_classification === "direct" && n.dependency_path.includes(node.service_name))
-          .map(n => n.service_name);
+        const affectedDeps = loop.blast_radius!
+          .filter((n: any) => n.impact_classification === "direct" && n.dependency_path.includes(node.service_name))
+          .map((n: any) => n.service_name);
           
         return {
           id: `${loop.window_id}-${node.service_name}`,
@@ -28,38 +28,23 @@ export function RootCausePanel() {
       });
   }).sort((a, b) => b.probability - a.probability).slice(0, 5); // Take top 5
 
+  const { topology } = useTopology(2000);
+
   // Generate dynamic topology graph from telemetry
   const dynamicGraph = (() => {
-    if (activeTrackingLoops.length === 0) return serviceGraph;
+    if (!topology || !topology.nodes) return { nodes: [], edges: [] };
     
     const nodes: Array<{ id: string; x: number; y: number }> = [];
     const edges: Array<{ from: string; to: string }> = [];
-    const processedServices = new Set<string>();
 
-    activeTrackingLoops.forEach(loop => {
-      if (!loop.blast_radius?.blast_radius) return;
-      
-      loop.blast_radius.blast_radius.forEach((node, idx) => {
-        if (!processedServices.has(node.service_name)) {
-          processedServices.add(node.service_name);
-          const isRoot = node.impact_classification === 'root';
-          // basic deterministic layout
-          nodes.push({
-            id: node.service_name,
-            x: 250 + (idx % 2 === 0 ? idx * 40 : -idx * 40),
-            y: isRoot ? 20 : 100 + (idx * 40)
-          });
-        }
-        
-        if (node.dependency_path) {
-          node.dependency_path.forEach(dep => {
-            edges.push({ from: dep, to: node.service_name });
-          });
-        }
-      });
+    topology.nodes.forEach(node => {
+      nodes.push({ id: node.id, x: 0, y: 0 }); // dagre handles layout in DependencyGraph
     });
 
-    if (nodes.length === 0) return serviceGraph;
+    topology.edges.forEach(edge => {
+      edges.push({ from: edge.source, to: edge.target });
+    });
+
     return { nodes, edges };
   })();
 

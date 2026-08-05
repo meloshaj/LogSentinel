@@ -97,6 +97,7 @@ interface TelemetryContextValue {
   // Logs
   logs: LogEntry[];
   newIds: Set<string>;
+  totalLogCount: number;
 
   // Backfill state
   isBackfillLoading: boolean;
@@ -424,6 +425,7 @@ async function fetchBackfillLogs(): Promise<LogEntry[]> {
 export function TelemetryProvider({ children }: { children: ReactNode }) {
   // ---- Global logs state ----
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [totalLogCount, setTotalLogCount] = useState(0);
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
   const highlightedIdsRef = useRef<Set<string>>(new Set());
   const cleanupTimersRef = useRef<number[]>([]);
@@ -507,6 +509,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
 
       const batch = wsBufferRef.current;
       wsBufferRef.current = [];
+      setTotalLogCount(prev => prev + batch.length);
 
       setLogs((prev) => {
         const merged = deduplicateAndMerge(prev, batch);
@@ -641,6 +644,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
         const merged = deduplicateAndMerge(restLogs, bufferedWsLogs);
 
         setLogs(merged);
+        setTotalLogCount(prev => prev + merged.length);
         setIsBackfillLoading(false);
         backfillCompleteRef.current = true;
       })
@@ -778,6 +782,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   const clearPerformanceEvents = useCallback(() => setLatestPerformanceEvents({}), []);
   const clearLogs = useCallback(() => {
     setLogs([]);
+    setTotalLogCount(0);
     setNewIds(new Set());
     highlightedIdsRef.current.clear();
   }, []);
@@ -786,6 +791,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
     () => ({
       logs,
       newIds,
+      totalLogCount,
       isBackfillLoading,
       backfillError,
       connectionState,
@@ -802,6 +808,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
     [
       logs,
       newIds,
+      totalLogCount,
       isBackfillLoading,
       backfillError,
       connectionState,

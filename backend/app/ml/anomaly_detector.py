@@ -36,20 +36,44 @@ FEATURE_COLUMNS = [
 
 
 class IsolationForestAnomalyDetector:
-    """Train and use an IsolationForest model over feature vectors."""
+    """
+    Train and use an IsolationForest model over feature vectors.
+    
+    This class wraps the scikit-learn IsolationForest algorithm, adapting it
+    specifically for LogSentinel feature vectors. It manages training,
+    serialization, and batch prediction with normalized anomaly scores.
+    """
 
     def __init__(self, random_state: int = 42, contamination: float = 0.1) -> None:
-        self.random_state = random_state
-        self.contamination = contamination
+        """
+        Initialize the anomaly detector.
+        
+        Args:
+            random_state: Seed for reproducible IsolationForest results.
+            contamination: The proportion of outliers in the data set.
+        """
+        self.random_state: int = random_state
+        self.contamination: float = contamination
         self.model: Optional[IsolationForest] = None
-        self.model_version = "isolation_forest_v1"
+        self.model_version: str = "isolation_forest_v1"
 
     def train(self, feature_vectors: list[FeatureVector]) -> IsolationForest:
-        """Train the IsolationForest model on a collection of feature vectors."""
+        """
+        Train the IsolationForest model on a collection of feature vectors.
+        
+        Args:
+            feature_vectors: A list of FeatureVector instances to train on.
+            
+        Returns:
+            IsolationForest: The trained scikit-learn model instance.
+            
+        Raises:
+            ValueError: If the feature_vectors list is empty.
+        """
         if not feature_vectors:
             raise ValueError("At least one feature vector is required for training")
 
-        matrix = self._to_feature_matrix(feature_vectors)
+        matrix: list[list[float]] = self._to_feature_matrix(feature_vectors)
         self.model = IsolationForest(
             n_estimators=100,
             contamination=self.contamination,
