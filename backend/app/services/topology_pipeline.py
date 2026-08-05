@@ -51,8 +51,8 @@ class NetworkXTopologyPipeline:
     observed for that deduplicated contribution.
     """
 
-    DEFAULT_MAX_TRANSACTIONS = 1000
-    DEFAULT_MAX_OBSERVATIONS_PER_TRANSACTION = 500
+    DEFAULT_MAX_TRANSACTIONS: int = 1000
+    DEFAULT_MAX_OBSERVATIONS_PER_TRANSACTION: int = 500
 
     def __init__(
         self,

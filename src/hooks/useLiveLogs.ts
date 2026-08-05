@@ -362,14 +362,12 @@ export function useLiveLogs() {
   }, []);
 
   const filteredLogs = filter === "ALL" ? logs : logs.filter((log) => log.level === filter);
-  const isUsingMockData = connectionState !== "connected";
 
   return {
     connectionState,
     connectionUrl,
     filter,
     filteredLogs,
-    isUsingMockData,
     newIds,
     paused,
     setFilter,

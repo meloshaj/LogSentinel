@@ -36,7 +36,7 @@ function LogRow({ entry, isNew }: { entry: LogEntry; isNew: boolean }) {
 }
 
 export function LogStream() {
-  const { connectionState, connectionUrl, filter, filteredLogs, isUsingMockData, newIds, paused, setFilter, setPaused } = useLiveLogs();
+  const { connectionState, connectionUrl, filter, filteredLogs, newIds, paused, setFilter, setPaused } = useLiveLogs();
   const scrollRef = useRef<HTMLDivElement>(null);
   const connectionLabel =
     connectionState === "connected" ? "CONNECTED" : connectionState === "connecting" ? "CONNECTING" : connectionState === "disconnected" ? "DISCONNECTED" : "ERROR";
@@ -106,7 +106,7 @@ export function LogStream() {
           {filteredLogs.length} entries - auto-scroll {paused ? "paused" : "enabled"}
         </span>
         <span className="text-[#484f58]" style={{ fontSize: "10px" }}>
-          {isUsingMockData ? "Demo data" : "Backend stream"}
+          Backend stream
           {connectionUrl ? ` | ${connectionUrl}` : ""}
         </span>
       </div>

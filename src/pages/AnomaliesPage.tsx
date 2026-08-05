@@ -72,12 +72,6 @@ export function AnomaliesPage() {
       if (!buckets[minute]) buckets[minute] = { time: minute, errors: 0, anomalies: 0 };
       if (log.level === 'ERROR') buckets[minute].errors += 1;
     });
-    activeTrackingLoops.forEach(loop => {
-      // Just mock mapping anomalies count to current time for trend graph
-      const time = new Date().toLocaleTimeString().split(':').slice(0,2).join(':');
-      if (!buckets[time]) buckets[time] = { time, errors: 0, anomalies: 0 };
-      buckets[time].anomalies += 1;
-    });
     return Object.values(buckets).slice(-20);
   }, [filteredLogs, activeTrackingLoops]);
 

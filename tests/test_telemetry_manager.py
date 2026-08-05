@@ -1,6 +1,7 @@
 import asyncio
 
-from backend.app.services.telemetry import TelemetryConnectionManager, telemetry_event
+from backend.app.websockets.broadcaster import HighLoadBroadcaster
+from backend.app.services.telemetry import telemetry_event
 
 
 class FakeWebSocket:
@@ -19,7 +20,7 @@ class FakeWebSocket:
 
 
 def test_broadcast_to_zero_clients_does_not_crash() -> None:
-    manager = TelemetryConnectionManager()
+    manager = HighLoadBroadcaster()
 
     asyncio.run(manager.broadcast(telemetry_event("system.status", {"status": "ok"})))
 
@@ -27,7 +28,7 @@ def test_broadcast_to_zero_clients_does_not_crash() -> None:
 
 
 def test_connected_client_receives_broadcast_event() -> None:
-    manager = TelemetryConnectionManager()
+    manager = HighLoadBroadcaster()
     websocket = FakeWebSocket()
     event = telemetry_event("log.parsed", {"service": "api-gateway"})
 
@@ -43,7 +44,7 @@ def test_connected_client_receives_broadcast_event() -> None:
 
 
 def test_failed_send_removes_stale_client_without_breaking_others() -> None:
-    manager = TelemetryConnectionManager()
+    manager = HighLoadBroadcaster()
     stale = FakeWebSocket(fail_send=True)
     healthy = FakeWebSocket()
     event = telemetry_event("feature.window.closed", {"window_id": "window-1"})
@@ -60,7 +61,7 @@ def test_failed_send_removes_stale_client_without_breaking_others() -> None:
 
 
 def test_disconnect_cleanup_does_not_raise() -> None:
-    manager = TelemetryConnectionManager()
+    manager = HighLoadBroadcaster()
     websocket = FakeWebSocket()
 
     async def run() -> None:

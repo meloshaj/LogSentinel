@@ -19,7 +19,13 @@ logger = logging.getLogger("logsentinel.drain_worker")
 
 
 class DrainWorker:
-    """Consume ingest queue items, parse log messages, and keep recent results."""
+    """
+    Consume ingest queue items, parse log messages, and keep recent results.
+    
+    This worker runs as a background task, continuously pulling raw log payloads
+    from a memory buffer, processing them through Drain3, and forwarding the
+    structured results to downstream systems.
+    """
 
     def __init__(
         self,
@@ -34,28 +40,46 @@ class DrainWorker:
         queue_drain_timeout_seconds: float = 30.0,
         benchmarking_collector: Any = None,
     ) -> None:
+        """
+        Initialize the Drain worker with dependencies and configuration.
+        
+        Args:
+            log_buffer: The asynchronous queue providing raw ingest payloads.
+            parser: The Drain3 parser instance.
+            batch_manager: Manager for batching and persisting parsed logs.
+            recent_limit: Number of recent parsed logs to keep in memory.
+            on_log_parsed: Optional callback triggered when a log is successfully parsed.
+            runtime_dependency_parser: Parser to extract topology traces from logs.
+            on_trace_observation: Optional callback triggered when a trace is extracted.
+            recent_trace_observation_limit: Number of recent traces to keep in memory.
+            queue_drain_timeout_seconds: Maximum time to wait for the queue to drain during shutdown.
+            benchmarking_collector: Optional collector for performance metrics.
+            
+        Raises:
+            ValueError: If queue_drain_timeout_seconds is not positive.
+        """
         if queue_drain_timeout_seconds <= 0:
             raise ValueError("queue_drain_timeout_seconds must be greater than 0")
 
-        self.log_buffer = log_buffer
-        self.parser = parser
-        self.batch_manager = batch_manager or ParsedLogBatchManager()
+        self.log_buffer: Any = log_buffer
+        self.parser: DrainParser = parser
+        self.batch_manager: ParsedLogBatchManager = batch_manager or ParsedLogBatchManager()
         self._recent_parsed_logs: deque[ParsedLog] = deque(maxlen=recent_limit)
-        self._on_log_parsed = on_log_parsed
-        self.runtime_dependency_parser = runtime_dependency_parser
+        self._on_log_parsed: Optional[Callable[[ParsedLog], None]] = on_log_parsed
+        self.runtime_dependency_parser: Optional[RuntimeDependencyParser] = runtime_dependency_parser
         self._recent_trace_observations: deque[TraceObservation] = deque(
             maxlen=recent_trace_observation_limit
         )
-        self._on_trace_observation = on_trace_observation
-        self.queue_drain_timeout_seconds = queue_drain_timeout_seconds
-        self.benchmarking_collector = benchmarking_collector
+        self._on_trace_observation: Optional[Callable[[TraceObservation], None]] = on_trace_observation
+        self.queue_drain_timeout_seconds: float = queue_drain_timeout_seconds
+        self.benchmarking_collector: Any = benchmarking_collector
         self._task: asyncio.Task[None] | None = None
-        self._running = False
-        self.processed_count = 0
-        self.error_count = 0
+        self._running: bool = False
+        self.processed_count: int = 0
+        self.error_count: int = 0
         self.last_processed_at: str | None = None
-        self.last_queue_drain_timed_out = False
-        self.last_shutdown_batch_flush_failed = False
+        self.last_queue_drain_timed_out: bool = False
+        self.last_shutdown_batch_flush_failed: bool = False
 
     def start(self) -> None:
         """Start the background worker without blocking application startup."""

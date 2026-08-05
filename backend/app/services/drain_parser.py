@@ -18,11 +18,23 @@ DEFAULT_STATE_PATH = Path(__file__).resolve().parents[3] / "state" / "drain3_sta
 
 
 class DrainParser:
-    """Small application-facing wrapper around Drain3's TemplateMiner."""
+    """
+    Small application-facing wrapper around Drain3's TemplateMiner.
+    
+    This class manages the configuration and state persistence of the Drain3
+    log template mining algorithm.
+    """
 
     def __init__(self, config_path: str | None = None, state_path: str | None = None) -> None:
-        self.config_path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
-        self.state_path = Path(state_path) if state_path else DEFAULT_STATE_PATH
+        """
+        Initialize the Drain3 parser with optional custom paths.
+        
+        Args:
+            config_path: Optional path to the drain3.ini configuration file.
+            state_path: Optional path for the binary state persistence file.
+        """
+        self.config_path: Path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
+        self.state_path: Path = Path(state_path) if state_path else DEFAULT_STATE_PATH
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
 
         config = TemplateMinerConfig()
@@ -32,16 +44,25 @@ class DrainParser:
         persistence = FilePersistence(str(self.state_path))
         self._miner = TemplateMiner(persistence_handler=persistence, config=config)
 
-    def parse(self, raw_message: str, metadata: dict | None = None) -> ParsedLog:
-        """Mine a log template and return a validated ParsedLog instance."""
-        result = self._miner.add_log_message(raw_message)
-        template_text = result["template_mined"]
-        parameters = self._extract_parameters(template_text, raw_message)
+    def parse(self, raw_message: str, metadata: dict[str, Any] | None = None) -> ParsedLog:
+        """
+        Mine a log template and return a validated ParsedLog instance.
         
-        metadata_dict = metadata or {}
+        Args:
+            raw_message: The raw log message string to be parsed.
+            metadata: Optional dictionary containing log metadata (service, level, timestamp).
+            
+        Returns:
+            ParsedLog: A structured log entry containing the matched template and extracted parameters.
+        """
+        result = self._miner.add_log_message(raw_message)
+        template_text: str = result["template_mined"]
+        parameters: list[dict[str, Any]] = self._extract_parameters(template_text, raw_message)
+        
+        metadata_dict: dict[str, Any] = metadata or {}
         
         # Extract timestamp from metadata or use current time
-        timestamp = metadata_dict.get("timestamp")
+        timestamp: Any = metadata_dict.get("timestamp")
         if not isinstance(timestamp, datetime):
             if isinstance(timestamp, str):
                 try:
@@ -72,8 +93,13 @@ class DrainParser:
             parsed_at=datetime.now(timezone.utc),
         )
 
-    def get_stats(self) -> dict:
-        """Return lightweight parser state useful for diagnostics."""
+    def get_stats(self) -> dict[str, Any]:
+        """
+        Return lightweight parser state useful for diagnostics.
+        
+        Returns:
+            dict[str, Any]: Dictionary containing cluster count, total size, and paths.
+        """
         clusters = list(self._miner.drain.clusters)
         return {
             "cluster_count": len(clusters),
@@ -82,8 +108,13 @@ class DrainParser:
             "config_path": str(self.config_path),
         }
 
-    def get_templates(self) -> list[dict]:
-        """Return the currently mined templates."""
+    def get_templates(self) -> list[dict[str, Any]]:
+        """
+        Return the currently mined templates.
+        
+        Returns:
+            list[dict[str, Any]]: List of templates containing ID, text, and cluster size.
+        """
         return [
             {
                 "template_id": str(cluster.cluster_id),
@@ -94,6 +125,16 @@ class DrainParser:
         ]
 
     def _extract_parameters(self, template_text: str, raw_message: str) -> list[dict[str, Any]]:
+        """
+        Extract dynamic parameters from a raw message based on its template.
+        
+        Args:
+            template_text: The matched template string with wildcard tokens.
+            raw_message: The original raw log message.
+            
+        Returns:
+            list[dict[str, Any]]: A list of extracted parameters containing values and mask names.
+        """
         extracted = self._miner.extract_parameters(template_text, raw_message)
         if not extracted:
             return []

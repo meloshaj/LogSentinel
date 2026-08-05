@@ -1,6 +1,5 @@
 import { Network, Target, Loader2 } from "lucide-react";
 import { DependencyGraph } from "../common/DependencyGraph";
-import { serviceGraph } from "../../services/mockMonitoringData"; // DependencyGraph still needs this for now until we update it
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 
 export function RootCausePanel() {
@@ -30,7 +29,7 @@ export function RootCausePanel() {
 
   // Generate dynamic topology graph from telemetry
   const dynamicGraph = (() => {
-    if (activeTrackingLoops.length === 0) return serviceGraph;
+    if (activeTrackingLoops.length === 0) return { nodes: [], edges: [] };
     
     const nodes: Array<{ id: string; x: number; y: number }> = [];
     const edges: Array<{ from: string; to: string }> = [];
@@ -59,7 +58,7 @@ export function RootCausePanel() {
       });
     });
 
-    if (nodes.length === 0) return serviceGraph;
+    if (nodes.length === 0) return { nodes: [], edges: [] };
     return { nodes, edges };
   })();
 
