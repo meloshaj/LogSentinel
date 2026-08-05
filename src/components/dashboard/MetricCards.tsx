@@ -2,6 +2,7 @@ import { Activity, AlertTriangle, CheckCircle, Database, TrendingDown, TrendingU
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 import { useLiveLogs } from "../../hooks/useLiveLogs";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
+import { useTopology } from "../../hooks/useTopology";
 
 const sparklineData = [
   [12, 19, 14, 21, 15, 18, 24],
@@ -39,10 +40,10 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
   const data = sparklineData[sparkIdx].map((v) => ({ v }));
 
   return (
-    <div className="relative flex flex-col gap-3 p-4 rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
+    <div className="relative flex flex-col gap-3 p-4 rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">
       {/* Glow accent */}
       <div
-        className="absolute -top-6 -right-6 w-24 h-24 rounded-full opacity-10 blur-2xl"
+        className="absolute -top-6 -right-6 w-24 h-24 rounded-full opacity-10 blur-2xl pointer-events-none"
         style={{ background: accentColor }}
       />
 
@@ -57,8 +58,8 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
       </div>
 
       <div>
-        <div className="text-[#e6edf3]" style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1.1 }}>{value}</div>
-        <div className="text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>{title}</div>
+        <div className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1.1 }}>{value}</div>
+        <div className="text-slate-500 dark:text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>{title}</div>
       </div>
 
       <div className="flex items-end gap-2">
@@ -84,24 +85,49 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
             </AreaChart>
           </ResponsiveContainer>
         </div>
-        <div className="text-[#7d8590] pb-1 shrink-0" style={{ fontSize: "11px" }}>{sub}</div>
+        <div className="text-slate-500 dark:text-[#7d8590] pb-1 shrink-0" style={{ fontSize: "11px" }}>{sub}</div>
       </div>
     </div>
   );
 }
 
 export function MetricCards() {
-  const { filteredLogs } = useLiveLogs();
+  const { totalLogCount } = useLiveLogs();
   const { activeTrackingLoops } = useTelemetryStream();
+  const { topology } = useTopology();
 
-  const totalLogs = filteredLogs.length;
+  const totalLogs = totalLogCount;
   const numAnomalies = activeTrackingLoops.length;
+  
+  // Use topology node count or fallback to 0 until loaded
+  const totalServices = topology?.node_count || 0;
+  
+  // Compute how many services are currently affected by anomalies
+  // Count unique affected services (root causes and blast radii)
+  const affectedServices = new Set<string>();
+  activeTrackingLoops.forEach(loop => {
+    if (loop.suspected_root_service) {
+      affectedServices.add(loop.suspected_root_service);
+    }
+    if (loop.blast_radius) {
+      loop.blast_radius.forEach(node => {
+        if (node.service_name) {
+          affectedServices.add(node.service_name);
+        }
+      });
+    }
+  });
+  
+  const numDegraded = affectedServices.size;
+  const healthScore = totalServices > 0 
+    ? Math.max(0, 100 - Math.round((numDegraded / totalServices) * 100))
+    : 100;
   
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       <MetricCard
         title="Logs Processed"
-        value={totalLogs.toString()}
+        value={totalLogs.toLocaleString()}
         sub="session total"
         trend="neutral"
         trendLabel="Live"
@@ -114,7 +140,7 @@ export function MetricCards() {
       <MetricCard
         title="Active Anomalies"
         value={numAnomalies.toString()}
-        sub={`${numAnomalies} critical`}
+        sub={`${numAnomalies} tracked`}
         trend={numAnomalies > 0 ? "up" : "neutral"}
         trendLabel={numAnomalies > 0 ? "Detected" : "None"}
         icon={AlertTriangle}
@@ -125,10 +151,10 @@ export function MetricCards() {
       />
       <MetricCard
         title="Health Score"
-        value={numAnomalies > 0 ? "82%" : "100%"}
+        value={`${healthScore}%`}
         sub={numAnomalies > 0 ? "Degraded" : "Healthy"}
         trend={numAnomalies > 0 ? "down" : "neutral"}
-        trendLabel={numAnomalies > 0 ? "-18pts" : "Stable"}
+        trendLabel={numAnomalies > 0 ? `-${100 - healthScore}pts` : "Stable"}
         icon={Activity}
         iconBg="rgba(210,153,34,0.15)"
         iconColor="#d29922"
@@ -137,10 +163,10 @@ export function MetricCards() {
       />
       <MetricCard
         title="Services"
-        value={numAnomalies > 0 ? "8 / 10" : "10 / 10"}
-        sub={numAnomalies > 0 ? "2 degraded" : "All nominal"}
-        trend={numAnomalies > 0 ? "down" : "neutral"}
-        trendLabel={numAnomalies > 0 ? "2 failing" : "All passing"}
+        value={`${totalServices - numDegraded} / ${Math.max(totalServices, 1)}`}
+        sub={numDegraded > 0 ? `${numDegraded} degraded` : "All nominal"}
+        trend={numDegraded > 0 ? "down" : "neutral"}
+        trendLabel={numDegraded > 0 ? `${numDegraded} failing` : "All passing"}
         icon={CheckCircle}
         iconBg="rgba(63,185,80,0.12)"
         iconColor="#3fb950"

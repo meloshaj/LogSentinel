@@ -64,30 +64,30 @@ export function EventManagerPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#161b22] border border-[#21262d] rounded-xl overflow-hidden min-h-[400px]">
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-[#21262d]">
+    <div className="flex flex-col h-full bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] rounded-xl overflow-hidden min-h-[400px] shadow-sm dark:shadow-none">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 dark:border-[#21262d]">
         <Activity className="w-4 h-4 text-[#388bfd]" />
-        <span className="text-[#e6edf3] text-sm font-semibold">Event Manager</span>
-        <span className="ml-auto px-1.5 py-0.5 rounded-full bg-[#21262d] text-[#e6edf3] text-xs font-bold">
+        <span className="text-slate-900 dark:text-[#e6edf3] text-sm font-semibold">Event Manager</span>
+        <span className="ml-auto px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-[#21262d] text-slate-700 dark:text-[#e6edf3] text-xs font-bold">
           {unifiedEvents.length}
         </span>
       </div>
       <div className="flex-1 overflow-y-auto p-2 space-y-2">
         {unifiedEvents.length === 0 ? (
-          <div className="text-center text-[#7d8590] text-sm mt-8">No active events</div>
+          <div className="text-center text-slate-500 dark:text-[#7d8590] text-sm mt-8">No active events</div>
         ) : (
           unifiedEvents.map((evt) => (
             <div
               key={evt.id}
               onClick={() => handleEventClick(evt)}
-              className={`p-3 rounded-lg border cursor-pointer hover:brightness-125 transition-all ${SEVERITY_COLORS[evt.severity] || SEVERITY_COLORS.normal}`}
+              className={`p-3 rounded-lg border cursor-pointer hover:brightness-[0.9] dark:hover:brightness-125 transition-all ${SEVERITY_COLORS[evt.severity] || SEVERITY_COLORS.normal}`}
             >
               <div className="flex items-center gap-2">
                 {evt.type === 'anomaly' ? <Crosshair className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
                 <span className="font-bold text-[10px] uppercase tracking-wider">{evt.severity}</span>
               </div>
-              <div className="mt-1 font-semibold text-sm">{evt.title}</div>
-              <div className="mt-1 text-xs opacity-90">{evt.description}</div>
+              <div className="mt-1 font-semibold text-sm text-slate-800 dark:text-white">{evt.title}</div>
+              <div className="mt-1 text-xs text-slate-600 dark:text-gray-300 opacity-90">{evt.description}</div>
             </div>
           ))
         )}

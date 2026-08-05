@@ -197,8 +197,7 @@ async def google_login(
 
     If the user doesn't exist yet, a new account is automatically created.
     """
-    from google.oauth2 import id_token as google_id_token
-    from google.auth.transport import requests as google_requests
+    import httpx
 
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(
@@ -207,15 +206,21 @@ async def google_login(
         )
 
     try:
-        idinfo = google_id_token.verify_oauth2_token(
-            payload.credential,
-            google_requests.Request(),
-            GOOGLE_CLIENT_ID,
-        )
-    except ValueError:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {payload.credential}"}
+            )
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid Google credential",
+                )
+            idinfo = resp.json()
+    except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Google credential",
+            detail="Failed to verify Google credential",
         )
 
     email: str = idinfo.get("email", "")
@@ -231,7 +236,7 @@ async def google_login(
     ext_identity = await ExternalIdentityRepository.get_by_provider_identity(
         db,
         provider="google",
-        issuer=idinfo.get("iss", "accounts.google.com"),
+        issuer="https://accounts.google.com",
         subject=idinfo.get("sub", ""),
     )
 

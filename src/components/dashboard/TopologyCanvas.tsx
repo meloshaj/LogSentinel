@@ -193,7 +193,7 @@ function TopologyCanvasInner() {
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
         fitView
-        colorMode={themeMode}
+        colorMode="dark"
         proOptions={{ hideAttribution: true }}
       >
         <Background color="#21262d" gap={16} />

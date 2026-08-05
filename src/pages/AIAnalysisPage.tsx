@@ -24,10 +24,11 @@ export function AIAnalysisPage() {
         id: loop.suspected_root_service,
         status: loop.severity === 'critical' ? 'Critical' : 'Warning'
       });
+      const normScore = loop.anomaly_score > 1 ? loop.anomaly_score / 100 : loop.anomaly_score;
       rootCauses.push({
         id: loop.window_id,
         service: loop.suspected_root_service,
-        probability: Math.min(1.0, loop.anomaly_score / 100),
+        probability: Math.min(1.0, Math.max(0.0, normScore)),
         issue: `Detected ${loop.severity} anomaly pattern in ${loop.suspected_root_service}`,
         affectedDeps: (loop.blast_radius || []).map(r => r.service_name).filter(n => n !== loop.suspected_root_service)
       });
@@ -50,30 +51,8 @@ export function AIAnalysisPage() {
       
       dynamicSummaries.push({
         service: node.service_name,
-        summary: `Impact analysis indicates a classification of '${node.impact_classification}'. The node has an impact score of ${node.impact_score.toFixed(0)} and affects propagation paths: [${node.propagation_path?.join(", ") || "none"}].`,
-        severity: node.impact_score > 80 ? "#f85149" : node.impact_score > 50 ? "#ffa657" : "#d29922",
-      });
-    });
-    
-    // Add suspected root
-    if (loop.suspected_root_service) {
-      nodesMap.set(loop.suspected_root_service, {
-        id: loop.suspected_root_service,
-        status: loop.severity === 'critical' ? 'Critical' : 'Warning'
-      });
-      rootCauses.push({
-        id: loop.window_id,
-        service: loop.suspected_root_service,
-        probability: Math.min(1.0, loop.anomaly_score / 100),
-        issue: `Detected ${loop.severity} anomaly pattern in ${loop.suspected_root_service}`,
-        affectedDeps: (loop.blast_radius || []).map(r => r.service_name).filter(n => n !== loop.suspected_root_service)
-      });
-    }
-
-    (loop.blast_radius || []).forEach(node => {
-      nodesMap.set(node.service_name, {
-        id: node.service_name,
-        status: node.impact_score > 80 ? 'Critical' : node.impact_score > 50 ? 'Warning' : 'Normal'
+        summary: `Impact analysis indicates a classification of '${node.impact_classification}'. The node has an impact score of ${(node.impact_score > 1 ? node.impact_score : node.impact_score * 100).toFixed(0)} and affects propagation paths: [${node.propagation_path?.join(", ") || "none"}].`,
+        severity: node.impact_score > 0.8 || node.impact_score > 80 ? "#f85149" : node.impact_score > 0.5 || node.impact_score > 50 ? "#ffa657" : "#d29922",
       });
     });
     

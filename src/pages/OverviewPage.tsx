@@ -78,11 +78,11 @@ export function OverviewPage() {
         {/* Bottom row: recent logs + open incidents */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Recent log activity */}
-        <div className="rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-[#21262d]">
+        <div className="rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-[#21262d]">
             <div className="flex items-center gap-2">
               <Activity className="w-4 h-4 text-[#388bfd]" />
-              <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Recent Activity</span>
+              <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Recent Activity</span>
             </div>
             <button
               onClick={() => navigate("/logs")}
@@ -92,7 +92,7 @@ export function OverviewPage() {
               View all logs <ArrowRight className="w-3 h-3" />
             </button>
           </div>
-          <div className="divide-y divide-[#21262d]">
+          <div className="divide-y divide-slate-100 dark:divide-[#21262d]">
             {recentLogs.map((log) => {
               const colors: Record<string, string> = { INFO: "#79c0ff", WARN: "#d29922", ERROR: "#f85149", DEBUG: "#7d8590" };
               return (
@@ -103,10 +103,10 @@ export function OverviewPage() {
                   >
                     {log.level}
                   </span>
-                  <span className="text-[#484f58] shrink-0 mt-0.5" style={{ fontSize: "10px", fontFamily: "monospace" }}>
+                  <span className="text-slate-500 dark:text-[#484f58] shrink-0 mt-0.5" style={{ fontSize: "10px", fontFamily: "monospace" }}>
                     {log.timestamp}
                   </span>
-                  <span className="text-[#7d8590] truncate" style={{ fontSize: "11px", fontFamily: "monospace" }}>
+                  <span className="text-slate-600 dark:text-[#7d8590] truncate" style={{ fontSize: "11px", fontFamily: "monospace" }}>
                     {log.message}
                   </span>
                 </div>
@@ -116,11 +116,11 @@ export function OverviewPage() {
         </div>
 
         {/* Open incidents */}
-        <div className="rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-[#21262d]">
+        <div className="rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-[#21262d]">
             <div className="flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-[#ffa657]" />
-              <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Open Incidents</span>
+              <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Open Incidents</span>
               <span className="px-1.5 py-0.5 rounded-full bg-[#da3633] text-white" style={{ fontSize: "10px", fontWeight: 700 }}>
                 {openIncidents.length}
               </span>
@@ -133,7 +133,7 @@ export function OverviewPage() {
               View all <ArrowRight className="w-3 h-3" />
             </button>
           </div>
-          <div className="divide-y divide-[#21262d]">
+          <div className="divide-y divide-slate-100 dark:divide-[#21262d]">
             {openIncidents.map((incident) => (
               <div key={incident.id} className="flex items-start gap-3 px-4 py-3">
                 <span
@@ -142,8 +142,8 @@ export function OverviewPage() {
                 />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-[#e6edf3]" style={{ fontSize: "12px", fontWeight: 600 }}>{incident.service}</span>
-                    <span className="text-[#484f58]" style={{ fontSize: "10px" }}>
+                    <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "12px", fontWeight: 600 }}>{incident.service}</span>
+                    <span className="text-slate-500 dark:text-[#484f58]" style={{ fontSize: "10px" }}>
                       <Clock className="w-2.5 h-2.5 inline mr-0.5" />{incident.timestamp}
                     </span>
                   </div>

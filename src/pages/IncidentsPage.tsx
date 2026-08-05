@@ -132,25 +132,25 @@ export function IncidentsPage() {
       </div>
 
       {/* Incident timeline */}
-      <div className="rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-[#21262d]">
+      <div className="rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 dark:border-[#21262d]">
           <Clock className="w-4 h-4 text-[#388bfd]" />
-          <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Incident Timeline</span>
-          <span className="text-[#484f58] ml-auto" style={{ fontSize: "10px" }}>Today - 14:00-14:33</span>
+          <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Incident Timeline</span>
+          <span className="text-slate-500 dark:text-[#484f58] ml-auto" style={{ fontSize: "10px" }}>Today - {new Date().toLocaleDateString()}</span>
         </div>
-        <div className="p-3">
-          <div className="space-y-2">
+        <div className="p-4">
+          <div className="flex flex-col gap-3">
             {incidents.map((ev, idx) => {
-              const bg = ev.severity === "critical" || ev.severity === "high" ? "bg-red-500/10 border-red-500/20 text-red-400" : ev.severity === "medium" ? "bg-orange-500/10 border-orange-500/20 text-orange-400" : "bg-gray-500/10 border-gray-500/20 text-gray-400";
+              const bg = ev.severity === "critical" || ev.severity === "high" ? "bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400" : ev.severity === "medium" ? "bg-orange-50 dark:bg-orange-500/10 border-orange-200 dark:border-orange-500/20 text-orange-600 dark:text-orange-400" : "bg-gray-50 dark:bg-gray-500/10 border-gray-200 dark:border-gray-500/20 text-gray-600 dark:text-gray-400";
               const dot = ev.severity === "critical" || ev.severity === "high" ? "bg-red-500" : ev.severity === "medium" ? "bg-orange-500" : "bg-gray-500";
               const typeLabel = ev.severity;
               
               return (
-                <div key={idx} className="flex items-center gap-3 p-2.5 rounded-lg border bg-[#0d1117] border-[#21262d] hover:border-[#30363d] transition-colors">
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
-                  <span className="text-[#484f58] shrink-0" style={{ fontSize: "10px", fontFamily: "monospace" }}>{ev.timestamp}</span>
-                  <span className="text-[#c9d1d9] truncate" style={{ fontSize: "12px" }}>{ev.description}</span>
-                  <span className={`ml-auto px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${bg}`}>
+                <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border bg-slate-50 dark:bg-[#0d1117] border-slate-200 dark:border-[#21262d] hover:border-slate-300 dark:hover:border-[#30363d] transition-all shadow-sm">
+                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 shadow-[0_0_8px_rgba(0,0,0,0.5)] dark:shadow-none ${dot}`} style={{ boxShadow: `0 0 10px ${dot.replace('bg-', '')}` }} />
+                  <span className="text-slate-500 dark:text-[#484f58] shrink-0 font-medium" style={{ fontSize: "11px", fontFamily: "monospace" }}>{ev.timestamp}</span>
+                  <span className="text-slate-700 dark:text-[#c9d1d9] truncate font-medium ml-1" style={{ fontSize: "13px" }}>{ev.description}</span>
+                  <span className={`ml-auto px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${bg}`}>
                     {typeLabel}
                   </span>
                 </div>

@@ -277,29 +277,79 @@ class DatabasePoolExhaustionScenario(BaseScenario):
         
         # Inject 500 explicit CRITICAL/ERROR log bursts tagged with correlation_id
         from .generator import LogEntry
+        from datetime import timedelta
         burst_logs: list[Any] = []
-        ts = datetime.now(timezone.utc)
-        for _ in range(500):
-            message = "CRITICAL BURST: Database connection pool completely exhausted and transaction failed"
-            raw = (
-                f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z CRITICAL api-gateway: '
-                f'pool_exhausted_burst target=inventory-db '
-                f'correlation_id={cid}'
-            )
-            burst_logs.append(LogEntry(
-                timestamp=ts,
-                service_name="api-gateway",
-                level="critical",
-                message=message,
-                metadata={
-                    "correlation_id": cid,
-                    "root_cause": False,
-                    "propagated_symptom": True,
-                    "error_type": "connection_pool_exhaustion",
-                    "status": 503,
-                },
-                raw=raw,
-            ))
+        base_ts = datetime.now(timezone.utc)
+        
+        for i in range(500):
+            ts = base_ts + timedelta(milliseconds=i * 10)
+            svc_index = i % 3
+            
+            if svc_index == 0:
+                # inventory-db (root cause)
+                message = "sqlalchemy.exc.TimeoutError: QueuePool limit of size 20 overflow 10 reached, connection timed out, timeout 30.00"
+                raw = (
+                    f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z CRITICAL inventory-db: '
+                    f'{message} correlation_id={cid}'
+                )
+                burst_logs.append(LogEntry(
+                    timestamp=ts,
+                    service_name="inventory-db",
+                    level="critical",
+                    message=message,
+                    metadata={
+                        "correlation_id": cid,
+                        "root_cause": True,
+                        "error_type": "connection_pool_exhaustion",
+                    },
+                    raw=raw,
+                ))
+            elif svc_index == 1:
+                # order-service (symptom)
+                message = "CRITICAL BURST: Database connection pool completely exhausted and transaction failed"
+                raw = (
+                    f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z CRITICAL order-service: '
+                    f'{message} target=inventory-db correlation_id={cid}'
+                )
+                burst_logs.append(LogEntry(
+                    timestamp=ts,
+                    service_name="order-service",
+                    level="critical",
+                    message=message,
+                    metadata={
+                        "correlation_id": cid,
+                        "root_cause": False,
+                        "propagated_symptom": True,
+                        "error_type": "connection_pool_exhaustion",
+                        "target_service": "inventory-db",
+                        "parent_service": "inventory-db",
+                        "status": 503,
+                    },
+                    raw=raw,
+                ))
+            else:
+                # api-gateway (symptom)
+                message = "CRITICAL BURST: Database connection pool completely exhausted and transaction failed"
+                raw = (
+                    f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z CRITICAL api-gateway: '
+                    f'{message} target=inventory-db correlation_id={cid}'
+                )
+                burst_logs.append(LogEntry(
+                    timestamp=ts,
+                    service_name="api-gateway",
+                    level="critical",
+                    message=message,
+                    metadata={
+                        "correlation_id": cid,
+                        "root_cause": False,
+                        "propagated_symptom": True,
+                        "error_type": "connection_pool_exhaustion",
+                        "target_service": "inventory-db",
+                        "parent_service": "order-service",
+                        "status": 503,
+                    },
+                    raw=raw,
+                ))
             
         self._steps.append(ScenarioStep(
             step_index=4,

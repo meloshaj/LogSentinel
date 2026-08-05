@@ -12,7 +12,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { GoogleLogin } from "@react-oauth/google";
+import { useGoogleLogin } from "@react-oauth/google";
 import {
   GoogleIcon,
   GitHubIcon,
@@ -221,32 +221,20 @@ export function RegisterPage() {
     }
   };
 
-  const handleGoogleSuccess = async (credentialResponse: unknown) => {
-    const credential =
-      typeof credentialResponse === "object" &&
-      credentialResponse !== null &&
-      "credential" in credentialResponse &&
-      typeof credentialResponse.credential === "string"
-        ? credentialResponse.credential
-        : "";
+  const googleLogin = useGoogleLogin({
+    onSuccess: async (tokenResponse) => {
+      setLoading(true);
+      setErrors({});
 
-    if (!credential) {
-      setErrors({ submit: "Google sign-in did not return a valid credential." });
-      return;
-    }
-
-    setLoading(true);
-    setErrors({});
-
-    try {
-      const apiBase = (
-        import.meta.env.VITE_API_URL || "http://localhost:8000"
-      ).replace(/\/+$/, "");
-      const response = await fetch(`${apiBase}/api/auth/google`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ credential }),
-      });
+      try {
+        const apiBase = (
+          import.meta.env.VITE_API_URL || "http://localhost:8000"
+        ).replace(/\/+$/, "");
+        const response = await fetch(`${apiBase}/api/auth/google`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ credential: tokenResponse.access_token }),
+        });
 
       if (!response.ok) {
         if (response.status === 409) {
@@ -290,7 +278,9 @@ export function RegisterPage() {
     } finally {
       setLoading(false);
     }
-  };
+  },
+  onError: () => handleGoogleError(),
+  });
 
   const handleGoogleError = () => {
     setErrors({ submit: "Google sign-in failed. Please try again." });
@@ -537,17 +527,15 @@ export function RegisterPage() {
                       }}
                     />
                   ) : (
-                    <div className="w-full flex justify-center">
-                      <GoogleLogin
-                        onSuccess={handleGoogleSuccess}
-                        onError={handleGoogleError}
-                        theme="outline"
-                        size="large"
-                        width={400}
-                        text="continue_with"
-                        shape="rectangular"
-                      />
-                    </div>
+                    <SSOButton
+                      provider={{
+                        id: "Google",
+                        label: "Continue with Google",
+                        icon: <GoogleIcon />,
+                        onLogin: () => googleLogin(),
+                        disabled: loading,
+                      }}
+                    />
                   )
                 ) : (
                   <SSOButton
