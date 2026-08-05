@@ -17,6 +17,7 @@ export function useLiveLogs() {
     newIds,
     connectionState,
     connectionUrl,
+    totalLogCount,
   } = useTelemetryContext();
 
   const [paused, setPaused] = useState(false);
@@ -29,6 +30,7 @@ export function useLiveLogs() {
     connectionUrl,
     filter,
     filteredLogs,
+    totalLogCount,
     newIds,
     paused,
     setFilter,

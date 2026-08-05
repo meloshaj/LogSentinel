@@ -543,6 +543,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
     () => ({
       logs,
       newIds,
+      totalLogCount,
       connectionState,
       connectionUrl,
       latestEvent,
@@ -556,6 +557,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
     [
       logs,
       newIds,
+      totalLogCount,
       connectionState,
       connectionUrl,
       latestEvent,
