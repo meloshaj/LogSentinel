@@ -1,6 +1,6 @@
 import { MetricCards } from "../components/dashboard/MetricCards";
 import { TrafficChart } from "../components/dashboard/TrafficChart";
-import { TopologyCanvas } from "../components/dashboard/TopologyCanvas";
+import { TopologyGraph } from "../components/topology/TopologyGraph";
 import { BenchmarkingHUD } from "../components/dashboard/BenchmarkingHUD";
 import { EventManagerPanel } from "../components/dashboard/EventManagerPanel";
 import { TopologySyncProvider } from "../hooks/useTopologySync";
@@ -53,7 +53,7 @@ export function OverviewPage() {
         {/* Live Topology Canvas & Event Manager Panel */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 h-[400px]">
-            <TopologyCanvas />
+            <TopologyGraph mode="compact" />
           </div>
           <div className="lg:col-span-1 h-[400px]">
             <EventManagerPanel />

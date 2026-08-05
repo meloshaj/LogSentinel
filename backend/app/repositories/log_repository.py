@@ -18,7 +18,7 @@ metadata = MetaData()
 logs_table = Table(
     "logs",
     metadata,
-    Column("id", BIGINT, primary_key=True, autoincrement=True),
+    Column("id", VARCHAR(26), primary_key=True),
     Column("timestamp", DateTime(timezone=True), nullable=False),
     Column("service", VARCHAR(255), nullable=False),
     Column("raw_message", Text, nullable=False),
@@ -86,6 +86,7 @@ class LogRepository:
 
         stmt = (
             select(
+                logs_table.c.id,
                 logs_table.c.timestamp,
                 logs_table.c.service,
                 logs_table.c.level,
@@ -107,6 +108,7 @@ class LogRepository:
     def map_parsed_log(parsed_log: ParsedLog) -> dict[str, Any]:
         """Convert a validated ParsedLog into one database insert row."""
         return {
+            "id": parsed_log.id,
             "timestamp": parsed_log.timestamp,
             "service": getattr(parsed_log, "service_name", parsed_log.service),
             "raw_message": getattr(parsed_log, "message", getattr(parsed_log, "raw", parsed_log.raw_message)),

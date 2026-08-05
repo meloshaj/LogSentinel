@@ -37,7 +37,7 @@ class LogRecord(Base):
 
     __tablename__ = "logs"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(VARCHAR(26), primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -1,7 +1,25 @@
 /**
  * TelemetryProvider — Global telemetry context that maintains a single persistent
- * WebSocket connection and shared state (logs, tracking loops, performance events,
- * raw telemetry events) across all dashboard route transitions.
+ * WebSocket connection, performs historical log backfill via REST, and reconciles
+ * both streams into a deduplicated, chronologically sorted rolling buffer.
+ *
+ * ## Architecture
+ *
+ * On mount the provider:
+ * 1. Opens the WebSocket immediately and buffers incoming events into a ref
+ *    (`wsBufferRef`) so no live logs are lost during the REST fetch.
+ * 2. Concurrently fetches historical logs from `GET /drain3/recent?limit=500`.
+ * 3. Atomically merges REST logs ∪ wsBufferRef using a `Map<id, LogEntry>`
+ *    for O(1) deduplication via backend-enforced ULIDs, sorts descending by
+ *    ULID lexicographic order (newest first), and caps at 500.
+ * 4. After the merge, switches to direct state updates for new WebSocket events.
+ *
+ * ## Deduplication Strategy
+ *
+ * Every log carries an immutable ULID (`id`) assigned at the point of backend
+ * ingestion. Both REST and WebSocket streams emit the identical `id` for the
+ * same record, enabling direct `Map.set(log.id, log)` deduplication without
+ * composite key hashing or timestamp+service+message string concatenation.
  *
  * Mount this once inside RootLayout so the connection and accumulated data survive
  * navigation between Overview, Live Logs, Anomalies, Analytics, etc.
@@ -30,6 +48,11 @@ const MAX_LOGS = 500;
 const MAX_RECENT_EVENTS = 30;
 const NEW_LOG_HIGHLIGHT_MS = 2000;
 const RECONNECT_DELAY_MS = 3000;
+/** Throttle interval for flushing the WebSocket log buffer into React state. */
+const WS_FLUSH_INTERVAL_MS = 100;
+/** REST backfill endpoint. */
+const BACKFILL_URL = "/drain3/recent?limit=500";
+const BACKFILL_FALLBACK_URL = "http://localhost:8000/drain3/recent?limit=500";
 
 // ---------------------------------------------------------------------------
 // Telemetry Stream Types (from useTelemetryStream)
@@ -75,6 +98,10 @@ interface TelemetryContextValue {
   logs: LogEntry[];
   newIds: Set<string>;
 
+  // Backfill state
+  isBackfillLoading: boolean;
+  backfillError: string | null;
+
   // Connection
   connectionState: ConnectionState;
   connectionUrl: string | null;
@@ -91,12 +118,15 @@ interface TelemetryContextValue {
   // Performance events
   latestPerformanceEvents: PerformanceEvent[];
   clearPerformanceEvents: () => void;
+
+  // Actions
+  clearLogs: () => void;
 }
 
 const TelemetryContext = createContext<TelemetryContextValue | null>(null);
 
 // ---------------------------------------------------------------------------
-// Helpers (ported from useLiveLogs.ts)
+// Helpers
 // ---------------------------------------------------------------------------
 
 function getTimestamp() {
@@ -104,7 +134,13 @@ function getTimestamp() {
 }
 
 function normalizeLevel(level: unknown): LogLevel {
-  if (level === "INFO" || level === "WARN" || level === "ERROR" || level === "DEBUG") {
+  if (
+    level === "INFO" ||
+    level === "WARN" ||
+    level === "ERROR" ||
+    level === "DEBUG" ||
+    level === "FATAL"
+  ) {
     return level;
   }
   return "INFO";
@@ -120,7 +156,25 @@ function buildSocketCandidates(): string[] {
 }
 
 /**
- * Parse a raw JSON string into a TelemetryEvent (same logic as useTelemetrySocket).
+ * Build the REST backfill URL candidates, mirroring the same host-detection
+ * logic used for the WebSocket connection.
+ */
+function buildBackfillUrls(): string[] {
+  const candidates = [
+    import.meta.env.VITE_API_URL
+      ? `${import.meta.env.VITE_API_URL.replace(/\/$/, "")}/drain3/recent?limit=500`
+      : undefined,
+    `${window.location.origin}${BACKFILL_URL}`,
+    BACKFILL_FALLBACK_URL,
+  ];
+  return candidates.filter((c): c is string => Boolean(c));
+}
+
+// NOTE: The legacy `logKey()` composite hashing function has been removed.
+// Deduplication is now performed via the backend-enforced ULID `log.id`.
+
+/**
+ * Parse a raw JSON string into a TelemetryEvent.
  */
 function parseTelemetryEvent(raw: string): TelemetryEvent | null {
   try {
@@ -140,7 +194,7 @@ function parseTelemetryEvent(raw: string): TelemetryEvent | null {
 }
 
 /**
- * Extract displayable LogEntry objects from a `log.parsed` telemetry payload.
+ * Extract a displayable LogEntry from a `log.parsed` telemetry payload.
  */
 function logEntryFromParsedPayload(
   envelope: Record<string, unknown>,
@@ -161,8 +215,14 @@ function logEntryFromParsedPayload(
 
   const levelRaw = typeof payload.level === "string" ? payload.level.toUpperCase() : "INFO";
 
+  // Use the backend-assigned ULID directly — it is guaranteed non-null.
+  const backendId =
+    typeof payload.id === "string" && payload.id
+      ? payload.id
+      : `ws-fallback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
   return {
-    id: `ws-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: backendId,
     timestamp:
       typeof envelope.timestamp === "string"
         ? new Date(envelope.timestamp).toTimeString().slice(0, 8) +
@@ -173,11 +233,100 @@ function logEntryFromParsedPayload(
     service:
       typeof payload.service === "string" && payload.service ? payload.service : "backend",
     message,
+    template_id:
+      typeof payload.template_id === "string" ? payload.template_id : undefined,
+    metadata:
+      typeof payload.metadata === "object" && payload.metadata !== null
+        ? (payload.metadata as Record<string, unknown>)
+        : undefined,
   };
 }
 
+/**
+ * Convert a backend ParsedLog dict (from /drain3/recent) into a LogEntry.
+ */
+function logEntryFromBackendRecord(record: Record<string, unknown>): LogEntry | null {
+  const raw = record.raw_message ?? record.message;
+  const template = record.template_text ?? record.template;
+  const message =
+    typeof template === "string" && template
+      ? template
+      : typeof raw === "string" && raw
+        ? raw
+        : null;
+
+  if (!message) return null;
+
+  const levelRaw = typeof record.level === "string" ? record.level.toUpperCase() : "INFO";
+
+  let timestampStr: string;
+  if (typeof record.timestamp === "string") {
+    try {
+      const dt = new Date(record.timestamp);
+      timestampStr =
+        dt.toTimeString().slice(0, 8) +
+        "." +
+        String(dt.getMilliseconds()).padStart(3, "0");
+    } catch {
+      timestampStr = getTimestamp();
+    }
+  } else {
+    timestampStr = getTimestamp();
+  }
+
+  // Backend guarantees a non-null ULID `id` on every record.
+  const backendId =
+    typeof record.id === "string" && record.id
+      ? record.id
+      : `rest-fallback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  return {
+    id: backendId,
+    timestamp: timestampStr,
+    level: normalizeLevel(levelRaw),
+    service:
+      typeof record.service === "string" && record.service
+        ? record.service
+        : "backend",
+    message,
+    template_id:
+      typeof record.template_id === "string" ? record.template_id : undefined,
+    metadata:
+      typeof record.metadata === "object" && record.metadata !== null
+        ? (record.metadata as Record<string, unknown>)
+        : undefined,
+  };
+}
+
+/**
+ * Deduplicate and merge log arrays using O(1) Map lookups on backend ULID `id`.
+ * Returns logs sorted descending by ULID (newest first), capped to MAX_LOGS.
+ *
+ * ULIDs are 128-bit time-ordered identifiers — their lexicographic string
+ * comparison is equivalent to chronological ordering, making `localeCompare`
+ * a correct and faster substitute for `new Date()` parsing.
+ */
+export function deduplicateAndMerge(
+  ...sources: LogEntry[][]
+): LogEntry[] {
+  const map = new Map<string, LogEntry>();
+
+  for (const source of sources) {
+    for (const log of source) {
+      // Direct O(1) identity dedup via backend-enforced ULID
+      if (!map.has(log.id)) {
+        map.set(log.id, log);
+      }
+    }
+  }
+
+  return Array.from(map.values())
+    .sort((a, b) => b.id.localeCompare(a.id))
+    .slice(0, MAX_LOGS);
+}
+
 // ---------------------------------------------------------------------------
-// Type guards (from useTelemetryStream.ts)
+// Type guards
 // ---------------------------------------------------------------------------
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -235,6 +384,40 @@ function isPerformanceEvent(value: unknown): value is PerformanceEvent {
 }
 
 // ---------------------------------------------------------------------------
+// REST backfill fetcher
+// ---------------------------------------------------------------------------
+
+async function fetchBackfillLogs(): Promise<LogEntry[]> {
+  const urls = buildBackfillUrls();
+  let lastError: Error | null = null;
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const data = (await response.json()) as Record<string, unknown>;
+      const rawLogs = data.logs;
+      if (!Array.isArray(rawLogs)) return [];
+
+      const entries: LogEntry[] = [];
+      for (const raw of rawLogs) {
+        if (isRecord(raw)) {
+          const entry = logEntryFromBackendRecord(raw);
+          if (entry) entries.push(entry);
+        }
+      }
+      return entries;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  throw lastError ?? new Error("All backfill URLs failed");
+}
+
+// ---------------------------------------------------------------------------
 // Provider Component
 // ---------------------------------------------------------------------------
 
@@ -244,6 +427,18 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
   const highlightedIdsRef = useRef<Set<string>>(new Set());
   const cleanupTimersRef = useRef<number[]>([]);
+
+  // ---- Backfill state ----
+  const [isBackfillLoading, setIsBackfillLoading] = useState(true);
+  const [backfillError, setBackfillError] = useState<string | null>(null);
+  const backfillCompleteRef = useRef(false);
+
+  /**
+   * WebSocket log buffer — accumulates LogEntry objects received via WebSocket
+   * while the REST backfill is still in-flight. After merge, this buffer is
+   * no longer used; logs go directly into React state via the flush interval.
+   */
+  const wsBufferRef = useRef<LogEntry[]>([]);
 
   // ---- Connection state ----
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
@@ -301,18 +496,27 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, []);
 
-  // ---- Mark new log entries with temporary highlight ----
-  const markNewEntries = useCallback((entries: LogEntry[]) => {
-    if (!entries.length) return;
+  // ---- Throttled WebSocket log flush (post-backfill) ----
+  // After backfill completes, incoming WS logs accumulate in wsBufferRef
+  // and are flushed into React state every WS_FLUSH_INTERVAL_MS to avoid
+  // per-message re-renders during high-throughput bursts.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!backfillCompleteRef.current) return;
+      if (wsBufferRef.current.length === 0) return;
 
-    setLogs((previousLogs) => {
-      const nextLogs = [...previousLogs];
+      const batch = wsBufferRef.current;
+      wsBufferRef.current = [];
 
-      for (const entry of entries) {
+      setLogs((prev) => {
+        const merged = deduplicateAndMerge(prev, batch);
+        return merged;
+      });
+
+      // Highlight new entries
+      for (const entry of batch) {
         if (highlightedIdsRef.current.has(entry.id)) continue;
-
         highlightedIdsRef.current.add(entry.id);
-        nextLogs.push(entry);
 
         setNewIds((prev) => {
           const next = new Set(prev);
@@ -331,10 +535,43 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
 
         cleanupTimersRef.current.push(timerId);
       }
+    }, WS_FLUSH_INTERVAL_MS);
 
-      return nextLogs.slice(-MAX_LOGS);
-    });
+    return () => clearInterval(timer);
   }, []);
+
+  // ---- Extract LogEntry objects from WebSocket telemetry events ----
+  const extractLogEntries = useCallback(
+    (event: TelemetryEvent): LogEntry[] => {
+      const entries: LogEntry[] = [];
+      const eventType: string = event.type;
+
+      if (eventType === "frame_update" && isRecord(event.payload)) {
+        const framePayload = event.payload as Record<string, unknown>;
+        if (Array.isArray(framePayload.events)) {
+          for (const innerEvent of framePayload.events) {
+            if (!isRecord(innerEvent)) continue;
+            if (innerEvent.type === "log.parsed" && isRecord(innerEvent.payload)) {
+              const entry = logEntryFromParsedPayload(
+                innerEvent as Record<string, unknown>,
+                innerEvent.payload,
+              );
+              if (entry) entries.push(entry);
+            }
+          }
+        }
+      } else if (eventType === "log.parsed" && isRecord(event.payload)) {
+        const entry = logEntryFromParsedPayload(
+          event as unknown as Record<string, unknown>,
+          event.payload as Record<string, unknown>,
+        );
+        if (entry) entries.push(entry);
+      }
+
+      return entries;
+    },
+    [],
+  );
 
   // ---- Process a single telemetry event for all subsystems ----
   const processEvent = useCallback(
@@ -344,37 +581,29 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
       setEventCount((c) => c + 1);
       setRecentEvents((events) => [event, ...events].slice(0, MAX_RECENT_EVENTS));
 
+      // 2. Extract log entries and push to buffer
+      const logEntries = extractLogEntries(event);
+      if (logEntries.length > 0) {
+        wsBufferRef.current.push(...logEntries);
+      }
+
       const eventType: string = event.type;
 
-      // 2. Handle frame_update envelopes (batched events from backend)
+      // 3. Handle tracking loops and performance events
       if (eventType === "frame_update" && isRecord(event.payload)) {
         const framePayload = event.payload as Record<string, unknown>;
         if (Array.isArray(framePayload.events)) {
-          const logEntries: LogEntry[] = [];
-
           for (const innerEvent of framePayload.events) {
             if (!isRecord(innerEvent)) continue;
             const innerType = innerEvent.type;
             const innerPayload = innerEvent.payload;
 
-            // log.parsed → extract log entries
-            if (innerType === "log.parsed" && isRecord(innerPayload)) {
-              const entry = logEntryFromParsedPayload(
-                innerEvent as Record<string, unknown>,
-                innerPayload,
-              );
-              if (entry) logEntries.push(entry);
-            }
-
-            // tracking loop → queue for batched update
             if (
               innerType === "infrastructure.tracking_loop.triggered" &&
               isTrackingLoopEvent(innerPayload)
             ) {
               pendingTrackingUpdates.current.push(innerPayload);
             }
-
-            // performance alert → queue for batched update
             if (
               innerType === "infrastructure.performance.alert" &&
               isPerformanceEvent(innerPayload)
@@ -382,45 +611,58 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
               pendingPerformanceUpdates.current.push(innerPayload);
             }
           }
-
-          if (logEntries.length > 0) {
-            markNewEntries(logEntries);
-          }
         }
-        return;
-      }
-
-      // 3. Direct (non-batched) tracking loop event
-      if (
+      } else if (
         eventType === "infrastructure.tracking_loop.triggered" &&
         isTrackingLoopEvent(event.payload)
       ) {
         pendingTrackingUpdates.current.push(event.payload as TrackingLoopEvent);
-        return;
-      }
-
-      // 4. Direct performance alert
-      if (
+      } else if (
         eventType === "infrastructure.performance.alert" &&
         isPerformanceEvent(event.payload)
       ) {
         pendingPerformanceUpdates.current.push(event.payload as PerformanceEvent);
-        return;
-      }
-
-      // 5. Direct log.parsed event (non-batched)
-      if (eventType === "log.parsed" && isRecord(event.payload)) {
-        const entry = logEntryFromParsedPayload(
-          event as unknown as Record<string, unknown>,
-          event.payload as Record<string, unknown>,
-        );
-        if (entry) {
-          markNewEntries([entry]);
-        }
       }
     },
-    [markNewEntries],
+    [extractLogEntries],
   );
+
+  // ---- REST backfill (runs once on mount) ----
+  useEffect(() => {
+    let cancelled = false;
+
+    fetchBackfillLogs()
+      .then((restLogs) => {
+        if (cancelled) return;
+
+        // Atomic merge: REST logs ∪ wsBufferRef
+        const bufferedWsLogs = [...wsBufferRef.current];
+        wsBufferRef.current = [];
+        const merged = deduplicateAndMerge(restLogs, bufferedWsLogs);
+
+        setLogs(merged);
+        setIsBackfillLoading(false);
+        backfillCompleteRef.current = true;
+      })
+      .catch((err) => {
+        if (cancelled) return;
+
+        setBackfillError(err instanceof Error ? err.message : String(err));
+        setIsBackfillLoading(false);
+
+        // Even on failure, flush any buffered WS logs so the live stream works
+        const bufferedWsLogs = [...wsBufferRef.current];
+        wsBufferRef.current = [];
+        if (bufferedWsLogs.length > 0) {
+          setLogs(deduplicateAndMerge(bufferedWsLogs));
+        }
+        backfillCompleteRef.current = true;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ---- Persistent WebSocket connection ----
   useEffect(() => {
@@ -534,11 +776,18 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   // ---- Public actions ----
   const clearTrackingLoops = useCallback(() => setActiveTrackingLoops({}), []);
   const clearPerformanceEvents = useCallback(() => setLatestPerformanceEvents({}), []);
+  const clearLogs = useCallback(() => {
+    setLogs([]);
+    setNewIds(new Set());
+    highlightedIdsRef.current.clear();
+  }, []);
 
   const value: TelemetryContextValue = useMemo(
     () => ({
       logs,
       newIds,
+      isBackfillLoading,
+      backfillError,
       connectionState,
       connectionUrl,
       latestEvent,
@@ -548,10 +797,13 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
       clearTrackingLoops,
       latestPerformanceEvents: Object.values(latestPerformanceEvents),
       clearPerformanceEvents,
+      clearLogs,
     }),
     [
       logs,
       newIds,
+      isBackfillLoading,
+      backfillError,
       connectionState,
       connectionUrl,
       latestEvent,
@@ -561,6 +813,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
       clearTrackingLoops,
       latestPerformanceEvents,
       clearPerformanceEvents,
+      clearLogs,
     ],
   );
 
