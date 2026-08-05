@@ -1,6 +1,7 @@
 import type { Incident } from "../types/monitoring";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
-import { Bell, CheckCircle, Clock, Flame, XCircle, AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
+import { TopologyGraph } from "../components/topology/TopologyGraph";
+import { Bell, CheckCircle, Clock, Flame, XCircle, AlertTriangle, ChevronDown, ChevronRight, X } from "lucide-react";
 import { useState } from "react";
 
 const SEVERITY_CONFIG = {
@@ -106,8 +107,14 @@ export function IncidentsPage() {
     }))
   ];
 
-  const open = incidents.filter((i) => i.status !== "resolved");
-  const resolved = incidents.filter((i) => i.status === "resolved");
+  const [selectedServiceFilter, setSelectedServiceFilter] = useState<string | null>(null);
+
+  const filteredIncidents = selectedServiceFilter
+    ? incidents.filter((i) => i.service === selectedServiceFilter)
+    : incidents;
+
+  const open = filteredIncidents.filter((i) => i.status !== "resolved");
+  const resolved = filteredIncidents.filter((i) => i.status === "resolved");
 
   return (
     <div className="space-y-5">
@@ -130,6 +137,30 @@ export function IncidentsPage() {
           </div>
         ))}
       </div>
+
+      {/* Topology Dependency Graph */}
+      <div className="rounded-xl overflow-hidden" style={{ height: 480 }}>
+        <TopologyGraph
+          mode="full"
+          selectedNodeId={selectedServiceFilter}
+          onNodeSelect={setSelectedServiceFilter}
+        />
+      </div>
+
+      {/* Active service filter badge */}
+      {selectedServiceFilter && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161b22] border border-[#388bfd]/30">
+          <span className="text-[#388bfd]" style={{ fontSize: "11px", fontWeight: 600 }}>
+            Filtering by: {selectedServiceFilter}
+          </span>
+          <button
+            onClick={() => setSelectedServiceFilter(null)}
+            className="text-[#7d8590] hover:text-[#e6edf3] transition-colors"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Incident timeline */}
       <div className="rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">

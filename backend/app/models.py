@@ -19,6 +19,10 @@ class ParsedLog(BaseModel):
     """
 
     # Core log fields
+    id: str = Field(
+        ...,
+        description="Unique 128-bit lexicographically sortable identifier (ULID)",
+    )
     timestamp: datetime = Field(
         ...,
         description="Timestamp when the log event was emitted",
@@ -96,6 +100,7 @@ class ParsedLog(BaseModel):
         """Allow iteration over the legacy parser field names expected by tests."""
         return iter(
             [
+                "id",
                 "raw_message",
                 "template_id",
                 "template_text",
@@ -110,6 +115,7 @@ class ParsedLog(BaseModel):
     def keys(self) -> list[str]:
         """Return the legacy parser field names expected by tests."""
         return [
+            "id",
             "raw_message",
             "template_id",
             "template_text",

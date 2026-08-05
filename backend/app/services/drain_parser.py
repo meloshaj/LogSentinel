@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import ulid
 
 from drain3 import TemplateMiner
 from drain3.file_persistence import FilePersistence
@@ -76,7 +77,10 @@ class DrainParser:
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
         
+        log_id = ulid.from_timestamp(timestamp).str
+        
         return ParsedLog(
+            id=log_id,
             timestamp=timestamp,
             service=metadata_dict.get("service", "unknown"),
             level=metadata_dict.get("level", "info"),

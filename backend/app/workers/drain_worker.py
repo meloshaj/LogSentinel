@@ -336,6 +336,7 @@ class DrainWorker:
         event = telemetry_event(
             "log.parsed",
             {
+                "id": parsed.id,
                 "source": parsed.source,
                 "environment": parsed.environment,
                 "service": parsed.service,
@@ -343,6 +344,8 @@ class DrainWorker:
                 "template_id": parsed.template_id,
                 "template": parsed.template_text,
                 "correlation_id": parsed.correlation_id,
+                "raw_message": getattr(parsed, "message", getattr(parsed, "raw", parsed.raw_message)),
+                "metadata": parsed.metadata,
             },
         )
 

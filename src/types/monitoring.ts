@@ -1,4 +1,4 @@
-export type LogLevel = "INFO" | "WARN" | "ERROR" | "DEBUG";
+export type LogLevel = "INFO" | "WARN" | "ERROR" | "DEBUG" | "FATAL";
 
 export interface LogEntry {
   id: string;
@@ -6,6 +6,8 @@ export interface LogEntry {
   level: LogLevel;
   service: string;
   message: string;
+  template_id?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ServiceAnomaly {

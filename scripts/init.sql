@@ -33,7 +33,7 @@ CREATE TYPE incident_status AS ENUM (
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS logs (
-    id              BIGSERIAL       PRIMARY KEY,
+    id              VARCHAR(26)     PRIMARY KEY,
     timestamp       TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     service         VARCHAR(255)    NOT NULL,
     raw_message     TEXT            NOT NULL,
