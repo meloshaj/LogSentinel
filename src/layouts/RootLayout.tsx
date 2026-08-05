@@ -4,6 +4,7 @@ import { DEFAULT_PAGE_META, PAGE_META } from "../constants/pageMeta";
 import { useClock } from "../hooks/useClock";
 import { useThemeMode } from "../hooks/useThemeMode";
 import { Sidebar } from "./Sidebar";
+import { TelemetryProvider } from "../providers/TelemetryProvider";
 
 function Header() {
   const location = useLocation();
@@ -64,14 +65,16 @@ function Header() {
 
 export function RootLayout() {
   return (
-    <div className="flex h-screen w-full bg-[#0d1117] text-[#e6edf3] overflow-hidden">
-      <Sidebar />
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <Header />
-        <main className="flex-1 overflow-y-auto p-5">
-          <Outlet />
-        </main>
+    <TelemetryProvider>
+      <div className="flex h-screen w-full bg-[#0d1117] text-[#e6edf3] overflow-hidden">
+        <Sidebar />
+        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+          <Header />
+          <main className="flex-1 overflow-y-auto p-5">
+            <Outlet />
+          </main>
+        </div>
       </div>
-    </div>
+    </TelemetryProvider>
   );
 }
