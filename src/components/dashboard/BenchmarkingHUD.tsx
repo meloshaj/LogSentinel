@@ -1,9 +1,10 @@
 import React from 'react';
 import { useTelemetryStream } from '../../hooks/useTelemetryStream';
-import { Zap, Database, Layers } from 'lucide-react';
+import { useLiveLogs } from '../../hooks/useLiveLogs';
+import { Zap, Database, Layers, Activity } from 'lucide-react';
 
-function StatCard({ title, value, threshold, severity, icon: Icon }: any) {
-  const isBreached = value > threshold;
+function StatCard({ title, value, threshold, severity, icon: Icon, showThreshold = true }: any) {
+  const isBreached = showThreshold && value > threshold;
   const color = isBreached ? (severity === 'critical' ? 'text-red-400' : 'text-orange-400') : 'text-green-400';
   
   return (
@@ -14,9 +15,11 @@ function StatCard({ title, value, threshold, severity, icon: Icon }: any) {
       </div>
       <div className="flex items-baseline gap-2">
         <span className={`text-xl font-bold ${color}`}>
-          {Number(value).toFixed(2)}
+          {showThreshold ? Number(value).toFixed(2) : value.toLocaleString()}
         </span>
-        <span className="text-gray-500 text-xs font-mono">thr: {Number(threshold).toFixed(0)}</span>
+        {showThreshold && (
+          <span className="text-gray-500 text-xs font-mono">thr: {Number(threshold).toFixed(0)}</span>
+        )}
       </div>
     </div>
   );
@@ -24,6 +27,7 @@ function StatCard({ title, value, threshold, severity, icon: Icon }: any) {
 
 export function BenchmarkingHUD() {
   const { latestPerformanceEvents } = useTelemetryStream();
+  const { totalLogCount } = useLiveLogs();
 
   const getEvent = (name: string) => latestPerformanceEvents.find(e => e.metric_name.includes(name));
 
@@ -33,7 +37,15 @@ export function BenchmarkingHUD() {
   const queueDepth = getEvent('queue_depth') || getEvent('queue') || { current_value: 0, threshold: 500, severity: 'normal' };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+      <StatCard 
+        title="Total Ingested" 
+        value={totalLogCount} 
+        threshold={0}
+        severity="normal"
+        icon={Activity}
+        showThreshold={false}
+      />
       <StatCard 
         title="Throughput (logs/sec)" 
         value={throughput.current_value} 
@@ -58,3 +70,4 @@ export function BenchmarkingHUD() {
     </div>
   );
 }
+

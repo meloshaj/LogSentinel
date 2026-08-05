@@ -76,8 +76,8 @@ export function AnomaliesPage() {
   }, [filteredLogs, activeTrackingLoops]);
 
   const anomalies: ServiceAnomaly[] = activeTrackingLoops.flatMap(loop => {
-    if (!loop.blast_radius?.blast_radius) return [];
-    return loop.blast_radius.blast_radius.map(node => {
+    if (!loop.blast_radius) return [];
+    return loop.blast_radius.map((node: any) => {
       let status: "Normal" | "Warning" | "Critical" = "Normal";
       if (loop.severity === "critical" || loop.severity === "high") status = "Critical";
       else if (loop.severity === "medium") status = "Warning";

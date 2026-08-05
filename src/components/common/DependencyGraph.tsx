@@ -4,6 +4,7 @@ import { DEPENDENCY_NODE_STATUS } from "../../constants/statusConfig";
 import { reactFlowEngineConfig } from "../../config/reactFlow";
 import type { ServiceGraph } from "../../types/monitoring";
 import { useThemeMode } from '../../hooks/useThemeMode';
+import dagre from 'dagre';
 
 interface DependencyGraphProps {
   graph: ServiceGraph;
@@ -122,6 +123,26 @@ export function DependencyGraph({
           stroke: isCritical ? "rgba(248,81,73,0.65)" : "rgba(72,79,88,0.8)",
           strokeWidth: isCritical ? 1.5 : 1,
         },
+      };
+    });
+
+    const g = new dagre.graphlib.Graph();
+    g.setGraph({ rankdir: 'LR', nodesep: 60, ranksep: 100 });
+    g.setDefaultEdgeLabel(() => ({}));
+
+    mappedNodes.forEach((n) => {
+      g.setNode(n.id, { width: 76, height: 60 });
+    });
+    mappedEdges.forEach((e) => {
+      g.setEdge(e.source, e.target);
+    });
+    dagre.layout(g);
+
+    mappedNodes.forEach((n) => {
+      const nodeWithPosition = g.node(n.id);
+      n.position = {
+        x: nodeWithPosition.x - 38,
+        y: nodeWithPosition.y - 30,
       };
     });
 

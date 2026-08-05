@@ -16,15 +16,7 @@ const STATUS_CONFIG = {
   resolved:      { label: "Resolved",      color: "#3fb950", dot: "bg-[#3fb950]" },
 };
 
-const TIMELINE_EVENTS = [
-  { time: "14:32:07", event: "PagerDuty alert fired - incident #INC-20445 created", type: "alert" },
-  { time: "14:32:05", event: "database-service connection pool exhausted (200/200)", type: "error" },
-  { time: "14:32:06", event: "payment-service circuit breaker opened", type: "error" },
-  { time: "14:32:07", event: "api-gateway returning 503 to clients", type: "warn" },
-  { time: "14:30:00", event: "Anomaly score crossed threshold (0.85) for database-service", type: "warn" },
-  { time: "14:28:12", event: "Long-running transaction detected on transactions table", type: "warn" },
-  { time: "14:15:00", event: "Notification service email queue backlog began growing", type: "info" },
-];
+
 
 function IncidentCard({ incident }: { incident: Incident }) {
   const [expanded, setExpanded] = useState(false);
@@ -140,25 +132,26 @@ export function IncidentsPage() {
       </div>
 
       {/* Incident timeline */}
-      <div className="rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-[#21262d]">
+      <div className="rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 dark:border-[#21262d]">
           <Clock className="w-4 h-4 text-[#388bfd]" />
-          <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Incident Timeline</span>
-          <span className="text-[#484f58] ml-auto" style={{ fontSize: "10px" }}>Today - 14:00-14:33</span>
+          <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Incident Timeline</span>
+          <span className="text-slate-500 dark:text-[#484f58] ml-auto" style={{ fontSize: "10px" }}>Today - {new Date().toLocaleDateString()}</span>
         </div>
-        <div className="p-3">
-          <div className="space-y-2">
-            {TIMELINE_EVENTS.map((ev, idx) => {
-              const bg = ev.type === "error" ? "bg-red-500/10 border-red-500/20 text-red-400" : ev.type === "warn" ? "bg-orange-500/10 border-orange-500/20 text-orange-400" : ev.type === "alert" ? "bg-purple-500/10 border-purple-500/20 text-purple-400" : "bg-gray-500/10 border-gray-500/20 text-gray-400";
-              const dot = ev.type === "error" ? "bg-red-500" : ev.type === "warn" ? "bg-orange-500" : ev.type === "alert" ? "bg-purple-500" : "bg-gray-500";
+        <div className="p-4">
+          <div className="flex flex-col gap-3">
+            {incidents.map((ev, idx) => {
+              const bg = ev.severity === "critical" || ev.severity === "high" ? "bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400" : ev.severity === "medium" ? "bg-orange-50 dark:bg-orange-500/10 border-orange-200 dark:border-orange-500/20 text-orange-600 dark:text-orange-400" : "bg-gray-50 dark:bg-gray-500/10 border-gray-200 dark:border-gray-500/20 text-gray-600 dark:text-gray-400";
+              const dot = ev.severity === "critical" || ev.severity === "high" ? "bg-red-500" : ev.severity === "medium" ? "bg-orange-500" : "bg-gray-500";
+              const typeLabel = ev.severity;
               
               return (
-                <div key={idx} className="flex items-center gap-3 p-2.5 rounded-lg border bg-[#0d1117] border-[#21262d] hover:border-[#30363d] transition-colors">
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
-                  <span className="text-[#484f58] shrink-0" style={{ fontSize: "10px", fontFamily: "monospace" }}>{ev.time}</span>
-                  <span className="text-[#c9d1d9] truncate" style={{ fontSize: "12px" }}>{ev.event}</span>
-                  <span className={`ml-auto px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${bg}`}>
-                    {ev.type}
+                <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border bg-slate-50 dark:bg-[#0d1117] border-slate-200 dark:border-[#21262d] hover:border-slate-300 dark:hover:border-[#30363d] transition-all shadow-sm">
+                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 shadow-[0_0_8px_rgba(0,0,0,0.5)] dark:shadow-none ${dot}`} style={{ boxShadow: `0 0 10px ${dot.replace('bg-', '')}` }} />
+                  <span className="text-slate-500 dark:text-[#484f58] shrink-0 font-medium" style={{ fontSize: "11px", fontFamily: "monospace" }}>{ev.timestamp}</span>
+                  <span className="text-slate-700 dark:text-[#c9d1d9] truncate font-medium ml-1" style={{ fontSize: "13px" }}>{ev.description}</span>
+                  <span className={`ml-auto px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${bg}`}>
+                    {typeLabel}
                   </span>
                 </div>
               );
