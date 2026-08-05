@@ -1,11 +1,35 @@
-import { useContext } from 'react';
-import { TelemetryContext } from '../providers/TelemetryProvider';
-export type { BlastRadiusNode, TrackingLoopEvent, PerformanceEvent } from '../types/telemetryEvents';
+import { useCallback } from "react";
+import { useTelemetryContext } from "../providers/TelemetryProvider";
+import type { TelemetryConnectionStatus } from "./useTelemetrySocket";
 
+// Re-export types so existing consumers don't break their imports.
+export type {
+  BlastRadiusNode,
+  TrackingLoopEvent,
+  PerformanceEvent,
+} from "../providers/TelemetryProvider";
+
+/**
+ * useTelemetryStream — thin hook that reads tracking-loop and performance
+ * events from the global TelemetryProvider instead of owning its own state.
+ */
 export function useTelemetryStream() {
-  const context = useContext(TelemetryContext);
-  if (!context) {
-    throw new Error('useTelemetryStream must be used within a TelemetryProvider');
-  }
-  return context;
+  const {
+    connectionState,
+    activeTrackingLoops,
+    latestPerformanceEvents,
+    clearTrackingLoops,
+    clearPerformanceEvents,
+  } = useTelemetryContext();
+
+  // Map the provider's ConnectionState to the original TelemetryConnectionStatus type.
+  const connectionStatus: TelemetryConnectionStatus = connectionState;
+
+  return {
+    connectionStatus,
+    activeTrackingLoops,
+    latestPerformanceEvents,
+    clearTrackingLoops,
+    clearPerformanceEvents,
+  };
 }
