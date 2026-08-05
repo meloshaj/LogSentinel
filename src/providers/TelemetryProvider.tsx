@@ -74,6 +74,7 @@ interface TelemetryContextValue {
   // Logs
   logs: LogEntry[];
   newIds: Set<string>;
+  totalLogCount: number;
 
   // Connection
   connectionState: ConnectionState;
@@ -242,6 +243,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   // ---- Global logs state ----
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
+  const [totalLogCount, setTotalLogCount] = useState(0);
   const highlightedIdsRef = useRef<Set<string>>(new Set());
   const cleanupTimersRef = useRef<number[]>([]);
 
@@ -304,6 +306,8 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   // ---- Mark new log entries with temporary highlight ----
   const markNewEntries = useCallback((entries: LogEntry[]) => {
     if (!entries.length) return;
+    
+    setTotalLogCount((prev) => prev + entries.length);
 
     setLogs((previousLogs) => {
       const nextLogs = [...previousLogs];
