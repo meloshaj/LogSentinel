@@ -34,8 +34,11 @@ function NavigationLink({ item }: { item: NavigationItem }) {
   );
 }
 
+import { useTelemetryStream } from "../hooks/useTelemetryStream";
+
 export function Sidebar() {
   const navigate = useNavigate();
+  const { activeTrackingLoops } = useTelemetryStream();
 
   const handleLogout = async () => {
     clearAuthToken();
@@ -64,7 +67,14 @@ export function Sidebar() {
         <div className="px-2 py-1.5">
           <span className="text-[#7d8590] uppercase tracking-widest" style={{ fontSize: "10px", fontWeight: 600 }}>Navigation</span>
         </div>
-        {PRIMARY_NAV_ITEMS.map((item) => <NavigationLink key={item.to} item={item} />)}
+        {PRIMARY_NAV_ITEMS.map((item) => {
+          let dynamicBadge = item.badge;
+          if (item.label === "Anomalies" || item.label === "Incidents") {
+            const count = activeTrackingLoops.length;
+            dynamicBadge = count > 0 ? count : undefined;
+          }
+          return <NavigationLink key={item.to} item={{ ...item, badge: dynamicBadge }} />;
+        })}
       </nav>
 
       <div className="px-2 py-2 border-t border-[#21262d] space-y-0.5">

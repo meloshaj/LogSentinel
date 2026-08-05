@@ -268,19 +268,47 @@ class DatabasePoolExhaustionScenario(BaseScenario):
             correlation_id=cid,
         ))
 
-        # Step 4: cascade — sustained errors across order-service and api-gateway
+        # Step 4: cascade — sustained errors across order-service and api-gateway + BURST
         sustained_cascade = self._cascade_engine.trigger_cascade(
             root_service="inventory-db",
             error_type="connection_pool_exhaustion",
             correlation_id=cid,
         )
+        
+        # Inject 500 explicit CRITICAL/ERROR log bursts tagged with correlation_id
+        from .generator import LogEntry
+        burst_logs: list[Any] = []
+        ts = datetime.now(timezone.utc)
+        for _ in range(500):
+            message = "CRITICAL BURST: Database connection pool completely exhausted and transaction failed"
+            raw = (
+                f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z CRITICAL api-gateway: '
+                f'pool_exhausted_burst target=inventory-db '
+                f'correlation_id={cid}'
+            )
+            burst_logs.append(LogEntry(
+                timestamp=ts,
+                service_name="api-gateway",
+                level="critical",
+                message=message,
+                metadata={
+                    "correlation_id": cid,
+                    "root_cause": False,
+                    "propagated_symptom": True,
+                    "error_type": "connection_pool_exhaustion",
+                    "status": 503,
+                },
+                raw=raw,
+            ))
+            
         self._steps.append(ScenarioStep(
             step_index=4,
             phase="cascade",
-            description="Sustained cascading failures in order-service and api-gateway",
+            description="Sustained cascading failures in order-service and api-gateway with ML burst",
             logs=(
                 self._normal_background_logs(5)
                 + sustained_cascade
+                + burst_logs
             ),
             correlation_id=cid,
         ))

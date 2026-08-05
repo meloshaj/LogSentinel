@@ -6,29 +6,8 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
-const servicePerf = [
-  { service: "cache-svc",    uptime: 99.9, p95: 4,    errorRate: 0.1 },
-  { service: "auth-svc",     uptime: 99.7, p95: 210,  errorRate: 0.8 },
-  { service: "api-gw",       uptime: 99.1, p95: 430,  errorRate: 3.2 },
-  { service: "notif-svc",    uptime: 98.8, p95: 95,   errorRate: 0.4 },
-  { service: "payment-svc",  uptime: 94.2, p95: 1800, errorRate: 8.7 },
-  { service: "db-svc",       uptime: 89.3, p95: 2400, errorRate: 14.1 },
-];
-
-const errorDistrib = [
-  { name: "DB Timeout",        count: 142, fill: "#f85149" },
-  { name: "Circuit Open",      count: 89,  fill: "#ffa657" },
-  { name: "Rate Limited",      count: 41,  fill: "#d29922" },
-  { name: "Auth Failure",      count: 18,  fill: "#bc8cff" },
-  { name: "Upstream 503",      count: 67,  fill: "#388bfd" },
-];
-
-const healthData = [
-  { name: "Health", value: 82, fill: "#3fb950" },
-];
-
 export function AnalyticsPage() {
-  const { filteredLogs } = useLiveLogs();
+  const { filteredLogs, totalLogCount } = useLiveLogs();
 
   const timeSeriesData = useMemo(() => {
     if (filteredLogs.length === 0) return [];
@@ -37,10 +16,61 @@ export function AnalyticsPage() {
       const minute = log.timestamp.split(':').slice(0, 2).join(':');
       if (!buckets[minute]) buckets[minute] = { time: minute, logs: 0, errors: 0 };
       buckets[minute].logs += 1;
-      if (log.level === 'ERROR') buckets[minute].errors += 1;
+      if (log.level === 'ERROR' || log.level === 'CRITICAL') buckets[minute].errors += 1;
     });
     return Object.values(buckets).slice(-20);
   }, [filteredLogs]);
+
+  const servicePerf = useMemo(() => {
+    const stats: Record<string, { total: number; errors: number; }> = {};
+    filteredLogs.forEach(log => {
+      const svc = log.service || "unknown";
+      if (!stats[svc]) stats[svc] = { total: 0, errors: 0 };
+      stats[svc].total += 1;
+      if (log.level === 'ERROR' || log.level === 'CRITICAL') {
+        stats[svc].errors += 1;
+      }
+    });
+    
+    return Object.entries(stats).map(([service, data]) => {
+      const errorRate = data.total > 0 ? (data.errors / data.total) * 100 : 0;
+      const uptime = Math.max(0, 100 - errorRate);
+      return {
+        service,
+        uptime: Number(uptime.toFixed(1)),
+        p95: Math.floor(Math.random() * 200 + 10), // mock p95 for now
+        errorRate: Number(errorRate.toFixed(1))
+      };
+    }).sort((a, b) => b.errorRate - a.errorRate);
+  }, [filteredLogs]);
+
+  const errorDistrib = useMemo(() => {
+    const counts: Record<string, number> = {};
+    filteredLogs.forEach(log => {
+      if (log.level === 'ERROR') {
+        // extract a short reason or just use the service name
+        let reason = "Unknown Error";
+        if (log.message.includes("timeout") || log.message.includes("Timeout")) reason = "Timeout";
+        else if (log.message.includes("pool")) reason = "Pool Exhausted";
+        else if (log.message.includes("auth") || log.message.includes("JWT")) reason = "Auth Failure";
+        else if (log.message.includes("network")) reason = "Network Partition";
+        else if (log.message.includes("deadlock")) reason = "Deadlock";
+        else reason = log.service;
+        
+        counts[reason] = (counts[reason] || 0) + 1;
+      }
+    });
+    
+    const colors = ["#f85149", "#ffa657", "#d29922", "#bc8cff", "#388bfd"];
+    return Object.entries(counts)
+      .map(([name, count], idx) => ({ name, count, fill: colors[idx % colors.length] }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }, [filteredLogs]);
+
+  const totalErrors = filteredLogs.filter(l => l.level === 'ERROR').length;
+  const avgErrorRate = filteredLogs.length > 0 ? ((totalErrors / filteredLogs.length) * 100).toFixed(1) : "0.0";
+  const sloCompliance = filteredLogs.length > 0 ? (100 - Number(avgErrorRate)).toFixed(1) : "100.0";
 
   return (
     <div className="space-y-5">
@@ -52,17 +82,17 @@ export function AnalyticsPage() {
       {/* KPI strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: "Logs Today",       value: "14.2M",  delta: "+12%", up: true },
-          { label: "Avg Error Rate",   value: "4.6%",   delta: "+2.1%", up: false },
-          { label: "MTTR",             value: "18 min",  delta: "-3 min", up: true },
-          { label: "SLO Compliance",   value: "97.4%",  delta: "-1.2%", up: false },
+          { label: "Logs Ingested",    value: totalLogCount.toLocaleString(),  delta: "Live", up: true },
+          { label: "Avg Error Rate",   value: `${avgErrorRate}%`,   delta: "Live", up: Number(avgErrorRate) < 5 },
+          { label: "Active Services",  value: servicePerf.length.toString(),  delta: "Live", up: true },
+          { label: "SLO Compliance",   value: `${sloCompliance}%`,  delta: "Live", up: Number(sloCompliance) > 95 },
         ].map((k) => (
           <div key={k.label} className="p-4 rounded-xl bg-[#161b22] border border-[#21262d]">
             <div className="text-[#484f58]" style={{ fontSize: "10px" }}>{k.label}</div>
             <div className="text-[#e6edf3] mt-1" style={{ fontSize: "22px", fontWeight: 700 }}>{k.value}</div>
             <div className={`flex items-center gap-1 mt-0.5 ${k.up ? "text-[#3fb950]" : "text-[#f85149]"}`}>
               {k.up ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-              <span style={{ fontSize: "10px" }}>{k.delta} vs yesterday</span>
+              <span style={{ fontSize: "10px" }}>{k.delta}</span>
             </div>
           </div>
         ))}

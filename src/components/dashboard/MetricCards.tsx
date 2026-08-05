@@ -1,5 +1,7 @@
 import { Activity, AlertTriangle, CheckCircle, Database, TrendingDown, TrendingUp } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
+import { useLiveLogs } from "../../hooks/useLiveLogs";
+import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 
 const sparklineData = [
   [12, 19, 14, 21, 15, 18, 24],
@@ -89,14 +91,20 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
 }
 
 export function MetricCards() {
+  const { filteredLogs } = useLiveLogs();
+  const { activeTrackingLoops } = useTelemetryStream();
+
+  const totalLogs = filteredLogs.length;
+  const numAnomalies = activeTrackingLoops.length;
+  
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       <MetricCard
         title="Logs Processed"
-        value="2.45M"
-        sub="last 30 min"
-        trend="up"
-        trendLabel="+18%"
+        value={totalLogs.toString()}
+        sub="session total"
+        trend="neutral"
+        trendLabel="Live"
         icon={Database}
         iconBg="rgba(31,111,235,0.15)"
         iconColor="#388bfd"
@@ -105,10 +113,10 @@ export function MetricCards() {
       />
       <MetricCard
         title="Active Anomalies"
-        value="6"
-        sub="4 critical"
-        trend="up"
-        trendLabel="+4 since 14:30"
+        value={numAnomalies.toString()}
+        sub={`${numAnomalies} critical`}
+        trend={numAnomalies > 0 ? "up" : "neutral"}
+        trendLabel={numAnomalies > 0 ? "Detected" : "None"}
         icon={AlertTriangle}
         iconBg="rgba(218,54,51,0.15)"
         iconColor="#f85149"
@@ -117,10 +125,10 @@ export function MetricCards() {
       />
       <MetricCard
         title="Health Score"
-        value="82%"
-        sub="down from 96%"
-        trend="down"
-        trendLabel="-14pts"
+        value={numAnomalies > 0 ? "82%" : "100%"}
+        sub={numAnomalies > 0 ? "Degraded" : "Healthy"}
+        trend={numAnomalies > 0 ? "down" : "neutral"}
+        trendLabel={numAnomalies > 0 ? "-18pts" : "Stable"}
         icon={Activity}
         iconBg="rgba(210,153,34,0.15)"
         iconColor="#d29922"
@@ -129,10 +137,10 @@ export function MetricCards() {
       />
       <MetricCard
         title="Services"
-        value="8 / 10"
-        sub="2 degraded"
-        trend="down"
-        trendLabel="2 failing"
+        value={numAnomalies > 0 ? "8 / 10" : "10 / 10"}
+        sub={numAnomalies > 0 ? "2 degraded" : "All nominal"}
+        trend={numAnomalies > 0 ? "down" : "neutral"}
+        trendLabel={numAnomalies > 0 ? "2 failing" : "All passing"}
         icon={CheckCircle}
         iconBg="rgba(63,185,80,0.12)"
         iconColor="#3fb950"

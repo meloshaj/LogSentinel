@@ -15,8 +15,9 @@ import {
 import '@xyflow/react/dist/style.css';
 import { useTelemetryStream } from '../../hooks/useTelemetryStream';
 import { useTopologySync } from '../../hooks/useTopologySync';
-
+import { useTopology } from '../../hooks/useTopology';
 import { useThemeMode } from '../../hooks/useThemeMode';
+import dagre from 'dagre';
 
 const SEVERITY_COLORS: Record<string, string> = {
   critical: "#f85149", // red
@@ -54,70 +55,117 @@ function TopologyCanvasInner() {
   const { selectedNodeId } = useTopologySync();
   const { setCenter } = useReactFlow();
   const { themeMode } = useThemeMode();
+  const { topology } = useTopology(2000); // Fetch topology every 2s
   
   const [nodes, setNodes, onNodesChange] = useNodesState<any>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>([]);
 
   // Process tracking loops to build nodes and edges
   useEffect(() => {
-    if (!activeTrackingLoops || activeTrackingLoops.length === 0) {
-      return;
-    }
+    if (!topology || !topology.nodes) return;
 
     const newNodes: any[] = [];
     const newEdges: any[] = [];
-    const processedServices = new Set<string>();
-
-    activeTrackingLoops.forEach((loop) => {
-      if (!loop.blast_radius || !loop.blast_radius.blast_radius) return;
-
-      const blastNodes = loop.blast_radius.blast_radius;
-      
-      blastNodes.forEach((node, idx) => {
-        if (processedServices.has(node.service_name)) return;
-        processedServices.add(node.service_name);
-        
-        // Approximate layout: root is at top, others spread below
-        const isRoot = node.impact_classification === 'root';
-        const yPos = isRoot ? 50 : 150 + (idx * 50);
-        const xPos = 250 + (idx % 2 === 0 ? idx * 50 : -idx * 50);
-        
-        newNodes.push({
-          id: node.service_name,
-          type: 'serviceNode',
-          position: { x: xPos, y: yPos },
-          data: {
-            serviceName: node.service_name,
-            impactClassification: node.impact_classification,
-            severity: loop.severity,
-            anomalyScore: node.impact_score,
-          },
-        });
-
-        // Edges from dependency_path or propagation_path
-        if (node.dependency_path && node.dependency_path.length > 0) {
-          node.dependency_path.forEach(dep => {
-            newEdges.push({
-              id: `e-${dep}-${node.service_name}`,
-              source: dep,
-              target: node.service_name,
-              animated: true,
-              style: { stroke: SEVERITY_COLORS[loop.severity] || '#888' },
-              markerEnd: {
-                type: MarkerType.ArrowClosed,
-                color: SEVERITY_COLORS[loop.severity] || '#888',
-              },
-            });
-          });
-        }
+    
+    // Base topology mapping
+    topology.nodes.forEach((node, index) => {
+      newNodes.push({
+        id: node.id,
+        type: 'serviceNode',
+        position: { x: 0, y: 0 },
+        data: {
+          serviceName: (node as any).service_name || (node as any).service || node.id,
+          impactClassification: 'normal',
+          severity: 'normal',
+          anomalyScore: undefined,
+        },
       });
     });
 
-    if (newNodes.length > 0) {
-        setNodes(newNodes);
-        setEdges(newEdges);
+    topology.edges.forEach((edge) => {
+      newEdges.push({
+        id: `e-${edge.source}-${edge.target}`,
+        source: edge.source,
+        target: edge.target,
+        animated: false,
+        style: { stroke: '#888', strokeWidth: 1 },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: '#888',
+        },
+      });
+    });
+
+    // Merge active tracking loops
+    if (activeTrackingLoops && activeTrackingLoops.length > 0) {
+      activeTrackingLoops.forEach((loop: any) => {
+        const blastNodes = Array.isArray(loop.blast_radius) 
+          ? loop.blast_radius 
+          : (loop.blast_radius?.blast_radius || []);
+        
+        const loopColor = SEVERITY_COLORS[loop.severity] || SEVERITY_COLORS.critical;
+
+        blastNodes.forEach((bNode: any) => {
+          // Find node and update
+          const targetNode = newNodes.find(n => n.id === bNode.service_name);
+          if (targetNode) {
+            targetNode.data.impactClassification = bNode.impact_classification;
+            targetNode.data.severity = loop.severity;
+            targetNode.data.anomalyScore = bNode.impact_score;
+          }
+
+          // Find edges and update
+          if (bNode.dependency_path && bNode.dependency_path.length > 0) {
+            bNode.dependency_path.forEach((dep: string) => {
+              const targetEdgeId = `e-${dep}-${bNode.service_name}`;
+              let targetEdge = newEdges.find(e => e.id === targetEdgeId);
+              
+              if (!targetEdge) {
+                targetEdge = {
+                  id: targetEdgeId,
+                  source: dep,
+                  target: bNode.service_name,
+                  animated: true,
+                  style: { stroke: loopColor, strokeWidth: 2 },
+                  markerEnd: { type: MarkerType.ArrowClosed, color: loopColor },
+                };
+                newEdges.push(targetEdge);
+              } else {
+                targetEdge.animated = true;
+                targetEdge.style = { stroke: loopColor, strokeWidth: 2 };
+                targetEdge.markerEnd.color = loopColor;
+              }
+            });
+          }
+        });
+      });
     }
-  }, [activeTrackingLoops, setNodes, setEdges]);
+
+    if (newNodes.length > 0) {
+      const g = new dagre.graphlib.Graph();
+      g.setGraph({ rankdir: 'TB', nodesep: 80, ranksep: 100 });
+      g.setDefaultEdgeLabel(() => ({}));
+
+      newNodes.forEach((n) => {
+        g.setNode(n.id, { width: 160, height: 80 });
+      });
+      newEdges.forEach((e) => {
+        g.setEdge(e.source, e.target);
+      });
+      dagre.layout(g);
+
+      newNodes.forEach((n) => {
+        const nodeWithPosition = g.node(n.id);
+        n.position = {
+          x: nodeWithPosition.x - 80,
+          y: nodeWithPosition.y - 40,
+        };
+      });
+
+      setNodes(newNodes);
+      setEdges(newEdges);
+    }
+  }, [topology, activeTrackingLoops, setNodes, setEdges]);
 
   // Handle cross-component sync panning
   useEffect(() => {

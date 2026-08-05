@@ -5,7 +5,7 @@ type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
 
 const SOCKET_PATH = "/ws/telemetry";
 const BACKUP_SOCKET_URL = "ws://localhost:8000/ws/telemetry";
-const MAX_VISIBLE_LOGS = 80;
+const MAX_VISIBLE_LOGS = 2000;
 const NEW_LOG_HIGHLIGHT_MS = 2000;
 const RECONNECT_DELAY_MS = 3000;
 
@@ -190,6 +190,7 @@ function extractLogEntries(eventData: string | ArrayBuffer | Blob): Promise<LogE
 
 export function useLiveLogs() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [totalLogCount, setTotalLogCount] = useState(0);
   const [paused, setPaused] = useState(false);
   const [filter, setFilter] = useState<LogLevel | "ALL">("ALL");
   const [newIds, setNewIds] = useState<Set<string>>(new Set());
@@ -232,6 +233,8 @@ export function useLiveLogs() {
       if (!entries.length) {
         return;
       }
+
+      setTotalLogCount((prev) => prev + entries.length);
 
       setLogs((previousLogs) => {
         const nextLogs = [...previousLogs];
@@ -368,6 +371,7 @@ export function useLiveLogs() {
     connectionUrl,
     filter,
     filteredLogs,
+    totalLogCount,
     newIds,
     paused,
     setFilter,

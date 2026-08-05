@@ -3,30 +3,7 @@ import { Brain, ChevronRight, Lightbulb, Network, Sparkles, Target, Wrench } fro
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import type { RootCause, ServiceGraph } from "../types/monitoring";
 
-const AI_SUMMARIES = [
-  {
-    service: "database-service",
-    summary: "The primary failure origin. Connection pool exhausted at 200/200 active connections, coinciding with OOM kill on replica node db-replica-03. This caused cascading timeouts across all dependent services. The root trigger appears to be a long-running transaction initiated at 14:28 that held locks on the transactions table, preventing pool recycling.",
-    severity: "#f85149",
-  },
-  {
-    service: "payment-service",
-    summary: "Secondary failure due to upstream DB dependency. After 3 failed retries (each timing out at 5000ms), the circuit breaker opened at 14:32:06. All payment flows are currently being shed. Stripe webhook queue is backing up - approximately 340 unprocessed events in the last 4 minutes.",
-    severity: "#ffa657",
-  },
-  {
-    service: "api-gateway",
-    summary: "Collateral degradation. The gateway is correctly returning 503 to clients when upstream circuit breakers are open. Rate limit thresholds are approaching (78%) due to retry storms from clients. No misconfiguration detected - this service is behaving correctly under pressure.",
-    severity: "#d29922",
-  },
-];
 
-const FIXES = [
-  { priority: 1, action: "Kill long-running transaction on database-service", detail: "Run: SELECT pg_cancel_backend(pid) for any query running > 60s on the transactions table. This will free pool connections immediately.", effort: "2 min" },
-  { priority: 2, action: "Scale db-replica-03 replacement", detail: "Provision a new replica from the latest snapshot. ETA ~8 min. The primary is still healthy but under heavy load.", effort: "8 min" },
-  { priority: 3, action: "Reset payment-service circuit breaker", detail: "Once DB connectivity is restored, manually trigger circuit breaker reset via POST /admin/circuit-breaker/reset to resume payment flows.", effort: "1 min" },
-  { priority: 4, action: "Drain Stripe webhook backlog", detail: "Increase webhook consumer concurrency from 4 to 12 temporarily. Monitor for DB load increase.", effort: "5 min" },
-];
 
 export function AIAnalysisPage() {
   const { activeTrackingLoops } = useTelemetryStream();
@@ -34,6 +11,8 @@ export function AIAnalysisPage() {
   // Create a dynamic graph representing current blast radius from live telemetry
   const dynamicGraph: ServiceGraph = { nodes: [], edges: [] };
   const rootCauses: RootCause[] = [];
+  const dynamicSummaries: any[] = [];
+  const dynamicFixes: any[] = [];
   
   if (activeTrackingLoops.length > 0) {
     const loop = activeTrackingLoops[0]; // just show first loop for analysis
@@ -50,11 +29,48 @@ export function AIAnalysisPage() {
         service: loop.suspected_root_service,
         probability: Math.min(1.0, loop.anomaly_score / 100),
         issue: `Detected ${loop.severity} anomaly pattern in ${loop.suspected_root_service}`,
-        affectedDeps: loop.blast_radius?.blast_radius?.map(r => r.service_name).filter(n => n !== loop.suspected_root_service) || []
+        affectedDeps: (loop.blast_radius || []).map(r => r.service_name).filter(n => n !== loop.suspected_root_service)
+      });
+      
+      dynamicFixes.push({
+        priority: 1, 
+        action: `Investigate root service: ${loop.suspected_root_service}`, 
+        detail: `Review recent deployments and log anomalies for ${loop.suspected_root_service}. Check infrastructure health metrics for resource exhaustion.`, 
+        effort: "10 min"
       });
     }
 
-    loop.blast_radius?.blast_radius?.forEach(node => {
+    const blastNodes = loop.blast_radius || [];
+
+    blastNodes.forEach((node: any) => {
+      nodesMap.set(node.service_name, {
+        id: node.service_name,
+        status: node.impact_score > 80 ? 'Critical' : node.impact_score > 50 ? 'Warning' : 'Normal'
+      });
+      
+      dynamicSummaries.push({
+        service: node.service_name,
+        summary: `Impact analysis indicates a classification of '${node.impact_classification}'. The node has an impact score of ${node.impact_score.toFixed(0)} and affects propagation paths: [${node.propagation_path?.join(", ") || "none"}].`,
+        severity: node.impact_score > 80 ? "#f85149" : node.impact_score > 50 ? "#ffa657" : "#d29922",
+      });
+    });
+    
+    // Add suspected root
+    if (loop.suspected_root_service) {
+      nodesMap.set(loop.suspected_root_service, {
+        id: loop.suspected_root_service,
+        status: loop.severity === 'critical' ? 'Critical' : 'Warning'
+      });
+      rootCauses.push({
+        id: loop.window_id,
+        service: loop.suspected_root_service,
+        probability: Math.min(1.0, loop.anomaly_score / 100),
+        issue: `Detected ${loop.severity} anomaly pattern in ${loop.suspected_root_service}`,
+        affectedDeps: (loop.blast_radius || []).map(r => r.service_name).filter(n => n !== loop.suspected_root_service)
+      });
+    }
+
+    (loop.blast_radius || []).forEach(node => {
       nodesMap.set(node.service_name, {
         id: node.service_name,
         status: node.impact_score > 80 ? 'Critical' : node.impact_score > 50 ? 'Warning' : 'Normal'
@@ -149,16 +165,21 @@ export function AIAnalysisPage() {
             <Lightbulb className="w-4 h-4 text-[#d29922]" />
             <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>AI Log Summaries</span>
           </div>
-          <div className="p-4 space-y-4">
-            {AI_SUMMARIES.map((s) => (
-              <div key={s.service} className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full shrink-0" style={{ background: s.severity }} />
-                  <span className="text-[#e6edf3]" style={{ fontSize: "12px", fontWeight: 600 }}>{s.service}</span>
+          <div className="space-y-3 p-4">
+            {dynamicSummaries.map((sum: any, idx: number) => (
+              <div key={idx} className="p-3 rounded-lg bg-[#0d1117] border border-[#21262d]">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[#c9d1d9]" style={{ fontSize: "13px", fontWeight: 600 }}>{sum.service}</span>
+                  <span className="w-2 h-2 rounded-full" style={{ background: sum.severity }} />
                 </div>
-                <p className="text-[#7d8590] pl-4" style={{ fontSize: "11px", lineHeight: 1.6 }}>{s.summary}</p>
+                <p className="text-[#7d8590]" style={{ fontSize: "12px", lineHeight: 1.5 }}>
+                  {sum.summary}
+                </p>
               </div>
             ))}
+            {dynamicSummaries.length === 0 && (
+              <div className="text-[#7d8590] p-4 text-center text-sm">No analysis available.</div>
+            )}
           </div>
         </div>
 
@@ -189,20 +210,26 @@ export function AIAnalysisPage() {
           <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Suggested Fixes</span>
           <span className="ml-auto text-[#484f58]" style={{ fontSize: "10px" }}>Ordered by impact - estimated effort</span>
         </div>
-        <div className="p-4 space-y-2">
-          {FIXES.map((fix) => (
-            <div key={fix.priority} className="flex items-start gap-4 p-3.5 rounded-lg bg-[#0d1117] border border-[#21262d] hover:border-[#3fb950]/30 transition-colors group">
-              <span className="flex items-center justify-center w-6 h-6 rounded-full shrink-0 mt-0.5 bg-[#3fb950]/15 text-[#3fb950]" style={{ fontSize: "11px", fontWeight: 700 }}>{fix.priority}</span>
-              <div className="flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[#e6edf3]" style={{ fontSize: "12px", fontWeight: 600 }}>{fix.action}</span>
-                  <span className="shrink-0 px-2 py-0.5 rounded bg-[#21262d] text-[#7d8590]" style={{ fontSize: "10px" }}>~{fix.effort}</span>
+        <div className="p-4">
+          <div className="space-y-2">
+            {dynamicFixes.map((fix: any, idx: number) => (
+              <div key={idx} className="flex gap-3 p-3 rounded-lg bg-[#0d1117] border border-[#21262d] hover:border-[#30363d] transition-colors">
+                <div className="flex flex-col items-center justify-center w-6 h-6 rounded-full bg-[#388bfd]/10 text-[#388bfd] font-bold text-[10px] shrink-0 mt-0.5">
+                  {fix.priority}
                 </div>
-                <p className="text-[#7d8590] mt-1" style={{ fontSize: "11px", lineHeight: 1.5 }}>{fix.detail}</p>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[#e6edf3]" style={{ fontSize: "12px", fontWeight: 600 }}>{fix.action}</span>
+                    <span className="text-[#484f58]" style={{ fontSize: "10px" }}>{fix.effort}</span>
+                  </div>
+                  <p className="text-[#7d8590] mt-1" style={{ fontSize: "11px", lineHeight: 1.5 }}>{fix.detail}</p>
+                </div>
               </div>
-              <ChevronRight className="w-4 h-4 text-[#484f58] group-hover:text-[#3fb950] transition-colors shrink-0 mt-0.5" />
-            </div>
-          ))}
+            ))}
+            {dynamicFixes.length === 0 && (
+              <div className="text-[#7d8590] p-4 text-center text-sm">No remediation steps available.</div>
+            )}
+          </div>
         </div>
       </div>
     </div>
