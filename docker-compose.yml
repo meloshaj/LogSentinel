@@ -19,6 +19,22 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  valkey:
+    image: valkey/valkey:8.0-alpine
+    container_name: logsentinel_valkey
+    command: ["valkey-server", "--save", "60", "1"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
   logsentinel:
     build:
       context: .
@@ -68,11 +84,16 @@ services:
       - AZURE_JWKS_TIMEOUT=${AZURE_JWKS_TIMEOUT:-5.0}
       - AZURE_JWKS_CACHE_TTL=${AZURE_JWKS_CACHE_TTL:-3600}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+      - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
     depends_on:
       postgres:
+        condition: service_healthy
+      valkey:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
   logsentinel_pgdata:
+    driver: local
+  valkey_data:
     driver: local

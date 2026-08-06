@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import json
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
+from .core.redis import init_redis_pool, close_redis_pool
 from .core import Base, dispose_engine, get_database_settings, get_engine, init_engine
 from .core.settings import get_drain3_pipeline_settings, get_graph_scoring_settings
 from .ml.anomaly_detector import IsolationForestAnomalyDetector
@@ -71,40 +73,8 @@ class IngestResponse(BaseModel):
     accepted: bool = Field(..., description="Whether the payload was accepted")
     queue_size: int = Field(..., description="Current ingestion queue depth")
 
-class AsyncLogBuffer:
-    """Thread-safe, async-friendly memory buffer for incoming log payloads."""
-
-    def __init__(self, maxsize: int = 10000) -> None:
-        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=maxsize)
-
-    def enqueue(self, payload: dict[str, Any]) -> bool:
-        """Enqueue a normalized payload without blocking the request path."""
-        try:
-            self._queue.put_nowait(payload)
-            return True
-        except asyncio.QueueFull:
-            logger.warning("Ingestion queue is full; dropping payload to protect request latency")
-            return False
-
-    def queue_size(self) -> int:
-        """Return the number of queued payloads."""
-        return self._queue.qsize()
-
-    async def dequeue(self) -> dict[str, Any]:
-        """Retrieve the next payload for downstream processing."""
-        return await self._queue.get()
-
-    async def join(self) -> None:
-        """Wait until every accepted payload has been marked complete."""
-        await self._queue.join()
-
-    def task_done(self) -> None:
-        """Mark one successfully dequeued payload as fully processed."""
-        self._queue.task_done()
-
 
 benchmarking_collector = BenchmarkingCollector()
-log_buffer = AsyncLogBuffer()
 drain_parser = DrainParser()
 runtime_dependency_parser = RuntimeDependencyParser()
 topology_pipeline = NetworkXTopologyPipeline()
@@ -158,7 +128,8 @@ feature_worker = FeatureExtractionWorker(
 
 # Create Drain worker with callback to feature worker
 drain_worker = DrainWorker(
-    log_buffer,
+    None,  # Placeholder for Redis consumer integration
+
     drain_parser,
     batch_manager=batch_manager,
     on_log_parsed=feature_worker.add_parsed_log,
@@ -169,13 +140,11 @@ drain_worker = DrainWorker(
 )
 
 
-def get_log_buffer() -> AsyncLogBuffer:
-    """Return the shared log buffer instance for downstream workers."""
-    return log_buffer
-
-
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # --- Startup: initialize the Redis connection pool ---
+    app.state.redis = await init_redis_pool()
+
     # --- Startup: initialize the database connection pool ---
     db_settings = get_database_settings()
     init_engine(db_settings)
@@ -185,6 +154,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    drain_worker.set_redis_client(app.state.redis)
     drain_worker.start()
     feature_worker.start()
     event_manager.start()
@@ -197,6 +167,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await event_manager.stop()
         await telemetry_manager.stop()
         await dispose_engine()
+        await close_redis_pool()
 
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -359,32 +330,45 @@ async def validation_exception_handler(_: object, exc: RequestValidationError) -
     dependencies=[Depends(require_ingestion_api_key)],
     response_model=IngestResponse,
     tags=["Ingestion"],
-    summary="Ingest Logs Async",
+    summary="Ingest Logs Async via Redis Streams",
     description="Accepts log payloads asynchronously and enqueues them for parsing and feature extraction.",
     responses={
         202: {"description": "Log payload accepted for asynchronous processing", "model": IngestResponse},
         401: {"description": "Missing or invalid API key"},
         422: {"description": "Validation error on payload"},
-        503: {"description": "Ingestion queue is full; retry later", "model": IngestResponse},
+        503: {"description": "Redis connection error; retry later", "model": IngestResponse},
     }
 )
-async def ingest_log(payload: IngestPayload) -> JSONResponse:
-    """Accept log payloads asynchronously and enqueue them for later processing."""
+async def ingest_log(request: Request, payload: IngestPayload) -> JSONResponse:
+    """Accept log payloads asynchronously and enqueue them to Redis streams."""
     normalized_payload = payload.model_dump(mode="json")
-    accepted = get_log_buffer().enqueue(normalized_payload)
+    
+    try:
+        redis = request.app.state.redis
+        pipe = redis.pipeline(transaction=False)
+        pipe.xadd("logs:stream", {"payload": json.dumps(normalized_payload)})
+        pipe.xlen("logs:stream")
+        results = await pipe.execute()
+        
+        queue_size = results[1]
+        accepted = True
+    except Exception as e:
+        logger.error("Failed to enqueue payload to Redis: %s", str(e))
+        accepted = False
+        queue_size = 0
     
     # Record metrics
     log_count = len(normalized_payload.get("logs", []))
     benchmarking_collector.record_ingestion(log_count)
-    benchmarking_collector.set_queue_depth(get_log_buffer().queue_size())
+    benchmarking_collector.set_queue_depth(queue_size)
 
     logger.info(
         "Accepted log payload",
         extra={
             "source": normalized_payload.get("source"),
             "environment": normalized_payload.get("environment"),
-            "log_count": len(normalized_payload.get("logs", [])),
-            "queue_size": get_log_buffer().queue_size(),
+            "log_count": log_count,
+            "queue_size": queue_size,
         },
     )
 
@@ -392,18 +376,18 @@ async def ingest_log(payload: IngestPayload) -> JSONResponse:
         return JSONResponse(
             status_code=503,
             content={
-                "message": "Ingestion queue is full; retry later",
+                "message": "Ingestion queue is full or unreachable; retry later",
                 "accepted": False,
-                "queue_size": get_log_buffer().queue_size(),
+                "queue_size": queue_size,
             },
         )
 
     return JSONResponse(
         status_code=202,
         content={
-            "message": "Log payload accepted for asynchronous processing",
-            "accepted": accepted,
-            "queue_size": get_log_buffer().queue_size(),
+            "message": "Payload accepted",
+            "accepted": True,
+            "queue_size": queue_size,
         },
     )
 

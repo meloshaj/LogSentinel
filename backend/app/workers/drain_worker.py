@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
+import uuid
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Optional
+from redis.asyncio import Redis
 
 from ..models import ParsedLog
 from ..services.batch_manager import ParsedLogBatchManager
@@ -73,6 +76,8 @@ class DrainWorker:
         self._on_trace_observation: Optional[Callable[[TraceObservation], None]] = on_trace_observation
         self.queue_drain_timeout_seconds: float = queue_drain_timeout_seconds
         self.benchmarking_collector: Any = benchmarking_collector
+        self.stream_name: str = "logs:stream"
+        self.group_name: str = "log_workers"
         self._task: asyncio.Task[None] | None = None
         self._running: bool = False
         self.processed_count: int = 0
@@ -80,6 +85,14 @@ class DrainWorker:
         self.last_processed_at: str | None = None
         self.last_queue_drain_timed_out: bool = False
         self.last_shutdown_batch_flush_failed: bool = False
+        self.redis_client: Redis | None = None
+        self.consumer_name: str = f"worker-{uuid.uuid4().hex[:8]}"
+        self._recovery_task: asyncio.Task[None] | None = None
+        self.recovery_idle_time_ms: int = 60000
+
+    def set_redis_client(self, redis_client: Redis) -> None:
+        """Set the Redis client for stream consumption."""
+        self.redis_client = redis_client
 
     def start(self) -> None:
         """Start the background worker without blocking application startup."""
@@ -89,35 +102,24 @@ class DrainWorker:
         self._running = True
         self.batch_manager.start_periodic_flush()
         self._task = asyncio.create_task(self.run(), name="drain-worker")
+        self._recovery_task = asyncio.create_task(self.recover_pending_messages(), name="drain-worker-recovery")
 
     async def stop(self) -> None:
-        """Drain accepted payloads, stop the consumer, and flush parsed logs."""
+        """Stop the consumer and flush parsed logs."""
         self.last_queue_drain_timed_out = False
         self.last_shutdown_batch_flush_failed = False
+        self._running = False
+
+        recovery_task = getattr(self, "_recovery_task", None)
+        if recovery_task is not None:
+            if not recovery_task.done():
+                recovery_task.cancel()
+            try:
+                await recovery_task
+            except asyncio.CancelledError:
+                pass
 
         task = self._task
-        if task is not None:
-            logger.info(
-                "Starting Drain worker queue drain: queue_size=%s timeout_seconds=%.3f",
-                self._queue_size(),
-                self.queue_drain_timeout_seconds,
-            )
-            try:
-                await asyncio.wait_for(
-                    self.log_buffer.join(),
-                    timeout=self.queue_drain_timeout_seconds,
-                )
-                logger.info("Drain worker queue drain completed")
-            except TimeoutError:
-                self.last_queue_drain_timed_out = True
-                logger.error(
-                    "Drain worker queue drain timed out after %.3f seconds; "
-                    "remaining_queue_size=%s",
-                    self.queue_drain_timeout_seconds,
-                    self._queue_size(),
-                )
-
-        self._running = False
         if task is not None:
             if not task.done():
                 task.cancel()
@@ -150,30 +152,112 @@ class DrainWorker:
         )
 
     async def run(self) -> None:
-        """Continuously consume queued ingest payloads."""
+        """Continuously consume queued ingest payloads from Redis Streams."""
+        if not self.redis_client:
+            logger.error("Redis client not set for DrainWorker")
+            return
+
+        try:
+            await self.redis_client.xgroup_create(self.stream_name, self.group_name, id="$", mkstream=True)
+            logger.info("Redis consumer group '%s' initialized for %s", self.group_name, self.stream_name)
+        except Exception as e:
+            if "BUSYGROUP" not in str(e):
+                logger.exception("Failed to create consumer group")
+                raise
+
+        logger.info("Drain worker %s started consuming logs", self.consumer_name)
+
         while self._running:
             try:
-                item = await self.log_buffer.dequeue()
-            except asyncio.CancelledError:
-                # Cancellation while waiting did not dequeue a payload, so
-                # there is no corresponding unfinished task to acknowledge.
-                raise
-            except Exception:
-                self.error_count += 1
-                logger.exception("Drain worker failed while dequeuing an item")
-                continue
+                messages = await self.redis_client.xreadgroup(
+                    groupname=self.group_name,
+                    consumername=self.consumer_name,
+                    streams={self.stream_name: ">"},
+                    count=500,
+                    block=2000
+                )
+                
+                if not messages:
+                    continue
 
-            try:
-                await self.process_one(item)
+                for stream_name, stream_messages in messages:
+                    for message_id, entry in stream_messages:
+                        try:
+                            # Extract payload
+                            payload_json = entry.get(b"payload") or entry.get("payload")
+                            if payload_json:
+                                if isinstance(payload_json, bytes):
+                                    payload_json = payload_json.decode("utf-8")
+                                payload = json.loads(payload_json)
+                                
+                                # Process sequentially through Drain3, ML, DB, WebSockets
+                                await self.process_one(payload)
+                            
+                            # Acknowledge on success
+                            await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            self.error_count += 1
+                            logger.exception("Drain worker failed processing message %s", message_id)
+                            
+                # Trim the stream periodically to prevent unbounded growth
+                try:
+                    await self.redis_client.xtrim(self.stream_name, maxlen=100000, approximate=True)
+                except Exception as e:
+                    logger.warning("Failed to trim %s: %s", self.stream_name, str(e))
+                            
             except asyncio.CancelledError:
                 raise
             except Exception:
                 self.error_count += 1
-                logger.exception("Drain worker failed while processing queued item")
-            finally:
-                # A successful dequeue owns exactly one completion signal,
-                # including when processing fails or is cancelled.
-                self.log_buffer.task_done()
+                logger.exception("Drain worker XREADGROUP error")
+                await asyncio.sleep(1)
+
+    async def recover_pending_messages(self) -> None:
+        """Background loop to auto-claim and process messages stuck in PEL."""
+        if not getattr(self, "redis_client", None):
+            return
+
+        while self._running:
+            try:
+                await asyncio.sleep(30)
+                if not self._running:
+                    break
+
+                min_idle_ms = getattr(self, "recovery_idle_time_ms", 60000)
+                result = await self.redis_client.xautoclaim(
+                    name=self.stream_name,
+                    groupname=self.group_name,
+                    consumername=self.consumer_name,
+                    min_idle_time=min_idle_ms,
+                    start_id="0-0",
+                    count=100
+                )
+                
+                if isinstance(result, tuple) or isinstance(result, list):
+                    claimed_messages = result[1]
+                    if claimed_messages:
+                        logger.info("Auto-claimed %d pending messages from %s", len(claimed_messages), self.stream_name)
+                        for message_id, entry in claimed_messages:
+                            try:
+                                payload_json = entry.get(b"payload") or entry.get("payload")
+                                if payload_json:
+                                    if isinstance(payload_json, bytes):
+                                        payload_json = payload_json.decode("utf-8")
+                                    payload = json.loads(payload_json)
+                                    await self.process_one(payload)
+                                
+                                await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                self.error_count += 1
+                                logger.exception("Failed processing claimed message %s", message_id)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Error in recover_pending_messages: %s", str(e))
 
     async def process_one(self, item: Any) -> list[ParsedLog]:
         """Process one queued payload or log entry."""
@@ -208,6 +292,13 @@ class DrainWorker:
                     self._on_log_parsed(parsed)
                 except Exception:
                     logger.exception("Log parsed callback failed")
+
+        if parsed_logs:
+            event = telemetry_event("batch_processed", {
+                "count": len(parsed_logs),
+                "worker": self.consumer_name
+            })
+            asyncio.create_task(telemetry_manager.broadcast(event))
 
         if not parsed_logs and self.error_count == errors_before_extract:
             self.error_count += 1
