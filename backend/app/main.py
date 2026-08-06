@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from .core.redis import init_redis_pool, close_redis_pool
 from .core import Base, dispose_engine, get_database_settings, get_engine, init_engine
-from .core.settings import get_drain3_pipeline_settings, get_graph_scoring_settings
+from .core.settings import get_drain3_pipeline_settings, get_graph_scoring_settings, get_benchmarking_settings
 from .ml.anomaly_detector import IsolationForestAnomalyDetector
 from .ml.feature_extractor import WindowConfig
 from .repositories.db_health import check_database_health
@@ -37,6 +37,7 @@ from .workers.event_manager import EventManager
 from .workers.feature_worker import FeatureExtractionWorker
 from .repositories.tracking_repository import TrackingRepository
 from .routers.auth_router import router as auth_router
+from .routers.benchmark_router import router as benchmark_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -217,6 +218,10 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+
+benchmarking_settings = get_benchmarking_settings()
+if benchmarking_settings.enable_benchmarking_endpoints:
+    app.include_router(benchmark_router, prefix="/api/v1/benchmark", tags=["Benchmarking"])
 
 
 @app.get(

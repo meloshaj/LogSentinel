@@ -416,3 +416,21 @@ def get_microsoft_auth_settings() -> MicrosoftAuthSettings:
         jwks_timeout_seconds=float(os.getenv("AZURE_JWKS_TIMEOUT", "5.0")),
         jwks_cache_ttl_seconds=int(os.getenv("AZURE_JWKS_CACHE_TTL", "3600")),
     )
+
+
+class BenchmarkingSettings(BaseModel):
+    """Configuration for benchmarking and stress-testing features."""
+
+    enable_benchmarking_endpoints: bool = Field(
+        default=False,
+        description="Enable benchmarking and stress-testing API endpoints (env: ENABLE_BENCHMARKING_ENDPOINTS)",
+    )
+
+
+def get_benchmarking_settings() -> BenchmarkingSettings:
+    """Construct Benchmarking settings from the current environment."""
+    return BenchmarkingSettings(
+        enable_benchmarking_endpoints=_parse_bool(
+            os.getenv("ENABLE_BENCHMARKING_ENDPOINTS"), default=False
+        ),
+    )
