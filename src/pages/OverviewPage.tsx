@@ -1,10 +1,14 @@
+import React, { Suspense } from "react";
 import { MetricCards } from "../components/dashboard/MetricCards";
 import { TrafficChart } from "../components/dashboard/TrafficChart";
 import { TopologyGraph } from "../components/topology/TopologyGraph";
-import { BenchmarkingHUD } from "../components/dashboard/BenchmarkingHUD";
 import { EventManagerPanel } from "../components/dashboard/EventManagerPanel";
 import { TopologySyncProvider } from "../hooks/useTopologySync";
 import { useLiveLogs } from "../hooks/useLiveLogs";
+
+const BenchmarkingHUD = import.meta.env.VITE_ENABLE_BENCHMARKING === 'true'
+  ? React.lazy(() => import("../components/dashboard/BenchmarkingHUD").then(m => ({ default: m.BenchmarkingHUD })))
+  : () => null;
 import { Activity, AlertTriangle, ArrowRight, CheckCircle, Clock } from "lucide-react";
 import { useNavigate } from "react-router";
 
@@ -63,7 +67,9 @@ export function OverviewPage() {
         <TrafficChart />
 
         {/* Benchmarking HUD */}
-        <BenchmarkingHUD />
+        <Suspense fallback={null}>
+          <BenchmarkingHUD />
+        </Suspense>
 
         {/* Live Topology Canvas & Event Manager Panel */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
