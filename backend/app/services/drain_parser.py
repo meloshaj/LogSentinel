@@ -8,8 +8,10 @@ from typing import Any
 import ulid
 
 from drain3 import TemplateMiner
-from drain3.file_persistence import FilePersistence
+from drain3.redis_persistence import RedisPersistence
 from drain3.template_miner_config import TemplateMinerConfig
+import redis
+import os
 
 from ..models import ParsedLog
 
@@ -42,7 +44,11 @@ class DrainParser:
         config.load(str(self.config_path))
         config.parameter_extraction_cache_capacity = int(config.parameter_extraction_cache_capacity)
 
-        persistence = FilePersistence(str(self.state_path))
+        redis_host = os.getenv("REDIS_HOST", "localhost")
+        redis_port = int(os.getenv("REDIS_PORT", "6379"))
+        self.redis_client = redis.Redis(host=redis_host, port=redis_port, decode_responses=False)
+        
+        persistence = RedisPersistence(redis_client=self.redis_client, key="logsentinel:drain3:state")
         self._miner = TemplateMiner(persistence_handler=persistence, config=config)
 
     def parse(self, raw_message: str, metadata: dict[str, Any] | None = None) -> ParsedLog:
