@@ -64,6 +64,7 @@ class LogRecord(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
+        primary_key=True,
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import logging
 from typing import Any
 
-from sqlalchemy import Column, DateTime, MetaData, Table, Text, and_, insert, select
+import json
+from sqlalchemy import Column, DateTime, MetaData, Table, Text, and_, insert, select, delete
 from sqlalchemy.dialects.postgresql import BIGINT, JSONB, VARCHAR
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -31,7 +33,7 @@ logs_table = Table(
     Column("correlation_id", VARCHAR(128), nullable=True),
     Column("metadata", JSONB, nullable=False),
     Column("parsed_at", DateTime(timezone=True), nullable=True),
-    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), primary_key=True, nullable=False),
 )
 
 
@@ -48,14 +50,74 @@ class LogRepository:
             return self._engine
         return get_engine()
 
+    def _partition_log_batch(self, rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Partition logs into live (>= 2 days old) and late (< 2 days old) to avoid uncompressing chunks."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=2)
+        live_logs = []
+        late_logs = []
+        for row in rows:
+            log_time = row["created_at"]
+            
+            # Normalize to UTC aware datetime
+            if isinstance(log_time, str):
+                log_time = datetime.fromisoformat(log_time.replace("Z", "+00:00"))
+            if log_time.tzinfo is None:
+                log_time = log_time.replace(tzinfo=timezone.utc)
+            else:
+                log_time = log_time.astimezone(timezone.utc)
+                
+            if log_time >= cutoff:
+                live_logs.append(row)
+            else:
+                late_logs.append(row)
+        return live_logs, late_logs
+
     async def bulk_insert_parsed_logs(self, parsed_logs: Sequence[ParsedLog]) -> int:
         """Insert parsed logs in a single transaction and return row count."""
         if not parsed_logs:
             return 0
 
         rows = [self.map_parsed_log(parsed_log) for parsed_log in parsed_logs]
-        async with self.engine.begin() as connection:
-            await connection.execute(insert(logs_table), rows)
+        live_logs, late_logs = self._partition_log_batch(rows)
+        
+        async with self.engine.connect() as connection:
+            if live_logs:
+                # Extract underlying asyncpg connection for maximum throughput COPY operation
+                raw_conn = await connection.get_raw_connection()
+                asyncpg_conn = raw_conn.driver_connection
+                
+                tuples = [
+                    (
+                        row["id"], row["timestamp"], row["service"], row["raw_message"],
+                        row["template_id"], row["template_text"], json.dumps(row["parameters"]),
+                        row["level"], row["source"], row["environment"], row["correlation_id"],
+                        json.dumps(row["metadata"]), row["parsed_at"], row["created_at"]
+                    )
+                    for row in live_logs
+                ]
+                
+                await asyncpg_conn.copy_records_to_table(
+                    "logs",
+                    records=tuples,
+                    columns=[
+                        "id", "timestamp", "service", "raw_message", "template_id", 
+                        "template_text", "parameters", "level", "source", "environment", 
+                        "correlation_id", "metadata", "parsed_at", "created_at"
+                    ]
+                )
+            
+            if late_logs:
+                logging.warning(
+                    f"Intercepted {len(late_logs)} late-arriving logs (>2 days old). "
+                    "Routing via isolated INSERT path to prevent chunk decompression lock."
+                )
+                SUB_BATCH_SIZE = 500
+                for i in range(0, len(late_logs), SUB_BATCH_SIZE):
+                    sub_batch = late_logs[i : i + SUB_BATCH_SIZE]
+                    stmt = insert(logs_table).values(sub_batch)
+                    await connection.execute(stmt)
+            
+            await connection.commit()
 
         return len(rows)
 
@@ -72,6 +134,9 @@ class LogRepository:
         conditions = [
             logs_table.c.timestamp >= start_time,
             logs_table.c.timestamp <= end_time,
+            # Mandatory chunk-exclusion filter for TimescaleDB
+            logs_table.c.created_at >= start_time,
+            logs_table.c.created_at <= end_time,
         ]
         cleaned_services = sorted({service for service in services or [] if service})
         cleaned_correlation_ids = sorted(
@@ -104,6 +169,43 @@ class LogRepository:
 
         return [dict(row) for row in rows]
 
+    async def get_log_by_id(
+        self, log_id: str, created_at_start: datetime, created_at_end: datetime
+    ) -> dict[str, Any] | None:
+        """Fetch a single log by ID with mandatory time bounds for chunk exclusion."""
+        stmt = (
+            select(logs_table)
+            .where(
+                and_(
+                    logs_table.c.id == log_id,
+                    logs_table.c.created_at >= created_at_start,
+                    logs_table.c.created_at <= created_at_end,
+                )
+            )
+        )
+        async with self.engine.connect() as conn:
+            result = await conn.execute(stmt)
+            row = result.mappings().first()
+            return dict(row) if row else None
+
+    async def delete_log(
+        self, log_id: str, created_at_start: datetime, created_at_end: datetime
+    ) -> bool:
+        """Delete a single log by ID with mandatory time bounds for chunk exclusion."""
+        stmt = (
+            delete(logs_table)
+            .where(
+                and_(
+                    logs_table.c.id == log_id,
+                    logs_table.c.created_at >= created_at_start,
+                    logs_table.c.created_at <= created_at_end,
+                )
+            )
+        )
+        async with self.engine.begin() as conn:
+            result = await conn.execute(stmt)
+            return result.rowcount > 0
+
     @staticmethod
     def map_parsed_log(parsed_log: ParsedLog) -> dict[str, Any]:
         """Convert a validated ParsedLog into one database insert row."""
@@ -121,7 +223,8 @@ class LogRepository:
             "correlation_id": getattr(parsed_log, "correlation_id", None),
             "metadata": _json_safe_dict(parsed_log.metadata),
             "parsed_at": parsed_log.parsed_at,
-            "created_at": datetime.now(timezone.utc),
+            # Assign created_at to timestamp if historical, else now
+            "created_at": parsed_log.timestamp if getattr(parsed_log, "timestamp", None) else datetime.now(timezone.utc),
         }
 
 
