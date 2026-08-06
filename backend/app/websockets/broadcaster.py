@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import json
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import WebSocket
+from redis.asyncio import Redis
 
 logger = logging.getLogger("logsentinel.broadcaster")
 
@@ -17,15 +19,28 @@ class HighLoadBroadcaster:
         self._buffer: list[dict[str, Any]] = []
         self._frame_rate_ms = frame_rate_ms
         self._task: asyncio.Task[None] | None = None
+        self._listener_task: asyncio.Task[None] | None = None
+        self.redis_client: Redis | None = None
+        self.channel_name = "logsentinel:telemetry:pubsub"
+
+    def set_redis_client(self, redis_client: Redis) -> None:
+        """Set the Redis client for pub/sub."""
+        self.redis_client = redis_client
 
     def start(self):
-        """Start the background flush loop."""
+        """Start the background flush loop and pub/sub listener."""
         if self._task and not self._task.done():
-            return
-        self._task = asyncio.create_task(self._flush_loop(), name="websocket-broadcaster-flush")
+            pass
+        else:
+            self._task = asyncio.create_task(self._flush_loop(), name="websocket-broadcaster-flush")
+            
+        if self._listener_task and not self._listener_task.done():
+            pass
+        else:
+            self._listener_task = asyncio.create_task(self.listen_to_redis_pubsub(), name="websocket-pubsub-listener")
 
     async def stop(self):
-        """Stop the background flush loop."""
+        """Stop the background loops."""
         if self._task:
             self._task.cancel()
             try:
@@ -34,6 +49,15 @@ class HighLoadBroadcaster:
                 pass
             finally:
                 self._task = None
+                
+        if self._listener_task:
+            self._listener_task.cancel()
+            try:
+                await self._listener_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                self._listener_task = None
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -51,11 +75,53 @@ class HighLoadBroadcaster:
         return len(self._connections)
 
     async def broadcast(self, event: dict[str, Any]) -> None:
-        """Buffer the event instead of sending immediately to protect client rendering."""
-        async with self._lock:
-            if not self._connections:
-                return # Don't buffer if no clients are listening
-            self._buffer.append(event)
+        """Publish the event to Redis Pub/Sub."""
+        if not self.redis_client:
+            # Fallback to local buffer if Redis is not configured
+            async with self._lock:
+                if self._connections:
+                    self._buffer.append(event)
+            return
+            
+        try:
+            payload = json.dumps(event)
+            await self.redis_client.publish(self.channel_name, payload)
+        except Exception:
+            logger.exception("Failed to publish telemetry event to Redis")
+            # Fallback to local buffer on error
+            async with self._lock:
+                if self._connections:
+                    self._buffer.append(event)
+
+    async def listen_to_redis_pubsub(self) -> None:
+        """Background loop that listens to Redis Pub/Sub and buffers events."""
+        if not self.redis_client:
+            return
+            
+        while True:
+            try:
+                pubsub = self.redis_client.pubsub()
+                await pubsub.subscribe(self.channel_name)
+                logger.info("WebSocket Broadcaster subscribed to %s", self.channel_name)
+                
+                async for message in pubsub.listen():
+                    if message["type"] == "message":
+                        try:
+                            data = message["data"]
+                            if isinstance(data, bytes):
+                                data = data.decode("utf-8")
+                            event = json.loads(data)
+                            
+                            async with self._lock:
+                                if self._connections:
+                                    self._buffer.append(event)
+                        except Exception:
+                            logger.exception("Failed to process pubsub message")
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("Redis Pub/Sub listener disconnected. Retrying...")
+                await asyncio.sleep(1)
             
     async def _flush_loop(self) -> None:
         """Background loop that drains the buffer at the configured frame rate."""

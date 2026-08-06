@@ -158,6 +158,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     drain_worker.start()
     feature_worker.start()
     event_manager.start()
+    telemetry_manager.set_redis_client(app.state.redis)
+    telemetry_manager.start()
     try:
         yield
     finally:
