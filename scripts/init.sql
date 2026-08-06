@@ -7,6 +7,21 @@
 BEGIN;
 
 -- ---------------------------------------------------------------------------
+-- Enable TimescaleDB Extension
+-- ---------------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+-- ---------------------------------------------------------------------------
+-- WAL Configuration Tuning for High Throughput
+-- ---------------------------------------------------------------------------
+ALTER SYSTEM SET max_wal_size = '16GB';
+ALTER SYSTEM SET min_wal_size = '4GB';
+ALTER SYSTEM SET checkpoint_timeout = '20min';
+ALTER SYSTEM SET checkpoint_completion_target = '0.9';
+ALTER SYSTEM SET wal_buffers = '64MB';
+SELECT pg_reload_conf();
+
+-- ---------------------------------------------------------------------------
 -- ENUM Types
 -- ---------------------------------------------------------------------------
 
@@ -33,7 +48,7 @@ CREATE TYPE incident_status AS ENUM (
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS logs (
-    id              VARCHAR(26)     PRIMARY KEY,
+    id              VARCHAR(26),
     timestamp       TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     service         VARCHAR(255)    NOT NULL,
     raw_message     TEXT            NOT NULL,
@@ -46,8 +61,66 @@ CREATE TABLE IF NOT EXISTS logs (
     correlation_id  VARCHAR(128)    NULL,
     metadata        JSONB           NOT NULL DEFAULT '{}'::jsonb,
     parsed_at       TIMESTAMPTZ     NULL,
-    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (created_at, id)
 );
+
+-- Initialize TimescaleDB hypertable
+SELECT create_hypertable('logs', 'created_at', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
+
+-- Configure Columnar Compression
+ALTER TABLE logs SET (
+    timescaledb.compress = true,
+    timescaledb.compress_segmentby = 'service, level',
+    timescaledb.compress_orderby = 'created_at DESC, id DESC'
+);
+
+-- Add Automated Policies (Compression > 2 days)
+SELECT add_compression_policy('logs', INTERVAL '2 days', if_not_exists => TRUE);
+
+-- Lock-safe retention policy (Replaces add_retention_policy)
+CREATE OR REPLACE PROCEDURE safe_drop_chunks(retention_interval INTERVAL, max_retries INT DEFAULT 5)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    retry_count INT := 0;
+BEGIN
+    WHILE retry_count < max_retries LOOP
+        BEGIN
+            SET LOCAL lock_timeout = '1000ms';
+            PERFORM drop_chunks('logs', retention_interval);
+            RAISE NOTICE 'Successfully dropped chunks older than %', retention_interval;
+            RETURN;
+        EXCEPTION WHEN lock_not_available THEN
+            RAISE WARNING 'Could not acquire lock for drop_chunks (Attempt %/%). Retrying in 5 seconds...', retry_count + 1, max_retries;
+            retry_count := retry_count + 1;
+            PERFORM pg_sleep(5);
+        END;
+    END LOOP;
+    RAISE WARNING 'Failed to drop chunks after % attempts due to lock contention. Deferring to next run.', max_retries;
+END;
+$$;
+
+CREATE OR REPLACE PROCEDURE safe_drop_chunks_job(job_id INT, config JSONB)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    retention_interval INTERVAL;
+    max_retries INT;
+BEGIN
+    retention_interval := COALESCE((config->>'retention_interval')::INTERVAL, INTERVAL '30 days');
+    max_retries := COALESCE((config->>'max_retries')::INT, 5);
+    CALL safe_drop_chunks(retention_interval, max_retries);
+END;
+$$;
+
+DO $$
+BEGIN
+    PERFORM remove_retention_policy('logs', if_exists => true);
+EXCEPTION WHEN OTHERS THEN
+END $$;
+
+SELECT add_job('safe_drop_chunks_job', '1 day', config => '{"retention_interval": "30 days", "max_retries": 5}');
 
 ALTER TABLE logs
     ADD COLUMN IF NOT EXISTS template_text TEXT NULL,
@@ -129,9 +202,12 @@ CREATE INDEX IF NOT EXISTS idx_logs_correlation_id
 CREATE INDEX IF NOT EXISTS idx_logs_timestamp
     ON logs (timestamp);
 
--- Accelerates parsed-log insertion and dashboard recency checks
-CREATE INDEX IF NOT EXISTS idx_logs_created_at
-    ON logs (created_at);
+-- TimescaleDB compound indexes for high-frequency filtering
+CREATE INDEX IF NOT EXISTS idx_logs_service_created_at
+    ON logs (service, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_logs_level_created_at
+    ON logs (level, created_at DESC);
 
 -- Accelerates open-incident dashboard queries
 CREATE INDEX IF NOT EXISTS idx_incidents_status
