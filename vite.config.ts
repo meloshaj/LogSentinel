@@ -12,13 +12,6 @@ export default defineConfig({
         main: path.resolve(__dirname, "index.html"),
         redirect: path.resolve(__dirname, "redirect.html"),
       },
-      output: {
-        manualChunks: {
-          charts: ["recharts"],
-          topology: ["@xyflow/react", "dagre"],
-          vendor: ["react", "react-dom", "react-router"],
-        },
-      },
     },
   },
   resolve: {
