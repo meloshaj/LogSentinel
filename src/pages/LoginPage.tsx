@@ -33,6 +33,7 @@ import {
   type MicrosoftAuthStatus,
 } from "../providers/MsalProviderWrapper";
 import { getAuthErrorMessage, setAuthToken } from "../utils/auth";
+import { FeatureFlag } from "../components/common/FeatureFlag";
 
 type AuthOperation = "email" | "google" | "microsoft";
 
@@ -442,7 +443,7 @@ export function LoginPage() {
                 type="email"
                 value={email}
                 onChange={setEmail}
-                autoComplete="one-time-code"
+                autoComplete="username"
                 inputMode="email"
                 placeholder="you@company.com"
                 icon={<Mail className="w-4 h-4 text-slate-400" aria-hidden="true" />}
@@ -458,7 +459,7 @@ export function LoginPage() {
                 type={showPassword ? "text" : "password"}
                 value={password}
                 onChange={setPassword}
-                autoComplete="new-password"
+                autoComplete="current-password"
                 placeholder="••••••••"
                 icon={<Lock className="w-4 h-4 text-slate-400" aria-hidden="true" />}
                 error={errors.password}
@@ -495,7 +496,7 @@ export function LoginPage() {
                   <span
                     aria-hidden="true"
                     className={[
-                      "w-4 h-4 rounded border flex items-center justify-center transition-all duration-150 flex-shrink-0",
+                      "w-4 h-4 rounded border flex items-center justify-center transition-all duration-150 flex-shrink-0 peer-focus-visible:ring-2 peer-focus-visible:ring-sky-500",
                       rememberMe
                         ? "bg-sky-500 border-sky-500"
                         : isLoading
@@ -514,14 +515,16 @@ export function LoginPage() {
                     Remember me
                   </span>
                 </label>
-                <button
-                  type="button"
-                  onClick={() => navigate("/forgot-password")}
-                  className="text-xs text-sky-600 hover:text-sky-700 font-semibold transition-colors select-none cursor-pointer disabled:opacity-60"
-                  disabled={isLoading}
-                >
-                  Forgot password?
-                </button>
+                <FeatureFlag flag="ENABLE_PASSWORD_RESET">
+                  <button
+                    type="button"
+                    onClick={() => navigate("/forgot-password")}
+                    className="text-xs text-sky-600 hover:text-sky-700 font-semibold transition-colors select-none cursor-pointer disabled:opacity-60"
+                    disabled={isLoading}
+                  >
+                    Forgot password?
+                  </button>
+                </FeatureFlag>
               </div>
 
               <button
@@ -610,22 +613,24 @@ export function LoginPage() {
                   onError={handleMicrosoftError}
                 />
 
-                <SSOButton
-                  provider={{
-                    id: "GitHub",
-                    label: "Continue with GitHub",
-                    icon: <GitHubIcon />,
-                    onLogin: () => {
-                      const apiBase = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
-                      window.location.href = `${apiBase}/api/auth/github`;
-                    },
-                    disabled: isLoading,
-                    bgClass: "bg-[#181d24]",
-                    borderClass: "border-[#181d24]",
-                    textClass: "text-white",
-                    hoverClass: "hover:bg-[#22272e] hover:border-[#22272e]",
-                  }}
-                />
+                <FeatureFlag flag="ENABLE_GITHUB_AUTH">
+                  <SSOButton
+                    provider={{
+                      id: "GitHub",
+                      label: "Continue with GitHub",
+                      icon: <GitHubIcon />,
+                      onLogin: () => {
+                        const apiBase = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+                        window.location.href = `${apiBase}/api/auth/github`;
+                      },
+                      disabled: isLoading,
+                      bgClass: "bg-[#181d24]",
+                      borderClass: "border-[#181d24]",
+                      textClass: "text-white",
+                      hoverClass: "hover:bg-[#22272e] hover:border-[#22272e]",
+                    }}
+                  />
+                </FeatureFlag>
               </div>
             </div>
           )}

@@ -206,6 +206,77 @@ class LogRepository:
             result = await conn.execute(stmt)
             return result.rowcount > 0
 
+    async def get_recent_logs(self, limit: int = 500) -> list[dict[str, Any]]:
+        """Return the most recent logs for backfilling the UI."""
+        stmt = (
+            select(
+                logs_table.c.id,
+                logs_table.c.timestamp,
+                logs_table.c.service,
+                logs_table.c.raw_message,
+                logs_table.c.level,
+                logs_table.c.template_id,
+                logs_table.c.template_text,
+                logs_table.c.metadata,
+            )
+            .order_by(logs_table.c.created_at.desc())
+            .limit(limit)
+        )
+
+        async with self.engine.connect() as conn:
+            result = await conn.execute(stmt)
+            rows = result.mappings().all()
+
+        return [dict(row) for row in rows]
+
+    async def get_logs_paginated(
+        self, page: int = 1, limit: int = 50, service: str | None = None, level: str | None = None
+    ) -> dict[str, Any]:
+        """Fetch paginated logs with optional filters."""
+        from sqlalchemy import func
+        conditions = []
+        if service:
+            conditions.append(logs_table.c.service == service)
+        if level:
+            conditions.append(logs_table.c.level == level)
+        
+        where_clause = and_(*conditions) if conditions else True
+
+        count_stmt = select(func.count()).select_from(logs_table).where(where_clause)
+        
+        stmt = (
+            select(
+                logs_table.c.id,
+                logs_table.c.timestamp,
+                logs_table.c.service,
+                logs_table.c.raw_message,
+                logs_table.c.level,
+                logs_table.c.template_id,
+                logs_table.c.template_text,
+                logs_table.c.metadata,
+            )
+            .where(where_clause)
+            .order_by(logs_table.c.created_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+        )
+
+        async with self.engine.connect() as conn:
+            total_count = await conn.scalar(count_stmt) or 0
+            result = await conn.execute(stmt)
+            rows = result.mappings().all()
+
+        items = [dict(row) for row in rows]
+        pages = (total_count + limit - 1) // limit if limit > 0 else 0
+
+        return {
+            "items": items,
+            "total": total_count,
+            "page": page,
+            "limit": limit,
+            "pages": pages
+        }
+
     @staticmethod
     def map_parsed_log(parsed_log: ParsedLog) -> dict[str, Any]:
         """Convert a validated ParsedLog into one database insert row."""

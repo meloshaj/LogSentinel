@@ -48,7 +48,7 @@ class DrainParser:
         redis_port = int(os.getenv("REDIS_PORT", "6379"))
         self.redis_client = redis.Redis(host=redis_host, port=redis_port, decode_responses=False)
         
-        persistence = RedisPersistence(redis_client=self.redis_client, key="logsentinel:drain3:state")
+        persistence = RedisPersistence(redis_host=redis_host, redis_port=redis_port, redis_db=0, redis_pass=None, is_ssl=False, redis_key="logsentinel:drain3:state")
         self._miner = TemplateMiner(persistence_handler=persistence, config=config)
 
     def parse(self, raw_message: str, metadata: dict[str, Any] | None = None) -> ParsedLog:

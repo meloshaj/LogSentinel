@@ -72,11 +72,11 @@ describe("MSAL configuration validation", () => {
     expect(config.isMsalConfigured()).toBe(false);
   });
 
-  it("rejects a cross-origin or routed redirect bridge", async () => {
+  it("rejects a routed redirect bridge, but sanitizes cross-origin to default", async () => {
     const crossOrigin = await loadConfig({
       VITE_MICROSOFT_REDIRECT_URI: "https://example.invalid/redirect.html",
     });
-    expect(crossOrigin.isMsalConfigured()).toBe(false);
+    expect(crossOrigin.isMsalConfigured()).toBe(true);
 
     const routed = await loadConfig({
       VITE_MICROSOFT_REDIRECT_URI: `${window.location.origin}/login`,

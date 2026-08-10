@@ -123,7 +123,7 @@ describe("TopologyGraph", () => {
     // Verify node starts with healthy class
     const authNode = screen.getByTestId("topo-node-service-auth");
     expect(authNode.classList.contains("topo-node--healthy") ||
-           authNode.className.baseVal?.includes("topo-node--healthy") ||
+           (authNode.className as any).baseVal?.includes("topo-node--healthy") ||
            true).toBe(true);
 
     // Simulate an anomaly tracking loop targeting service-auth
@@ -208,7 +208,7 @@ describe("TopologyGraph", () => {
       mockTrackingLoops = [
         {
           window_id: `w-${i}`,
-          anomaly_score: Math.random(),
+          anomaly_score: 0.85,
           severity: i % 2 === 0 ? "critical" : "medium",
           status: "triggered",
           blast_radius: null,

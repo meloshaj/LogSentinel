@@ -133,11 +133,5 @@ def main() -> None:
     print("\nWaiting 6 seconds so the 5-second periodic flush can run...")
     time.sleep(6)
 
-    print_json("Drain3 Stats After Periodic Flush", get_json("/drain3/stats"))
-    print_json("Drain3 Templates", get_json("/drain3/templates"))
-    print_json("Final Safety Flush", post_json("/drain3/flush"))
-    print_json("Final Drain3 Stats", get_json("/drain3/stats"))
-
-
 if __name__ == "__main__":
     main()

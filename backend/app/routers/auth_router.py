@@ -11,7 +11,7 @@ import logging
 import os
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 
@@ -114,8 +114,13 @@ class ResetPasswordRequest(BaseModel):
 
 # ─── Endpoint Route Handlers ─────────────────────────────────────────────────
 
+from ..core.rate_limit import limiter
+
+
 @router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
+@limiter.limit("3/minute")
 async def register_user(
+    request: Request,
     payload: UserRegisterRequest,
     db: AsyncSessionDep,
 ) -> UserResponse:
@@ -151,7 +156,9 @@ async def register_user(
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit("5/minute")
 async def login_user(
+    request: Request,
     payload: UserLoginRequest,
     db: AsyncSessionDep,
 ) -> TokenResponse:

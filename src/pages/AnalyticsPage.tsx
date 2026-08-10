@@ -16,29 +16,39 @@ export function AnalyticsPage() {
       const minute = log.timestamp.split(':').slice(0, 2).join(':');
       if (!buckets[minute]) buckets[minute] = { time: minute, logs: 0, errors: 0 };
       buckets[minute].logs += 1;
-      if (log.level === 'ERROR' || log.level === 'CRITICAL') buckets[minute].errors += 1;
+      if (log.level === 'ERROR' || log.level === 'FATAL') buckets[minute].errors += 1;
     });
     return Object.values(buckets).slice(-20);
   }, [filteredLogs]);
 
   const servicePerf = useMemo(() => {
-    const stats: Record<string, { total: number; errors: number; }> = {};
+    const stats: Record<string, { total: number; errors: number; latencies: number[] }> = {};
     filteredLogs.forEach(log => {
       const svc = log.service || "unknown";
-      if (!stats[svc]) stats[svc] = { total: 0, errors: 0 };
+      if (!stats[svc]) stats[svc] = { total: 0, errors: 0, latencies: [] };
       stats[svc].total += 1;
-      if (log.level === 'ERROR' || log.level === 'CRITICAL') {
+      if (log.level === 'ERROR' || log.level === 'FATAL') {
         stats[svc].errors += 1;
+      }
+      if (log.latency_ms !== undefined) {
+        stats[svc].latencies.push(log.latency_ms);
       }
     });
     
     return Object.entries(stats).map(([service, data]) => {
       const errorRate = data.total > 0 ? (data.errors / data.total) * 100 : 0;
       const uptime = Math.max(0, 100 - errorRate);
+      
+      let p95 = 0;
+      if (data.latencies.length > 0) {
+        data.latencies.sort((a, b) => a - b);
+        p95 = data.latencies[Math.floor(data.latencies.length * 0.95)];
+      }
+
       return {
         service,
         uptime: Number(uptime.toFixed(1)),
-        p95: Math.floor(Math.random() * 200 + 10), // mock p95 for now
+        p95: p95.toFixed(0),
         errorRate: Number(errorRate.toFixed(1))
       };
     }).sort((a, b) => b.errorRate - a.errorRate);

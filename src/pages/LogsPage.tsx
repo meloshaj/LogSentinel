@@ -17,7 +17,7 @@ function LogHistoryTable() {
     <div className="rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-[#21262d]">
         <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Log History</span>
-        <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262d] text-[#7d8590] hover:text-[#e6edf3] transition-colors" style={{ fontSize: "11px" }}>
+        <button disabled className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262d] text-[#7d8590] opacity-50 cursor-not-allowed" style={{ fontSize: "11px" }}>
           <Download className="w-3.5 h-3.5" /> Export CSV
         </button>
       </div>
@@ -101,7 +101,7 @@ export function LogsPage() {
           {timeRanges.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
 
-        <button className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161b22] border border-[#21262d] text-[#7d8590] hover:text-[#e6edf3] transition-colors" style={{ fontSize: "12px" }}>
+        <button disabled className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#161b22] border border-[#21262d] text-[#7d8590] opacity-50 cursor-not-allowed" style={{ fontSize: "12px" }}>
           <SlidersHorizontal className="w-3.5 h-3.5" /> Filters
         </button>
       </div>

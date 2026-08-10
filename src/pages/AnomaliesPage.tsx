@@ -2,8 +2,9 @@ import type { ServiceAnomaly } from "../types/monitoring";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useLiveLogs } from "../hooks/useLiveLogs";
 import { useMemo } from "react";
-import { AlertTriangle, ArrowRight, TrendingUp, Zap } from "lucide-react";
+import { AlertTriangle, ArrowRight, ShieldCheck, TrendingUp, Zap } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { EmptyState } from "../components/common/EmptyState";
 
 const STATUS_CONFIG = {
   Critical: { color: "#f85149", bg: "bg-[#da3633]/10", border: "border-[#da3633]/30", dot: "bg-[#f85149] animate-pulse" },
@@ -161,8 +162,12 @@ export function AnomaliesPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           {anomalies.map((a) => <AnomalyCard key={a.id} anomaly={a} />)}
           {anomalies.length === 0 && (
-            <div className="col-span-full flex items-center justify-center py-12 text-[#7d8590]">
-              <span style={{ fontSize: "12px" }}>No anomalies detected across any services.</span>
+            <div className="col-span-full">
+              <EmptyState
+                title="No Anomalies Detected"
+                description="Machine learning models are actively monitoring your services, but no anomalous behavior has been flagged."
+                icon={ShieldCheck}
+              />
             </div>
           )}
         </div>

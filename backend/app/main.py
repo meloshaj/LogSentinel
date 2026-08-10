@@ -9,10 +9,14 @@ from typing import Any, Optional
 from urllib.parse import urlsplit
 
 import json
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 from .core.redis import init_redis_pool, close_redis_pool
 from .core import Base, dispose_engine, get_database_settings, get_engine, init_engine
@@ -141,8 +145,34 @@ drain_worker = DrainWorker(
 )
 
 
+_JWT_DEV_DEFAULTS = frozenset({
+    "logsentinel_jwt_secret_key_change_me_in_prod",
+    "change_me",
+    "secret",
+    "",
+})
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # --- Startup: production environment guardrails ---
+    environment = os.getenv("ENVIRONMENT", os.getenv("NODE_ENV", "development")).lower()
+    from .security.auth import JWT_SECRET_KEY  # noqa: E402  (already imported at module level for router)
+    if environment == "production":
+        if not JWT_SECRET_KEY or JWT_SECRET_KEY in _JWT_DEV_DEFAULTS:
+            raise RuntimeError(
+                "FATAL: JWT_SECRET_KEY is missing or set to an insecure development "
+                "default. Set a strong, unique secret via the JWT_SECRET_KEY environment "
+                "variable before starting in production."
+            )
+        logger.info("Production guardrails passed — JWT_SECRET_KEY is configured.")
+    else:
+        if JWT_SECRET_KEY in _JWT_DEV_DEFAULTS:
+            logger.warning(
+                "JWT_SECRET_KEY is set to a development default. "
+                "Do NOT deploy to production without changing it."
+            )
+
     # --- Startup: initialize the Redis connection pool ---
     app.state.redis = await init_redis_pool()
 
@@ -202,12 +232,36 @@ def _get_frontend_origins(value: str | None = None) -> list[str]:
         origins = ["http://localhost:5173", "http://localhost:8080"]
     return origins
 
+# ---------------------------------------------------------------------------
+# Rate limiter (slowapi)
+# ---------------------------------------------------------------------------
+from .core.rate_limit import limiter
+
 app = FastAPI(
     title="LogSentinel Ingestion Gateway",
     version="0.1.0",
     description="Asynchronous ingestion endpoint for multi-service log payloads",
     lifespan=lifespan,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ---------------------------------------------------------------------------
+# Security headers middleware
+# ---------------------------------------------------------------------------
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Inject baseline security response headers on every response."""
+
+    async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -217,11 +271,46 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---------------------------------------------------------------------------
+# Response compression
+# ---------------------------------------------------------------------------
+from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 app.include_router(auth_router)
 
 benchmarking_settings = get_benchmarking_settings()
 if benchmarking_settings.enable_benchmarking_endpoints:
     app.include_router(benchmark_router, prefix="/api/v1/benchmark", tags=["Benchmarking"])
+
+
+@app.get(
+    "/api/v1/logs/recent",
+    tags=["Logs"],
+    summary="Get Recent Logs",
+)
+async def get_recent_logs(limit: int = Query(500, le=1000)):
+    """Fetch recent logs for dashboard backfill."""
+    logs = await log_repository.get_recent_logs(limit=limit)
+    return {"logs": logs}
+
+
+@app.get(
+    "/api/v1/logs",
+    tags=["Logs"],
+    summary="Get Paginated Logs",
+)
+async def get_logs_paginated(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, le=200),
+    service: str | None = None,
+    level: str | None = None,
+):
+    """Fetch paginated logs with optional filters."""
+    return await log_repository.get_logs_paginated(
+        page=page, limit=limit, service=service, level=level
+    )
 
 
 @app.get(

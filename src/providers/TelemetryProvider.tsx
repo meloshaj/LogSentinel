@@ -51,8 +51,8 @@ const RECONNECT_DELAY_MS = 3000;
 /** Throttle interval for flushing the WebSocket log buffer into React state. */
 const WS_FLUSH_INTERVAL_MS = 100;
 /** REST backfill endpoint. */
-const BACKFILL_URL = "/drain3/recent?limit=500";
-const BACKFILL_FALLBACK_URL = "http://localhost:8000/drain3/recent?limit=500";
+const BACKFILL_URL = "/api/v1/logs/recent?limit=500";
+const BACKFILL_FALLBACK_URL = "http://localhost:8000/api/v1/logs/recent?limit=500";
 
 // ---------------------------------------------------------------------------
 // Telemetry Stream Types (from useTelemetryStream)
@@ -163,7 +163,7 @@ function buildSocketCandidates(): string[] {
 function buildBackfillUrls(): string[] {
   const candidates = [
     import.meta.env.VITE_API_URL
-      ? `${import.meta.env.VITE_API_URL.replace(/\/$/, "")}/drain3/recent?limit=500`
+      ? `${import.meta.env.VITE_API_URL.replace(/\/$/, "")}/api/v1/logs/recent?limit=500`
       : undefined,
     `${window.location.origin}${BACKFILL_URL}`,
     BACKFILL_FALLBACK_URL,
@@ -240,6 +240,10 @@ function logEntryFromParsedPayload(
       typeof payload.metadata === "object" && payload.metadata !== null
         ? (payload.metadata as Record<string, unknown>)
         : undefined,
+    latency_ms:
+      typeof envelope.timestamp === "string"
+        ? Math.max(0, Date.now() - new Date(envelope.timestamp).getTime())
+        : 0,
   };
 }
 
@@ -296,6 +300,7 @@ function logEntryFromBackendRecord(record: Record<string, unknown>): LogEntry | 
       typeof record.metadata === "object" && record.metadata !== null
         ? (record.metadata as Record<string, unknown>)
         : undefined,
+    latency_ms: 0,
   };
 }
 
@@ -824,7 +829,51 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <TelemetryContext.Provider value={value}>{children}</TelemetryContext.Provider>;
+  return (
+    <TelemetryContext.Provider value={value}>
+      {/* WebSocket disconnection / error banner */}
+      {(connectionState === "disconnected" || connectionState === "error") && (
+        <div
+          role="alert"
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            padding: "8px 16px",
+            fontSize: 12,
+            fontWeight: 600,
+            fontFamily:
+              'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
+            color: connectionState === "error" ? "#f85149" : "#d29922",
+            background:
+              connectionState === "error"
+                ? "rgba(248,81,73,0.12)"
+                : "rgba(210,153,34,0.12)",
+            borderBottom:
+              connectionState === "error"
+                ? "1px solid rgba(248,81,73,0.25)"
+                : "1px solid rgba(210,153,34,0.25)",
+          }}
+        >
+          <span style={{ fontSize: 14 }}>
+            {connectionState === "error" ? "⚠" : "⟳"}
+          </span>
+          <span>
+            {connectionState === "error"
+              ? "Telemetry connection lost — live data unavailable"
+              : "Reconnecting to telemetry stream…"}
+          </span>
+        </div>
+      )}
+      {children}
+    </TelemetryContext.Provider>
+  );
 }
 
 // ---------------------------------------------------------------------------

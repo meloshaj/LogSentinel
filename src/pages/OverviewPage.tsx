@@ -9,8 +9,9 @@ import { useLiveLogs } from "../hooks/useLiveLogs";
 const BenchmarkingHUD = import.meta.env.VITE_ENABLE_BENCHMARKING === 'true'
   ? React.lazy(() => import("../components/dashboard/BenchmarkingHUD").then(m => ({ default: m.BenchmarkingHUD })))
   : () => null;
-import { Activity, AlertTriangle, ArrowRight, CheckCircle, Clock } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, CheckCircle, Clock, Database } from "lucide-react";
 import { useNavigate } from "react-router";
+import { EmptyState } from "../components/common/EmptyState";
 
 const SEVERITY_COLOR: Record<string, string> = {
   critical: "#f85149",
@@ -32,7 +33,7 @@ import { useTelemetryStream } from "../hooks/useTelemetryStream";
 
 export function OverviewPage() {
   const navigate = useNavigate();
-  const { filteredLogs, totalLogCount } = useLiveLogs();
+  const { filteredLogs, totalLogCount, isBackfillLoading } = useLiveLogs();
   const { activeTrackingLoops } = useTelemetryStream();
   
   const recentLogs = filteredLogs.slice(-6).reverse();
@@ -47,7 +48,23 @@ export function OverviewPage() {
   const totalErrors = filteredLogs.filter(l => l.level === 'ERROR').length;
   const avgErrorRate = filteredLogs.length > 0 ? ((totalErrors / filteredLogs.length) * 100).toFixed(1) : "0.0";
   const uptime = filteredLogs.length > 0 ? (100 - Number(avgErrorRate)).toFixed(1) : "100.0";
-  const p99Latency = (Math.random() * 50 + 20).toFixed(0); // Mock dynamic latency
+  
+  const validLatencies = filteredLogs.map((l) => l.latency_ms).filter((l): l is number => l !== undefined);
+  let p99Latency = "0";
+  if (validLatencies.length >= 2) {
+    validLatencies.sort((a, b) => a - b);
+    p99Latency = validLatencies[Math.floor(validLatencies.length * 0.99)].toFixed(0);
+  }
+
+  if (totalLogCount === 0 && !isBackfillLoading) {
+    return (
+      <EmptyState
+        title="No Telemetry Detected"
+        description="We're waiting for the first logs to arrive. Ensure your services are configured to send telemetry to the ingestion gateway."
+        icon={Database}
+      />
+    );
+  }
 
   return (
     <TopologySyncProvider>

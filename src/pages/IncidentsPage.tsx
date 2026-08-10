@@ -3,6 +3,7 @@ import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { TopologyGraph } from "../components/topology/TopologyGraph";
 import { Bell, CheckCircle, Clock, Flame, XCircle, AlertTriangle, ChevronDown, ChevronRight, X } from "lucide-react";
 import { useState } from "react";
+import { EmptyState } from "../components/common/EmptyState";
 
 const SEVERITY_CONFIG = {
   critical: { label: "CRITICAL", color: "#f85149", bg: "rgba(218,54,51,0.12)", border: "rgba(218,54,51,0.35)", icon: Flame },
@@ -115,6 +116,22 @@ export function IncidentsPage() {
 
   const open = filteredIncidents.filter((i) => i.status !== "resolved");
   const resolved = filteredIncidents.filter((i) => i.status === "resolved");
+
+  if (incidents.length === 0) {
+    return (
+      <div className="space-y-5">
+        <div>
+          <h1 className="text-[#e6edf3]" style={{ fontSize: "18px", fontWeight: 700 }}>Incidents</h1>
+          <p className="text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>Track, triage and resolve service incidents</p>
+        </div>
+        <EmptyState
+          title="No Active Incidents Detected"
+          description="Your services are operating normally. Any performance degradation or anomaly loop escalations will appear here."
+          icon={CheckCircle}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">

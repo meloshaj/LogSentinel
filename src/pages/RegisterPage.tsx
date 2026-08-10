@@ -30,6 +30,7 @@ import {
   type MicrosoftAuthStatus,
 } from "../providers/MsalProviderWrapper";
 import { getAuthErrorMessage, setAuthToken } from "../utils/auth";
+import { FeatureFlag } from "../components/common/FeatureFlag";
 
 function ConfiguredMicrosoftRegisterButton({
   disabled,
@@ -556,22 +557,24 @@ export function RegisterPage() {
                   onError={handleMicrosoftError}
                 />
 
-                <SSOButton
-                  provider={{
-                    id: "GitHub",
-                    label: "Continue with GitHub",
-                    icon: <GitHubIcon />,
-                    onLogin: () => {
-                      const apiBase = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
-                      window.location.href = `${apiBase}/api/auth/github`;
-                    },
-                    disabled: loading,
-                    bgClass: "bg-[#181d24]",
-                    borderClass: "border-[#181d24]",
-                    textClass: "text-white",
-                    hoverClass: "hover:bg-[#22272e] hover:border-[#22272e]",
-                  }}
-                />
+                <FeatureFlag flag="ENABLE_GITHUB_AUTH">
+                  <SSOButton
+                    provider={{
+                      id: "GitHub",
+                      label: "Continue with GitHub",
+                      icon: <GitHubIcon />,
+                      onLogin: () => {
+                        const apiBase = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+                        window.location.href = `${apiBase}/api/auth/github`;
+                      },
+                      disabled: loading,
+                      bgClass: "bg-[#181d24]",
+                      borderClass: "border-[#181d24]",
+                      textClass: "text-white",
+                      hoverClass: "hover:bg-[#22272e] hover:border-[#22272e]",
+                    }}
+                  />
+                </FeatureFlag>
               </div>
             </div>
           )}
