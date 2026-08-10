@@ -104,8 +104,8 @@ else:
 
 # Feature extraction configuration
 window_config = WindowConfig(
-    window_size_seconds=60,  # 1-minute windows
-    stride_seconds=30,  # 50% overlap
+    window_size_seconds=10,  # 10-second windows
+    stride_seconds=5,  # 50% overlap
     min_logs_per_window=5,  # Require at least 5 logs per window
 )
 tracking_repository = TrackingRepository()
@@ -387,6 +387,35 @@ async def get_tracking_loop_blast_radius(
         graph_analysis_version=blast_radius.algorithm_version,
         triggered_at=row.get("created_at"),
     )
+
+
+@app.get(
+    "/api/v1/tracking-loops",
+    tags=["Analysis"],
+    summary="List Active Tracking Loops",
+    description="Returns all currently active anomaly tracking loops for dashboard hydration.",
+)
+async def list_active_tracking_loops(
+    limit: int = 100,
+) -> list[dict]:
+    """Return all active tracking loops for frontend backfill."""
+    rows = await tracking_repository.get_active_tracking_loops(limit=min(limit, 500))
+    results = []
+    for row in rows:
+        entry: dict = {
+            "window_id": row.get("window_id", ""),
+            "anomaly_score": row.get("anomaly_score", 0.0),
+            "status": row.get("status", "ACTIVE"),
+            "blast_radius": row.get("blast_radius"),
+            "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
+        }
+        # Extract root service from blast_radius if present
+        br = row.get("blast_radius")
+        if isinstance(br, dict):
+            entry["suspected_root_service"] = br.get("suspected_root_service")
+            entry["root_cause_confidence"] = br.get("confidence")
+        results.append(entry)
+    return results
 
 
 @app.websocket("/ws/telemetry")

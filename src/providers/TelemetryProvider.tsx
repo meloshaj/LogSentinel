@@ -171,6 +171,19 @@ function buildBackfillUrls(): string[] {
   return candidates.filter((c): c is string => Boolean(c));
 }
 
+function buildTrackingLoopsBackfillUrls(): string[] {
+  const BACKFILL_TRACKING_LOOPS_URL = "/api/v1/tracking-loops?limit=100";
+  const BACKFILL_TRACKING_LOOPS_FALLBACK_URL = "http://localhost:8000/api/v1/tracking-loops?limit=100";
+  const candidates = [
+    import.meta.env.VITE_API_URL
+      ? `${import.meta.env.VITE_API_URL.replace(/\/$/, "")}/api/v1/tracking-loops?limit=100`
+      : undefined,
+    `${window.location.origin}${BACKFILL_TRACKING_LOOPS_URL}`,
+    BACKFILL_TRACKING_LOOPS_FALLBACK_URL,
+  ];
+  return candidates.filter((c): c is string => Boolean(c));
+}
+
 // NOTE: The legacy `logKey()` composite hashing function has been removed.
 // Deduplication is now performed via the backend-enforced ULID `log.id`.
 
@@ -423,6 +436,34 @@ async function fetchBackfillLogs(): Promise<LogEntry[]> {
   throw lastError ?? new Error("All backfill URLs failed");
 }
 
+async function fetchBackfillTrackingLoops(): Promise<TrackingLoopEvent[]> {
+  const urls = buildTrackingLoopsBackfillUrls();
+  let lastError: Error | null = null;
+
+  for (const url of urls) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const data = await response.json();
+      if (!Array.isArray(data)) return [];
+
+      const entries: TrackingLoopEvent[] = [];
+      for (const raw of data) {
+        if (isTrackingLoopEvent(raw)) {
+          entries.push(raw);
+        }
+      }
+      return entries;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+  }
+
+  throw lastError ?? new Error("All tracking loops backfill URLs failed");
+}
+
 // ---------------------------------------------------------------------------
 // Provider Component
 // ---------------------------------------------------------------------------
@@ -639,9 +680,23 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    fetchBackfillLogs()
-      .then((restLogs) => {
+    Promise.all([
+      fetchBackfillLogs(),
+      fetchBackfillTrackingLoops(),
+    ])
+      .then(([restLogs, restTrackingLoops]) => {
         if (cancelled) return;
+
+        // Populate tracking loops
+        if (restTrackingLoops.length > 0) {
+          setActiveTrackingLoops((prev) => {
+            const next = { ...prev };
+            restTrackingLoops.forEach((loop) => {
+              next[loop.window_id] = loop;
+            });
+            return next;
+          });
+        }
 
         // Atomic merge: REST logs ∪ wsBufferRef
         const bufferedWsLogs = [...wsBufferRef.current];

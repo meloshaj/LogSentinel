@@ -160,7 +160,7 @@ class EventManager:
             await self.tracking_repository.persist_tracking_loop(
                 window_id=feature_vector.window_id,
                 anomaly_score=anomaly_score,
-                status="triggered",
+                status="ACTIVE",
                 blast_radius=blast_radius_payload,
             )
         except Exception:
@@ -173,7 +173,7 @@ class EventManager:
                 "anomaly_score": anomaly_score,
                 "severity": prediction.get("severity"),
                 "model_version": prediction.get("model_version"),
-                "status": "triggered",
+                "status": "ACTIVE",
             }
             if blast_radius_result is not None:
                 payload.update(
