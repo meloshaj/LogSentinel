@@ -56,6 +56,7 @@ class IsolationForestAnomalyDetector:
         self.contamination: float = contamination
         self.model: Optional[IsolationForest] = None
         self.model_version: str = "isolation_forest_v1"
+        self.training_samples: int = 0
 
     def train(self, feature_vectors: list[FeatureVector]) -> IsolationForest:
         """
@@ -81,6 +82,7 @@ class IsolationForestAnomalyDetector:
             n_jobs=-1,
         )
         self.model.fit(matrix)
+        self.training_samples = len(matrix)
         return self.model
 
     def predict(self, feature_vector: FeatureVector) -> dict[str, Any]:
@@ -91,6 +93,7 @@ class IsolationForestAnomalyDetector:
         row = self._to_feature_matrix([feature_vector])
         raw_score = float(self.model.decision_function(row)[0])
         is_anomaly = bool(self.model.predict(row)[0] == -1)
+            
         severity = self._severity_from_score(raw_score, is_anomaly)
 
         return {
@@ -135,7 +138,7 @@ class IsolationForestAnomalyDetector:
 
         model_path = Path(path)
         model_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump({"model": self.model, "model_version": self.model_version, "feature_columns": FEATURE_COLUMNS}, model_path)
+        joblib.dump({"model": self.model, "model_version": self.model_version, "feature_columns": FEATURE_COLUMNS, "training_samples": self.training_samples}, model_path)
 
     @classmethod
     def load_model(cls, path: str | Path) -> "IsolationForestAnomalyDetector":
@@ -148,6 +151,7 @@ class IsolationForestAnomalyDetector:
         detector = cls()
         detector.model = payload.get("model")
         detector.model_version = payload.get("model_version", detector.model_version)
+        detector.training_samples = payload.get("training_samples", 0)
         return detector
 
     def _to_feature_matrix(self, feature_vectors: list[FeatureVector]) -> list[list[float]]:

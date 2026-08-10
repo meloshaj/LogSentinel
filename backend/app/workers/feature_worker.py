@@ -130,8 +130,11 @@ class FeatureExtractionWorker:
             for window in windows:
                 try:
                     feature_vector = self.extractor.extract_features(window)
-                    if self.anomaly_detector is not None and self.anomaly_detector.model is not None:
-                        feature_vector.anomaly_prediction = self.anomaly_detector.predict(feature_vector)
+                    try:
+                        if self.anomaly_detector is not None and self.anomaly_detector.model is not None:
+                            feature_vector.anomaly_prediction = self.anomaly_detector.predict(feature_vector)
+                    except Exception:
+                        logger.exception("Failed to run anomaly prediction for window %s", window.window_id)
                     self._feature_buffer.append(feature_vector)
                     features.append(feature_vector)
                     self._features_extracted += 1

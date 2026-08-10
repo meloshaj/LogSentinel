@@ -33,7 +33,7 @@ tracking_loops_table = Table(
     Column("id", Integer, primary_key=True),
     Column("window_id", VARCHAR(128), nullable=False),
     Column("anomaly_score", Float, nullable=False),
-    Column("status", VARCHAR(32), nullable=False, server_default="'triggered'"),
+    Column("status", VARCHAR(32), nullable=False, server_default="'ACTIVE'"),
     Column("blast_radius", JSONB, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
@@ -56,7 +56,7 @@ class TrackingRepository:
         self,
         window_id: str,
         anomaly_score: float,
-        status: str = "triggered",
+        status: str = "ACTIVE",
         blast_radius: dict | None = None,
     ) -> None:
         """Insert a tracking loop record."""
@@ -91,3 +91,18 @@ class TrackingRepository:
             row = result.mappings().first()
 
         return dict(row) if row is not None else None
+
+    async def get_active_tracking_loops(self, limit: int = 100) -> list[dict]:
+        """Return all tracking loops with ACTIVE status, newest first."""
+        stmt = (
+            select(tracking_loops_table)
+            .where(tracking_loops_table.c.status == "ACTIVE")
+            .order_by(tracking_loops_table.c.created_at.desc())
+            .limit(limit)
+        )
+
+        async with self.engine.connect() as conn:
+            result = await conn.execute(stmt)
+            rows = result.mappings().all()
+
+        return [dict(row) for row in rows]

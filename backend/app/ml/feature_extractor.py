@@ -25,8 +25,8 @@ logger = logging.getLogger("logsentinel.feature_extractor")
 class WindowConfig(BaseModel):
     """Configuration for sliding-window feature extraction."""
 
-    window_size_seconds: int = Field(default=60, ge=1, description="Size of each time window")
-    stride_seconds: int = Field(default=30, ge=1, description="Spacing between windows")
+    window_size_seconds: int = Field(default=10, ge=1, description="Size of each time window")
+    stride_seconds: int = Field(default=5, ge=1, description="Spacing between windows")
     min_logs_per_window: int = Field(default=1, ge=0, description="Minimum logs required to emit a window")
     max_logs_per_window: int = Field(default=10000, ge=1, description="Maximum logs to keep per window")
     service_filter: Optional[str] = Field(default=None, description="Optional service filter")
@@ -53,28 +53,18 @@ class SlidingWindowFeatureExtractor:
         self.config = config or WindowConfig()
         self.config.validate_config()
 
-        self._current_window_logs: list[ParsedLog] = []
-        self._current_window_start: Optional[datetime] = None
-        self._current_window_end: Optional[datetime] = None
         self._log_buffer: list[ParsedLog] = []
         self._logs_processed = 0
         self._windows_generated = 0
         self._last_window_end: Optional[datetime] = None
 
     def add_log(self, log: ParsedLog) -> None:
-        """Add a parsed log to the active window."""
+        """Add a parsed log to the buffer."""
         self._log_buffer.append(log)
-        if not self._current_window_logs:
-            self._start_new_window(log.timestamp)
-        elif self._current_window_end is not None and log.timestamp >= self._current_window_end:
-            self.close_window(log.timestamp)
-            self._start_new_window(log.timestamp)
-
-        self._current_window_logs.append(log)
         self._logs_processed += 1
 
     def add_logs(self, logs: list[ParsedLog]) -> None:
-        """Add multiple parsed logs to the current stream."""
+        """Add multiple parsed logs to the buffer."""
         for log in logs:
             self.add_log(log)
 
@@ -93,12 +83,14 @@ class SlidingWindowFeatureExtractor:
             end_time = start_time + timedelta(seconds=self.config.window_size_seconds)
             if end_time > current_time:
                 break
+            
             window_logs = [
                 log for log in self._log_buffer
                 if start_time <= log.timestamp < end_time
                 and (not self.config.service_filter or log.service == self.config.service_filter)
             ]
-            if window_logs or self.config.min_logs_per_window == 0:
+            
+            if len(window_logs) >= self.config.min_logs_per_window:
                 windows.append(
                     LogWindow(
                         window_id=f"window-{uuid4().hex[:16]}",
@@ -109,38 +101,14 @@ class SlidingWindowFeatureExtractor:
                     )
                 )
                 self._windows_generated += 1
+            
             start_time = start_time + timedelta(seconds=self.config.stride_seconds)
             self._last_window_end = start_time
 
+        if self._last_window_end:
+            self._log_buffer = [log for log in self._log_buffer if log.timestamp >= self._last_window_end]
+
         return windows
-
-    def get_current_window(self) -> Optional[LogWindow]:
-        """Return the currently active window, if any."""
-        if not self._current_window_logs or self._current_window_start is None or self._current_window_end is None:
-            return None
-        return LogWindow(
-            window_id=f"window-{uuid4().hex[:16]}",
-            start_time=self._current_window_start,
-            end_time=self._current_window_end,
-            logs=list(self._current_window_logs),
-            service=self.config.service_filter,
-        )
-
-    def close_window(self, end_time: Optional[datetime] = None) -> Optional[FeatureVector]:
-        """Close the active window and return its extracted feature vector."""
-        if not self._current_window_logs:
-            return None
-
-        window = self._build_window(end_time)
-        feature_vector = self.extract_features(window)
-        self._windows_generated += 1
-        self._last_window_end = window.end_time
-
-        self._current_window_logs = []
-        self._current_window_start = None
-        self._current_window_end = None
-
-        return feature_vector
 
     def extract_features(self, window: Optional[LogWindow]) -> FeatureVector:
         """Extract a fixed-size feature vector from a log window."""
@@ -152,9 +120,9 @@ class SlidingWindowFeatureExtractor:
             return self._empty_feature_vector()
 
         level_counts = Counter(log.level.lower() for log in logs)
-        info_count = sum(1 for log in logs if log.level.lower() in {"info", "information", "notice"})
-        warning_count = level_counts.get("warning", 0)
-        error_count = level_counts.get("error", 0)
+        info_count = sum(v for k, v in level_counts.items() if k in {"info", "information", "notice"})
+        warning_count = sum(v for k, v in level_counts.items() if k in {"warn", "warning"})
+        error_count = sum(v for k, v in level_counts.items() if k in {"error", "critical", "fatal", "exception"})
         log_count = len(logs)
         error_ratio = error_count / log_count if log_count else 0.0
 
@@ -223,40 +191,21 @@ class SlidingWindowFeatureExtractor:
             "logs_processed": self._logs_processed,
             "windows_generated": self._windows_generated,
             "last_window_end": self._last_window_end.isoformat() if self._last_window_end else None,
-            "current_window_size": len(self._current_window_logs),
+            "current_buffer_size": len(self._log_buffer),
         }
 
     def clear_buffer(self) -> int:
-        """Clear the active window and return the number of logs removed."""
-        removed = len(self._current_window_logs)
-        self._current_window_logs.clear()
-        self._current_window_end = None
-        self._current_window_start = None
+        """Clear the log buffer and return the number of logs removed."""
+        removed = len(self._log_buffer)
+        self._log_buffer.clear()
+        self._last_window_end = None
         return removed
-
-    def _start_new_window(self, timestamp: datetime) -> None:
-        start_time = self._align_to_window(timestamp)
-        end_time = start_time + timedelta(seconds=self.config.window_size_seconds)
-        self._current_window_start = start_time
-        self._current_window_end = end_time
 
     def _align_to_window(self, timestamp: datetime) -> datetime:
         epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
         seconds_since_epoch = int((timestamp.astimezone(timezone.utc) - epoch).total_seconds())
         window_seconds = (seconds_since_epoch // self.config.window_size_seconds) * self.config.window_size_seconds
         return datetime.fromtimestamp(window_seconds, tz=timezone.utc)
-
-    def _build_window(self, end_time: Optional[datetime] = None) -> LogWindow:
-        if self._current_window_start is None or self._current_window_end is None:
-            raise ValueError("No active window to close")
-        close_time = end_time or self._current_window_end
-        return LogWindow(
-            window_id=f"window-{uuid4().hex[:16]}",
-            start_time=self._current_window_start,
-            end_time=close_time,
-            logs=list(self._current_window_logs),
-            service=self.config.service_filter,
-        )
 
     def _empty_feature_vector(self) -> FeatureVector:
         """Create a zero-filled feature vector for empty windows."""
