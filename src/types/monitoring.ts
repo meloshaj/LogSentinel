@@ -8,6 +8,7 @@ export interface LogEntry {
   message: string;
   template_id?: string;
   metadata?: Record<string, unknown>;
+  latency_ms?: number;
 }
 
 export interface ServiceAnomaly {

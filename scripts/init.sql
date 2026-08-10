@@ -4,8 +4,6 @@
 -- Executed automatically via /docker-entrypoint-initdb.d/ on first container boot
 -- =============================================================================
 
-BEGIN;
-
 -- ---------------------------------------------------------------------------
 -- Enable TimescaleDB Extension
 -- ---------------------------------------------------------------------------
@@ -21,10 +19,11 @@ ALTER SYSTEM SET checkpoint_completion_target = '0.9';
 ALTER SYSTEM SET wal_buffers = '64MB';
 SELECT pg_reload_conf();
 
+BEGIN;
+
 -- ---------------------------------------------------------------------------
 -- ENUM Types
 -- ---------------------------------------------------------------------------
-
 CREATE TYPE severity_level AS ENUM (
     'INFO',
     'LOW',
@@ -280,5 +279,21 @@ ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL;
 -- Accelerates user lookups by email
 CREATE INDEX IF NOT EXISTS idx_users_email
     ON users (email);
+
+-- ---------------------------------------------------------------------------
+-- Compound Indexes for High-Frequency Queries
+-- ---------------------------------------------------------------------------
+
+-- Accelerates GET /api/v1/logs/recent and paginated log queries
+CREATE INDEX IF NOT EXISTS idx_logs_created_service
+    ON logs (created_at DESC, service);
+
+-- Accelerates tracking-loop dashboard queries filtered by recency and status
+CREATE INDEX IF NOT EXISTS idx_tracking_loops_severity
+    ON tracking_loops (created_at DESC, status);
+
+-- Accelerates feature-window time-range scans used by the anomaly pipeline
+CREATE INDEX IF NOT EXISTS idx_features_window
+    ON feature_windows (created_at DESC);
 
 COMMIT;

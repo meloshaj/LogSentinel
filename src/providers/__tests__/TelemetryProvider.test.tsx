@@ -33,8 +33,8 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   mockWsInstances = [];
   fetchMock = vi.fn();
-  global.fetch = fetchMock;
-  global.WebSocket = MockWebSocket as any;
+  (globalThis as any).fetch = fetchMock;
+  (globalThis as any).WebSocket = MockWebSocket;
   vi.useFakeTimers({ shouldAdvanceTime: true });
 });
 

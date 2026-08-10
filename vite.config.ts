@@ -15,6 +15,8 @@ export default defineConfig({
       output: {
         manualChunks: {
           charts: ["recharts"],
+          topology: ["@xyflow/react", "dagre"],
+          vendor: ["react", "react-dom", "react-router"],
         },
       },
     },

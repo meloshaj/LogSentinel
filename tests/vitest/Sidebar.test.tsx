@@ -17,6 +17,12 @@ vi.mock("../../src/providers/MsalProviderWrapper", () => ({
   clearMicrosoftAuthCache: logoutMocks.clearMicrosoftAuthCache,
 }));
 
+vi.mock("../../src/hooks/useTelemetryStream", () => ({
+  useTelemetryStream: vi.fn(() => ({
+    activeTrackingLoops: [],
+  })),
+}));
+
 describe("Sidebar logout", () => {
   beforeEach(() => {
     vi.clearAllMocks();

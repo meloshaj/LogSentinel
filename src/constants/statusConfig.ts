@@ -5,6 +5,7 @@ export const LOG_LEVEL_COLORS = {
   WARN: { color: "#d29922", bg: "rgba(210,153,34,0.15)", text: "text-[#d29922]" },
   ERROR: { color: "#f85149", bg: "rgba(218,54,51,0.15)", text: "text-[#f85149]" },
   DEBUG: { color: "#7d8590", bg: "rgba(125,133,144,0.1)", text: "text-[#7d8590]" },
+  FATAL: { color: "#da3633", bg: "rgba(218,54,51,0.25)", text: "text-[#da3633]" },
 } as const;
 
 export const SERVICE_TEXT_COLORS: Record<string, string> = {

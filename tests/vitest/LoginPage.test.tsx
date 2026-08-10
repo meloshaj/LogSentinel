@@ -31,27 +31,13 @@ vi.mock("../../src/hooks/useMicrosoftAuth", () => ({
 }));
 
 vi.mock("@react-oauth/google", () => ({
-  GoogleLogin: ({
-    onSuccess,
-    onError,
-    width,
-  }: {
-    onSuccess: (response: { credential: string }) => void;
-    onError: () => void;
-    width: string;
-  }) => (
-    <div data-testid="google-login" data-width={width}>
-      <button
-        type="button"
-        onClick={() => onSuccess({ credential: "google-credential" })}
-      >
-        Continue with Google
-      </button>
-      <button type="button" onClick={onError}>
-        Simulate Google error
-      </button>
-    </div>
-  ),
+  useGoogleLogin: (options: any) => {
+    return () => {
+      if (options.onSuccess) {
+        options.onSuccess({ access_token: "google-credential" });
+      }
+    };
+  },
   GoogleOAuthProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
