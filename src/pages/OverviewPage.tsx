@@ -1,17 +1,19 @@
-import React, { Suspense } from "react";
+import React, { Suspense, useState } from "react";
 import { MetricCards } from "../components/dashboard/MetricCards";
 import { TrafficChart } from "../components/dashboard/TrafficChart";
-import { TopologyGraph } from "../components/topology/TopologyGraph";
+import { ServiceTopologyGraph } from "../components/topology/ServiceTopologyGraph";
 import { EventManagerPanel } from "../components/dashboard/EventManagerPanel";
 import { TopologySyncProvider } from "../hooks/useTopologySync";
 import { useLiveLogs } from "../hooks/useLiveLogs";
+import { AnomalyDrawer } from "../components/dashboard/AnomalyDrawer";
 
 const BenchmarkingHUD = import.meta.env.VITE_ENABLE_BENCHMARKING === 'true'
   ? React.lazy(() => import("../components/dashboard/BenchmarkingHUD").then(m => ({ default: m.BenchmarkingHUD })))
   : () => null;
-import { Activity, AlertTriangle, ArrowRight, CheckCircle, Clock, Database } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, CheckCircle, Clock, Database, Eye, EyeOff } from "lucide-react";
 import { useNavigate } from "react-router";
 import { EmptyState } from "../components/common/EmptyState";
+import { useTelemetryStream } from "../hooks/useTelemetryStream";
 
 const SEVERITY_COLOR: Record<string, string> = {
   critical: "#f85149",
@@ -29,20 +31,25 @@ function QuickStat({ label, value, colorClass }: { label: string; value: string;
   );
 }
 
-import { useTelemetryStream } from "../hooks/useTelemetryStream";
-
 export function OverviewPage() {
   const navigate = useNavigate();
   const { filteredLogs, totalLogCount, isBackfillLoading } = useLiveLogs();
   const { activeTrackingLoops } = useTelemetryStream();
   
+  const [showLowSeverity, setShowLowSeverity] = useState(true);
+  const [selectedIncident, setSelectedIncident] = useState<any | null>(null);
+  
   const recentLogs = filteredLogs.slice(-6).reverse();
-  const openIncidents = activeTrackingLoops.map((loop) => ({
+  
+  // Filter active tracking loops based on severity toggle
+  const visibleLoops = activeTrackingLoops.filter(loop => showLowSeverity || loop.severity !== "low");
+  
+  const openIncidents = visibleLoops.map((loop) => ({
     id: loop.window_id,
     service: loop.suspected_root_service || "unknown",
-    severity: loop.severity,
     timestamp: new Date().toLocaleTimeString(),
     description: `Anomaly detected with score ${loop.anomaly_score.toFixed(2)}`,
+    ...loop,
   }));
 
   const totalErrors = filteredLogs.filter(l => l.level === 'ERROR').length;
@@ -68,9 +75,34 @@ export function OverviewPage() {
 
   return (
     <TopologySyncProvider>
-      <div className="space-y-5">
+      <div className="space-y-5 relative">
+        
+        {/* Top Global Filter Bar & Live Badge */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <h1 className="text-[#e6edf3] text-xl font-bold">Observability Overview</h1>
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#3fb950]/10 border border-[#3fb950]/20">
+              <span className="w-2 h-2 rounded-full bg-[#3fb950] animate-pulse" />
+              <span className="text-[#3fb950] text-[10px] font-bold tracking-wide uppercase">Telemetry Pipeline: Live</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowLowSeverity(!showLowSeverity)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                showLowSeverity 
+                  ? "bg-[#161b22] border-[#21262d] text-[#c9d1d9] hover:border-[#8b949e]" 
+                  : "bg-[#388bfd]/10 border-[#388bfd]/30 text-[#388bfd] hover:bg-[#388bfd]/20"
+              }`}
+            >
+              {showLowSeverity ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+              {showLowSeverity ? "Hide Low Severity" : "Show All Severities"}
+            </button>
+          </div>
+        </div>
+
         {/* Metric cards */}
-        <MetricCards />
+        <MetricCards showLowSeverity={showLowSeverity} onToggleLowSeverity={() => setShowLowSeverity(!showLowSeverity)} />
 
         {/* Quick stats row */}
         <div className="grid grid-cols-4 gap-3">
@@ -91,7 +123,7 @@ export function OverviewPage() {
         {/* Live Topology Canvas & Event Manager Panel */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 h-[400px]">
-            <TopologyGraph mode="compact" />
+            <ServiceTopologyGraph mode="compact" showLowSeverity={showLowSeverity} />
           </div>
           <div className="lg:col-span-1 h-[400px]">
             <EventManagerPanel />
@@ -99,91 +131,102 @@ export function OverviewPage() {
         </div>
 
         {/* Bottom row: recent logs + open incidents */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Recent log activity */}
-        <div className="rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-[#21262d]">
-            <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-[#388bfd]" />
-              <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Recent Activity</span>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Recent log activity */}
+          <div className="rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-[#21262d]">
+              <div className="flex items-center gap-2">
+                <Activity className="w-4 h-4 text-[#388bfd]" />
+                <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Recent Activity</span>
+              </div>
+              <button
+                onClick={() => navigate("/logs")}
+                className="flex items-center gap-1 text-[#388bfd] hover:text-[#79c0ff] transition-colors"
+                style={{ fontSize: "11px" }}
+              >
+                View all logs <ArrowRight className="w-3 h-3" />
+              </button>
             </div>
-            <button
-              onClick={() => navigate("/logs")}
-              className="flex items-center gap-1 text-[#388bfd] hover:text-[#79c0ff] transition-colors"
-              style={{ fontSize: "11px" }}
-            >
-              View all logs <ArrowRight className="w-3 h-3" />
-            </button>
-          </div>
-          <div className="divide-y divide-slate-100 dark:divide-[#21262d]">
-            {recentLogs.map((log) => {
-              const colors: Record<string, string> = { INFO: "#79c0ff", WARN: "#d29922", ERROR: "#f85149", DEBUG: "#7d8590" };
-              return (
-                <div key={log.id} className="flex items-start gap-3 px-4 py-2.5">
-                  <span
-                    className="shrink-0 mt-0.5"
-                    style={{ fontSize: "9px", fontWeight: 700, fontFamily: "monospace", color: colors[log.level], minWidth: 36 }}
-                  >
-                    {log.level}
-                  </span>
-                  <span className="text-slate-500 dark:text-[#484f58] shrink-0 mt-0.5" style={{ fontSize: "10px", fontFamily: "monospace" }}>
-                    {log.timestamp}
-                  </span>
-                  <span className="text-slate-600 dark:text-[#7d8590] truncate" style={{ fontSize: "11px", fontFamily: "monospace" }}>
-                    {log.message}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Open incidents */}
-        <div className="rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-[#21262d]">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-[#ffa657]" />
-              <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Open Incidents</span>
-              <span className="px-1.5 py-0.5 rounded-full bg-[#da3633] text-white" style={{ fontSize: "10px", fontWeight: 700 }}>
-                {openIncidents.length}
-              </span>
-            </div>
-            <button
-              onClick={() => navigate("/incidents")}
-              className="flex items-center gap-1 text-[#388bfd] hover:text-[#79c0ff] transition-colors"
-              style={{ fontSize: "11px" }}
-            >
-              View all <ArrowRight className="w-3 h-3" />
-            </button>
-          </div>
-          <div className="divide-y divide-slate-100 dark:divide-[#21262d]">
-            {openIncidents.map((incident) => (
-              <div key={incident.id} className="flex items-start gap-3 px-4 py-3">
-                <span
-                  className="w-2 h-2 rounded-full shrink-0 mt-1.5"
-                  style={{ background: SEVERITY_COLOR[incident.severity] }}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "12px", fontWeight: 600 }}>{incident.service}</span>
-                    <span className="text-slate-500 dark:text-[#484f58]" style={{ fontSize: "10px" }}>
-                      <Clock className="w-2.5 h-2.5 inline mr-0.5" />{incident.timestamp}
+            <div className="divide-y divide-slate-100 dark:divide-[#21262d] flex-1 overflow-y-auto">
+              {recentLogs.map((log) => {
+                const colors: Record<string, string> = { INFO: "#79c0ff", WARN: "#d29922", ERROR: "#f85149", DEBUG: "#7d8590" };
+                return (
+                  <div key={log.id} className="flex items-start gap-3 px-4 py-2.5">
+                    <span
+                      className="shrink-0 mt-0.5"
+                      style={{ fontSize: "9px", fontWeight: 700, fontFamily: "monospace", color: colors[log.level], minWidth: 36 }}
+                    >
+                      {log.level}
+                    </span>
+                    <span className="text-slate-500 dark:text-[#484f58] shrink-0 mt-0.5" style={{ fontSize: "10px", fontFamily: "monospace" }}>
+                      {log.timestamp}
+                    </span>
+                    <span className="text-slate-600 dark:text-[#7d8590] truncate" style={{ fontSize: "11px", fontFamily: "monospace" }}>
+                      {log.message}
                     </span>
                   </div>
-                  <p className="text-[#7d8590] mt-0.5 truncate" style={{ fontSize: "10px" }}>{incident.description}</p>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Open incidents */}
+          <div className="rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 dark:border-[#21262d]">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-[#ffa657]" />
+                <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Open Incidents</span>
+                <span className="px-1.5 py-0.5 rounded-full bg-[#da3633] text-white" style={{ fontSize: "10px", fontWeight: 700 }}>
+                  {openIncidents.length}
+                </span>
+              </div>
+              <button
+                onClick={() => navigate("/incidents")}
+                className="flex items-center gap-1 text-[#388bfd] hover:text-[#79c0ff] transition-colors"
+                style={{ fontSize: "11px" }}
+              >
+                View all <ArrowRight className="w-3 h-3" />
+              </button>
+            </div>
+            <div className="divide-y divide-slate-100 dark:divide-[#21262d] flex-1 overflow-y-auto max-h-[300px]">
+              {openIncidents.map((incident) => (
+                <div 
+                  key={incident.id} 
+                  className="flex items-start gap-3 px-4 py-3 hover:bg-[#21262d]/50 cursor-pointer transition-colors"
+                  onClick={() => setSelectedIncident(incident)}
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0 mt-1.5"
+                    style={{ background: SEVERITY_COLOR[incident.severity] }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "12px", fontWeight: 600 }}>{incident.service}</span>
+                      <span className="text-slate-500 dark:text-[#484f58]" style={{ fontSize: "10px" }}>
+                        <Clock className="w-2.5 h-2.5 inline mr-0.5" />{incident.timestamp}
+                      </span>
+                    </div>
+                    <p className="text-[#7d8590] mt-0.5 truncate" style={{ fontSize: "10px" }}>{incident.description}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
-            {openIncidents.length === 0 && (
-              <div className="flex items-center justify-center gap-2 py-8 text-[#3fb950]">
-                <CheckCircle className="w-4 h-4" />
-                <span style={{ fontSize: "12px" }}>All systems nominal</span>
-              </div>
-            )}
+              ))}
+              {openIncidents.length === 0 && (
+                <div className="flex items-center justify-center gap-2 py-8 text-[#3fb950]">
+                  <CheckCircle className="w-4 h-4" />
+                  <span style={{ fontSize: "12px" }}>All systems nominal</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
-      </div>
+      
+      <AnomalyDrawer 
+        isOpen={!!selectedIncident} 
+        onClose={() => setSelectedIncident(null)} 
+        incident={selectedIncident} 
+      />
     </TopologySyncProvider>
   );
 }
+

@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, CheckCircle, Database, TrendingDown, TrendingUp } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle, Database, TrendingDown, TrendingUp, EyeOff, Eye } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 import { useLiveLogs } from "../../hooks/useLiveLogs";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
@@ -13,7 +13,7 @@ const sparklineData = [
 
 interface CardProps {
   title: string;
-  value: string;
+  value: string | number;
   sub: string;
   trend: "up" | "down" | "neutral";
   trendLabel: string;
@@ -22,9 +22,10 @@ interface CardProps {
   iconColor: string;
   accentColor: string;
   sparkIdx: number;
+  children?: React.ReactNode;
 }
 
-function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, iconColor, accentColor, sparkIdx }: CardProps) {
+function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, iconColor, accentColor, sparkIdx, children }: CardProps) {
   const TrendIcon = trend === "up" ? TrendingUp : trend === "down" ? TrendingDown : Activity;
   const trendColor =
     trend === "up"
@@ -57,14 +58,17 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
         </div>
       </div>
 
-      <div>
-        <div className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1.1 }}>{value}</div>
-        <div className="text-slate-500 dark:text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>{title}</div>
+      <div className="flex items-end justify-between">
+        <div>
+          <div className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1.1 }}>{value}</div>
+          <div className="text-slate-500 dark:text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>{title}</div>
+        </div>
+        {children}
       </div>
 
-      <div className="flex items-end gap-2">
-        <div style={{ width: "100%", height: 40, minWidth: 0 }}>
-          <ResponsiveContainer width="100%" height={40}>
+      <div className="flex items-end gap-2 mt-auto">
+        <div style={{ width: "100%", height: 32, minWidth: 0 }}>
+          <ResponsiveContainer width="100%" height={32}>
             <AreaChart data={data} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id={`ls-spark-grad-${sparkIdx}`} x1="0" y1="0" x2="0" y2="1">
@@ -91,21 +95,32 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
   );
 }
 
-export function MetricCards() {
+export function MetricCards({ showLowSeverity = true, onToggleLowSeverity }: { showLowSeverity?: boolean, onToggleLowSeverity?: () => void }) {
   const { totalLogCount } = useLiveLogs();
   const { activeTrackingLoops } = useTelemetryStream();
   const { topology } = useTopology();
 
   const totalLogs = totalLogCount;
-  const numAnomalies = activeTrackingLoops.length;
   
-  // Use topology node count or fallback to 0 until loaded
-  const totalServices = topology?.node_count || 0;
+  // Severity breakdown
+  let criticalCount = 0;
+  let highCount = 0;
+  let mediumCount = 0;
+  let lowCount = 0;
+  
+  activeTrackingLoops.forEach((loop) => {
+    if (loop.severity === "critical") criticalCount++;
+    else if (loop.severity === "high") highCount++;
+    else if (loop.severity === "medium") mediumCount++;
+    else lowCount++;
+  });
+  
+  const numAnomalies = showLowSeverity ? activeTrackingLoops.length : (activeTrackingLoops.length - lowCount);
   
   // Compute how many services are currently affected by anomalies
-  // Count unique affected services (root causes and blast radii)
   const affectedServices = new Set<string>();
   activeTrackingLoops.forEach(loop => {
+    if (!showLowSeverity && loop.severity === "low") return;
     if (loop.suspected_root_service) {
       affectedServices.add(loop.suspected_root_service);
     }
@@ -118,6 +133,7 @@ export function MetricCards() {
     }
   });
   
+  const totalServices = topology?.node_count || 0;
   const numDegraded = affectedServices.size;
   const healthScore = totalServices > 0 
     ? Math.max(0, 100 - Math.round((numDegraded / totalServices) * 100))
@@ -139,7 +155,7 @@ export function MetricCards() {
       />
       <MetricCard
         title="Active Anomalies"
-        value={numAnomalies.toString()}
+        value={numAnomalies}
         sub={`${numAnomalies} tracked`}
         trend={numAnomalies > 0 ? "up" : "neutral"}
         trendLabel={numAnomalies > 0 ? "Detected" : "None"}
@@ -148,7 +164,29 @@ export function MetricCards() {
         iconColor="#f85149"
         accentColor="#da3633"
         sparkIdx={1}
-      />
+      >
+        <div className="flex flex-col gap-1 pr-1 border-l border-[#21262d] pl-3 py-0.5">
+          <div className="flex items-center gap-1.5" title="High / Critical">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#f85149]" />
+            <span className="text-[#e6edf3] text-[10px] font-mono leading-none">{criticalCount + highCount}</span>
+          </div>
+          <div className="flex items-center gap-1.5" title="Medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#d29922]" />
+            <span className="text-[#e6edf3] text-[10px] font-mono leading-none">{mediumCount}</span>
+          </div>
+          <div 
+            className={`flex items-center gap-1.5 rounded px-1 -ml-1 py-0.5 cursor-pointer transition-colors ${!showLowSeverity ? "opacity-50" : "hover:bg-[#21262d]"}`}
+            title="Low Severity (Click to toggle)"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleLowSeverity?.();
+            }}
+          >
+            {showLowSeverity ? <span className="w-1.5 h-1.5 rounded-full bg-[#7d8590]" /> : <EyeOff className="w-2 h-2 text-[#7d8590]" />}
+            <span className="text-[#e6edf3] text-[10px] font-mono leading-none">{lowCount}</span>
+          </div>
+        </div>
+      </MetricCard>
       <MetricCard
         title="Health Score"
         value={`${healthScore}%`}
@@ -176,3 +214,4 @@ export function MetricCards() {
     </div>
   );
 }
+

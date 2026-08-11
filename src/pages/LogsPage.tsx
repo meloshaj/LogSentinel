@@ -1,5 +1,4 @@
 import { LogStream } from "../components/logs/LogStream";
-import { LiveTelemetryStatus } from "../components/logs/LiveTelemetryStatus";
 import { useLiveLogs } from "../hooks/useLiveLogs";
 import { Download, Search, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
@@ -105,9 +104,6 @@ export function LogsPage() {
           <SlidersHorizontal className="w-3.5 h-3.5" /> Filters
         </button>
       </div>
-
-      {/* Live stream */}
-      <LiveTelemetryStatus />
 
       {/* Live stream view */}
       <div style={{ height: 400 }}>

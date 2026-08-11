@@ -168,17 +168,36 @@ class EventManager:
 
         # Broadcast via WebSocket
         try:
+            # Derive severity from prediction or fall back to score-based classification
+            severity = prediction.get("severity")
+            if not severity or not isinstance(severity, str):
+                if anomaly_score >= 0.9:
+                    severity = "critical"
+                elif anomaly_score >= 0.7:
+                    severity = "high"
+                elif anomaly_score >= 0.5:
+                    severity = "medium"
+                else:
+                    severity = "low"
+
             payload = {
                 "window_id": feature_vector.window_id,
                 "anomaly_score": anomaly_score,
-                "severity": prediction.get("severity"),
+                "severity": severity,
                 "model_version": prediction.get("model_version"),
                 "status": "ACTIVE",
             }
             if blast_radius_result is not None:
+                # Flatten blast_radius to just the node array so the frontend
+                # type guard (isBlastRadius: BlastRadiusNode[]) passes.
+                flat_nodes = (
+                    blast_radius_payload.get("blast_radius", [])
+                    if isinstance(blast_radius_payload, dict)
+                    else []
+                )
                 payload.update(
                     {
-                        "blast_radius": blast_radius_payload,
+                        "blast_radius": flat_nodes,
                         "suspected_root_service": blast_radius_result.suspected_root_service,
                         "root_cause_confidence": blast_radius_result.confidence,
                         "graph_analysis_version": blast_radius_result.algorithm_version,
