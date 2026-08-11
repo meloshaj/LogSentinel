@@ -1,15 +1,9 @@
+import React, { useMemo } from "react";
 import { Activity, AlertTriangle, CheckCircle, Database, TrendingDown, TrendingUp, EyeOff, Eye } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 import { useLiveLogs } from "../../hooks/useLiveLogs";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { useTopology } from "../../hooks/useTopology";
-
-const sparklineData = [
-  [12, 19, 14, 21, 15, 18, 24],
-  [2, 1, 3, 0, 2, 4, 6],
-  [95, 96, 94, 91, 88, 86, 82],
-  [8, 8, 9, 9, 10, 9, 8],
-];
 
 interface CardProps {
   title: string;
@@ -21,11 +15,11 @@ interface CardProps {
   iconBg: string;
   iconColor: string;
   accentColor: string;
-  sparkIdx: number;
+  sparkData: number[];
   children?: React.ReactNode;
 }
 
-function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, iconColor, accentColor, sparkIdx, children }: CardProps) {
+function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, iconColor, accentColor, sparkData, children }: CardProps) {
   const TrendIcon = trend === "up" ? TrendingUp : trend === "down" ? TrendingDown : Activity;
   const trendColor =
     trend === "up"
@@ -38,7 +32,7 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
         : "text-[#f85149]"
       : "text-[#7d8590]";
 
-  const data = sparklineData[sparkIdx].map((v) => ({ v }));
+  const data = sparkData.map((v) => ({ v }));
 
   return (
     <div className="relative flex flex-col gap-3 p-4 rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">
@@ -53,8 +47,8 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
           <Icon className="w-4 h-4" style={{ color: iconColor }} />
         </div>
         <div className={`flex items-center gap-1 ${trendColor}`}>
-          <TrendIcon className="w-3.5 h-3.5" />
-          <span style={{ fontSize: "11px", fontWeight: 500 }}>{trendLabel}</span>
+          <TrendIcon className="w-4 h-4" />
+          <span style={{ fontSize: "13px", fontWeight: 700 }}>{trendLabel}</span>
         </div>
       </div>
 
@@ -71,7 +65,7 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
           <ResponsiveContainer width="100%" height={32}>
             <AreaChart data={data} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
               <defs>
-                <linearGradient id={`ls-spark-grad-${sparkIdx}`} x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id={`ls-spark-grad-${title.replace(/\s+/g, '')}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={accentColor} stopOpacity={0.3} />
                   <stop offset="95%" stopColor={accentColor} stopOpacity={0} />
                 </linearGradient>
@@ -82,7 +76,7 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
                 dataKey="v"
                 stroke={accentColor}
                 strokeWidth={1.5}
-                fill={`url(#ls-spark-grad-${sparkIdx})`}
+                fill={`url(#ls-spark-grad-${title.replace(/\s+/g, '')})`}
                 dot={false}
                 isAnimationActive={false}
               />
@@ -96,11 +90,36 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
 }
 
 export function MetricCards({ showLowSeverity = true, onToggleLowSeverity }: { showLowSeverity?: boolean, onToggleLowSeverity?: () => void }) {
-  const { totalLogCount } = useLiveLogs();
+  const { totalLogCount, filteredLogs } = useLiveLogs();
   const { activeTrackingLoops } = useTelemetryStream();
   const { topology } = useTopology();
 
   const totalLogs = totalLogCount;
+  
+  // Compute rolling 10-minute sparklines
+  const { logsSpark, errorsSpark, healthSpark } = useMemo(() => {
+    const logs = Array(10).fill(0);
+    const errors = Array(10).fill(0);
+    const now = Date.now();
+    filteredLogs.forEach((log) => {
+      const d = new Date(log.timestamp).getTime();
+      const diffMin = Math.floor((now - d) / 60000);
+      if (diffMin >= 0 && diffMin < 10) {
+        logs[9 - diffMin]++;
+        if (log.level === 'ERROR' || log.level === 'FATAL') {
+          errors[9 - diffMin]++;
+        }
+      }
+    });
+    
+    // Default flatlines if no data
+    if (logs.every(v => v === 0)) logs.fill(1);
+    
+    const health = errors.map(errCount => Math.max(0, 100 - errCount * 5));
+    if (health.every(v => v === 100)) health.fill(100);
+    
+    return { logsSpark: logs, errorsSpark: errors, healthSpark: health };
+  }, [filteredLogs]);
   
   // Severity breakdown
   let criticalCount = 0;
@@ -151,7 +170,7 @@ export function MetricCards({ showLowSeverity = true, onToggleLowSeverity }: { s
         iconBg="rgba(31,111,235,0.15)"
         iconColor="#388bfd"
         accentColor="#388bfd"
-        sparkIdx={0}
+        sparkData={logsSpark}
       />
       <MetricCard
         title="Active Anomalies"
@@ -163,7 +182,7 @@ export function MetricCards({ showLowSeverity = true, onToggleLowSeverity }: { s
         iconBg="rgba(218,54,51,0.15)"
         iconColor="#f85149"
         accentColor="#da3633"
-        sparkIdx={1}
+        sparkData={errorsSpark}
       >
         <div className="flex flex-col gap-1 pr-1 border-l border-[#21262d] pl-3 py-0.5">
           <div className="flex items-center gap-1.5" title="High / Critical">
@@ -197,7 +216,7 @@ export function MetricCards({ showLowSeverity = true, onToggleLowSeverity }: { s
         iconBg="rgba(210,153,34,0.15)"
         iconColor="#d29922"
         accentColor="#d29922"
-        sparkIdx={2}
+        sparkData={healthSpark}
       />
       <MetricCard
         title="Services"
@@ -209,7 +228,7 @@ export function MetricCards({ showLowSeverity = true, onToggleLowSeverity }: { s
         iconBg="rgba(63,185,80,0.12)"
         iconColor="#3fb950"
         accentColor="#3fb950"
-        sparkIdx={3}
+        sparkData={Array(10).fill(totalServices - numDegraded)}
       />
     </div>
   );

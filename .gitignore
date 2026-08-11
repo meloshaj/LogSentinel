@@ -230,3 +230,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SSL certificates (generated locally for dev)
+docker/nginx/ssl/*.crt
+docker/nginx/ssl/*.key

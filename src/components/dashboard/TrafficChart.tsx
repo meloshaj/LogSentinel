@@ -1,6 +1,7 @@
 import { BarChart2, Filter } from "lucide-react";
 import {
-  Area,
+  Bar,
+  Line,
   ComposedChart,
   CartesianGrid,
   ResponsiveContainer,
@@ -97,34 +98,40 @@ export function TrafficChart() {
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
+      // Find logs and errors from payload
       const data = payload[0].payload;
       return (
-        <div className="bg-[#0d1117] border border-[#21262d] rounded-lg p-3 shadow-lg max-w-xs">
-          <p className="text-[#7d8590] font-semibold mb-2 text-xs">{label}</p>
-          <div className="space-y-1 text-xs">
-            <div className="flex justify-between gap-4">
-              <span className="text-[#388bfd]">Logs:</span>
-              <span className="text-[#e6edf3]">{data.logs}</span>
+        <div className="bg-[#0d1117]/90 backdrop-blur-sm border border-[#21262d] rounded-xl p-4 shadow-xl min-w-[200px]">
+          <p className="text-[#e6edf3] font-bold mb-3 text-[13px] border-b border-[#21262d] pb-2">{label} UTC</p>
+          <div className="space-y-2 text-xs font-medium">
+            <div className="flex justify-between gap-6 items-center">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-sm bg-[#388bfd]" />
+                <span className="text-[#8b949e]">Total Logs</span>
+              </div>
+              <span className="text-[#e6edf3] font-mono">{data.logs}</span>
             </div>
-            <div className="flex justify-between gap-4">
-              <span className="text-[#d29922]">Errors:</span>
-              <span className="text-[#e6edf3]">{data.errors}</span>
+            <div className="flex justify-between gap-6 items-center">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#d29922]" />
+                <span className="text-[#8b949e]">Errors</span>
+              </div>
+              <span className="text-[#e6edf3] font-mono">{data.errors}</span>
             </div>
           </div>
           {data.anomalyData && data.anomalyData.length > 0 && (
-            <div className="mt-3 pt-2 border-t border-[#21262d]">
-              <p className="text-xs text-[#c9d1d9] font-bold mb-1">Detected Anomalies</p>
-              <div className="space-y-2">
+            <div className="mt-4 pt-3 border-t border-[#21262d]">
+              <p className="text-[11px] text-[#8b949e] uppercase tracking-wider font-bold mb-2">Anomalies Detected</p>
+              <div className="space-y-2.5">
                 {data.anomalyData.map((a: any, i: number) => (
-                  <div key={i} className="text-[10px]">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: a.color }} />
-                      <span className="text-[#e6edf3] font-medium">{a.service}</span>
-                      <span className="text-[#7d8590] ml-auto">Score: {a.score.toFixed(2)}</span>
+                  <div key={i} className="flex flex-col gap-1 bg-[#161b22] p-2 rounded-md border border-[#30363d]">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[#e6edf3] font-semibold text-[11px]">{a.service}</span>
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase" style={{ background: `${a.color}20`, color: a.color }}>
+                        {a.severity}
+                      </span>
                     </div>
-                    <span className="px-1.5 py-0.5 rounded uppercase" style={{ background: `${a.color}20`, color: a.color, fontSize: '8px' }}>
-                      {a.severity}
-                    </span>
+                    <div className="text-[10px] text-[#7d8590]">Score: <span className="font-mono text-[#c9d1d9]">{a.score.toFixed(3)}</span></div>
                   </div>
                 ))}
               </div>
@@ -145,26 +152,33 @@ export function TrafficChart() {
         </div>
         <div className="flex items-center gap-4">
           {/* Severity Filter Bar */}
-          <div className="flex items-center gap-2 bg-[#0d1117] px-2.5 py-1 rounded-md border border-[#21262d]">
-            <Filter className="w-3 h-3 text-[#7d8590]" />
-            <span className="text-[#7d8590] text-[10px] uppercase font-bold mr-1">Anomalies:</span>
+          <div className="flex items-center gap-2 bg-[#0d1117] px-3 py-1.5 rounded-lg border border-[#30363d] shadow-sm">
+            <Filter className="w-3.5 h-3.5 text-[#8b949e]" />
+            <span className="text-[#8b949e] text-[11px] uppercase font-bold mr-2">Anomalies:</span>
             {[
               { id: 'high', label: 'High', color: SEVERITY_COLOR.high },
               { id: 'medium', label: 'Medium', color: SEVERITY_COLOR.medium },
               { id: 'low', label: 'Low', color: SEVERITY_COLOR.low },
-            ].map((f) => (
-              <label key={f.id} className="flex items-center gap-1 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={filters[f.id as keyof typeof filters]} 
-                  onChange={() => toggleFilter(f.id as keyof typeof filters)}
-                  className="w-3 h-3 rounded bg-[#21262d] border-[#30363d] text-blue-500 focus:ring-0 cursor-pointer"
-                />
-                <span style={{ color: f.color, fontSize: '10px' }}>{f.label}</span>
-              </label>
-            ))}
+            ].map((f) => {
+              const active = filters[f.id as keyof typeof filters];
+              return (
+                <button
+                  key={f.id}
+                  onClick={() => toggleFilter(f.id as keyof typeof filters)}
+                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold transition-all border ${
+                    active ? "text-white" : "text-[#8b949e] hover:text-[#c9d1d9]"
+                  }`}
+                  style={{
+                    backgroundColor: active ? f.color : 'transparent',
+                    borderColor: active ? f.color : '#30363d',
+                  }}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
           </div>
-          <div className="hidden sm:flex gap-3">
+          <div className="hidden sm:flex gap-4">
             {[
               { color: "#388bfd", label: "Logs" },
               { color: "#d29922", label: "Errors" },
@@ -191,26 +205,29 @@ export function TrafficChart() {
               </linearGradient>
             </defs>
             <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#21262d" vertical={false} />
-            <XAxis key="xaxis" dataKey="time" tick={{ fill: "#484f58", fontSize: 10 }} axisLine={{ stroke: "#21262d" }} tickLine={false} />
-            <YAxis key="yaxis" tick={{ fill: "#484f58", fontSize: 10 }} axisLine={false} tickLine={false} />
+            <XAxis key="xaxis" dataKey="time" tick={{ fill: "#8b949e", fontSize: 11 }} axisLine={{ stroke: "#30363d" }} tickLine={false} dy={5} />
+            <YAxis key="yaxis" tick={{ fill: "#8b949e", fontSize: 11 }} axisLine={false} tickLine={false} dx={-5} />
             <Tooltip
               content={<CustomTooltip />}
-              cursor={{ stroke: "#484f58", strokeWidth: 1, strokeDasharray: "4 4" }}
+              cursor={{ fill: "#21262d", opacity: 0.4 }}
             />
-            <Area key="logs" type="monotone" dataKey="logs" stroke="#388bfd" strokeWidth={1.5} fill="url(#gradLogs)" dot={false} activeDot={{ r: 4, strokeWidth: 0, fill: "#388bfd" }} />
-            <Area key="errors" type="monotone" dataKey="errors" stroke="#d29922" strokeWidth={1.5} fill="url(#gradErrors)" dot={false} activeDot={{ r: 4, strokeWidth: 0, fill: "#d29922" }} />
             
-            {/* Scatter points for anomalies */}
+            {/* Logs as subtle bars */}
+            <Bar dataKey="logs" fill="#388bfd" radius={[2, 2, 0, 0]} barSize={12} opacity={0.8} />
+            
+            {/* Errors as a distinct line overlay */}
+            <Line dataKey="errors" type="monotone" stroke="#d29922" strokeWidth={2} dot={{ r: 3, fill: "#d29922", strokeWidth: 0 }} activeDot={{ r: 5, fill: "#d29922" }} />
+            
+            {/* Scatter points for anomalies with high contrast */}
             <Scatter 
               dataKey="scatterY" 
-              fill="#f85149"
               shape={(props: any) => {
                 const { cx, cy, payload } = props;
                 if (!payload.scatterColor) return <g />;
                 return (
-                  <g transform={`translate(${cx},${cy})`}>
-                    <circle r={6} fill={payload.scatterColor} fillOpacity={0.2} className="animate-pulse" />
-                    <circle r={3} fill={payload.scatterColor} stroke="#0d1117" strokeWidth={1} />
+                  <g transform={`translate(${cx},${cy - 10})`}>
+                    <path d="M 0 -8 L 8 6 L -8 6 Z" fill={payload.scatterColor} className="animate-pulse" />
+                    <path d="M 0 -8 L 8 6 L -8 6 Z" fill="none" stroke="#fff" strokeWidth={1.5} opacity={0.8} />
                   </g>
                 );
               }}

@@ -1,10 +1,10 @@
 import React from "react";
-import { BaseEdge, EdgeLabelRenderer, getBezierPath, type EdgeProps, type Edge } from "@xyflow/react";
+import { BaseEdge, EdgeLabelRenderer, getSmoothStepPath, type EdgeProps, type Edge } from "@xyflow/react";
 
-const STATUS_CONFIG: Record<string, { stroke: string, class: string }> = {
-  healthy: { stroke: "#21262d", class: "" },
-  degraded: { stroke: "#d29922", class: "animate-pulse" },
-  critical: { stroke: "#f85149", class: "animate-pulse" },
+const STATUS_CONFIG: Record<string, { stroke: string, class: string, speed: string }> = {
+  healthy: { stroke: "#484f58", class: "opacity-60", speed: "3s" },
+  degraded: { stroke: "#d29922", class: "animate-pulse", speed: "1.5s" },
+  critical: { stroke: "#f85149", class: "animate-pulse", speed: "0.8s" },
 };
 
 type CustomEdge = Edge<{ status?: string; latency_ms?: number }, 'custom'>;
@@ -21,13 +21,14 @@ export function TopologyEdge({
   markerEnd,
   data,
 }: EdgeProps<CustomEdge>) {
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
     sourcePosition,
     targetX,
     targetY,
     targetPosition,
+    borderRadius: 20,
   });
 
   const status = data?.status || "healthy";
@@ -48,8 +49,8 @@ export function TopologyEdge({
       />
       
       {/* Animated dots for traffic */}
-      <circle r="3" fill={isHealthy ? "#388bfd" : config.stroke}>
-        <animateMotion dur="2s" repeatCount="indefinite" path={edgePath} />
+      <circle r={isHealthy ? "2.5" : "3.5"} fill={isHealthy ? "#388bfd" : config.stroke} filter={!isHealthy ? "drop-shadow(0 0 5px currentColor)" : ""}>
+        <animateMotion dur={config.speed} repeatCount="indefinite" path={edgePath} />
       </circle>
       
       {data?.latency_ms != null && (

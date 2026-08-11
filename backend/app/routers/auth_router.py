@@ -180,8 +180,8 @@ async def login_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Generate token with sub set to email
-    token = create_access_token(data={"sub": user.email})
+    # Generate token with sub set to email and full_name for sidebar display
+    token = create_access_token(data={"sub": user.email, "full_name": user.full_name or ""})
     return TokenResponse(access_token=token)
 
 
@@ -294,7 +294,7 @@ async def google_login(
             raise
         logger.info("Auto-created user via Google SSO: %s", email)
 
-    token = create_access_token(data={"sub": user.email})
+    token = create_access_token(data={"sub": user.email, "full_name": user.full_name or ""})
     return TokenResponse(access_token=token)
 
 
@@ -467,7 +467,7 @@ async def microsoft_login(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="microsoft_identity_conflict",
             )
-        token = create_access_token(data={"sub": user.email})
+        token = create_access_token(data={"sub": user.email, "full_name": user.full_name or ""})
         return TokenResponse(access_token=token)
 
     # ── New Microsoft identity — provision user ────────────────────────
@@ -529,7 +529,7 @@ async def microsoft_login(
 
     logger.info("Auto-created user via Microsoft SSO: user_id=%d", new_user.id)
 
-    token = create_access_token(data={"sub": new_user.email})
+    token = create_access_token(data={"sub": new_user.email, "full_name": new_user.full_name or ""})
     return TokenResponse(access_token=token)
 
 
@@ -710,6 +710,6 @@ async def github_login_callback(
         logger.info("Auto-created user via GitHub SSO: %s", primary_email)
 
     # 5. Issue session token and redirect
-    token = create_access_token(data={"sub": user.email})
+    token = create_access_token(data={"sub": user.email, "full_name": user.full_name or ""})
     frontend_url = request.cookies.get("github_oauth_origin") or os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")[-1].strip()
     return RedirectResponse(f"{frontend_url}/login?token={token}", status_code=303)

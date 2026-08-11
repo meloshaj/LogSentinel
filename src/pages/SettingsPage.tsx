@@ -1,4 +1,4 @@
-import { Bell, Copy, Eye, EyeOff, Key, RefreshCw, Save, Sliders, Users } from "lucide-react";
+import { Bell, Copy, Eye, EyeOff, Key, RefreshCw, Save, Sliders } from "lucide-react";
 import { useState } from "react";
 import { FeatureFlag, useFeatureFlag } from "../components/common/FeatureFlag";
 
@@ -43,13 +43,6 @@ function Toggle({ defaultOn = false, disabled = false }: { defaultOn?: boolean; 
   );
 }
 
-const TEAM_MEMBERS = [
-  { name: "Blert Sylejmani",    role: "Admin",    avatar: "BS", status: "online" },
-  { name: "Blerim Haxhiu",      role: "Engineer", avatar: "BH", status: "online" },
-  { name: "Juled Salihu",       role: "Engineer", avatar: "JS", status: "online" },
-  { name: "Leorent Ismajli",    role: "Viewer",   avatar: "LI", status: "offline" },
-  { name: "Melos Hajrullahu",   role: "Admin",    avatar: "MH", status: "online" },
-];
 
 export function SettingsPage() {
   const [showKey, setShowKey] = useState(false);
@@ -140,36 +133,6 @@ export function SettingsPage() {
             <option>90 days</option>
           </select>
         </Field>
-      </Section>
-
-      {/* Team */}
-      <Section title="Team Management" icon={Users}>
-        <div className="space-y-2">
-          {TEAM_MEMBERS.map((m) => (
-            <div key={m.name} className="flex items-center gap-3 p-3 rounded-lg bg-[#0d1117] border border-[#21262d]">
-              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-[#1f6feb] to-[#388bfd] shrink-0">
-                <span className="text-white" style={{ fontSize: "11px", fontWeight: 700 }}>{m.avatar}</span>
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[#e6edf3]" style={{ fontSize: "12px", fontWeight: 500 }}>{m.name}</span>
-                  <span className={`w-1.5 h-1.5 rounded-full ${m.status === "online" ? "bg-[#3fb950]" : "bg-[#484f58]"}`} />
-                </div>
-                <span className="text-[#484f58]" style={{ fontSize: "10px" }}>{m.role}</span>
-              </div>
-              <select className={`px-2 py-1 rounded-lg bg-[#161b22] border border-[#21262d] text-[#7d8590] outline-none ${!enableEdit ? 'opacity-50 cursor-not-allowed' : ''}`} style={{ fontSize: "11px" }} disabled={!enableEdit}>
-                <option>Admin</option>
-                <option>Engineer</option>
-                <option>Viewer</option>
-              </select>
-            </div>
-          ))}
-          <FeatureFlag flag="ENABLE_SETTINGS_EDIT">
-            <button className="w-full py-2 rounded-lg border border-dashed border-[#21262d] text-[#484f58] hover:text-[#7d8590] hover:border-[#484f58] transition-colors" style={{ fontSize: "11px" }}>
-              + Invite team member
-            </button>
-          </FeatureFlag>
-        </div>
       </Section>
 
       {/* Save */}
