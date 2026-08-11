@@ -26,12 +26,12 @@ const edgeTypes = {
   custom: TopologyEdge,
 };
 
-const getLayoutedElements = (nodes: any[], edges: any[], direction = 'TB') => {
+const getLayoutedElements = (nodes: any[], edges: any[], direction = 'LR') => {
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
   
   const isHorizontal = direction === 'LR';
-  dagreGraph.setGraph({ rankdir: direction, nodesep: 80, ranksep: 120 });
+  dagreGraph.setGraph({ rankdir: direction, nodesep: 100, ranksep: 180 });
 
   nodes.forEach((node) => {
     // Approx dimensions for our custom nodes
@@ -130,6 +130,8 @@ export function ServiceTopologyGraph({ mode = "full", onNodeSelect, selectedNode
           }
         },
         position: { x: 0, y: 0 },
+        targetPosition: Position.Left,
+        sourcePosition: Position.Right,
       };
     });
 
@@ -157,7 +159,7 @@ export function ServiceTopologyGraph({ mode = "full", onNodeSelect, selectedNode
     });
 
     // Apply layout
-    const layouted = getLayoutedElements(rfNodes, rfEdges, 'TB');
+    const layouted = getLayoutedElements(rfNodes, rfEdges, 'LR');
     setNodes(layouted.nodes);
     setEdges(layouted.edges);
     
