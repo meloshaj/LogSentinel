@@ -389,6 +389,17 @@ async def get_tracking_loop_blast_radius(
     )
 
 
+def _derive_severity(anomaly_score: float) -> str:
+    """Map an anomaly score to a human-readable severity label."""
+    if anomaly_score >= 0.9:
+        return "critical"
+    elif anomaly_score >= 0.7:
+        return "high"
+    elif anomaly_score >= 0.5:
+        return "medium"
+    return "low"
+
+
 @app.get(
     "/api/v1/tracking-loops",
     tags=["Analysis"],
@@ -402,18 +413,22 @@ async def list_active_tracking_loops(
     rows = await tracking_repository.get_active_tracking_loops(limit=min(limit, 500))
     results = []
     for row in rows:
+        score = row.get("anomaly_score", 0.0)
         entry: dict = {
             "window_id": row.get("window_id", ""),
-            "anomaly_score": row.get("anomaly_score", 0.0),
+            "anomaly_score": score,
+            "severity": _derive_severity(score),
             "status": row.get("status", "ACTIVE"),
-            "blast_radius": row.get("blast_radius"),
             "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
         }
-        # Extract root service from blast_radius if present
+        # Flatten blast_radius: extract the node array from the full BlastRadiusResult dict
         br = row.get("blast_radius")
         if isinstance(br, dict):
             entry["suspected_root_service"] = br.get("suspected_root_service")
             entry["root_cause_confidence"] = br.get("confidence")
+            entry["blast_radius"] = br.get("blast_radius", [])
+        else:
+            entry["blast_radius"] = None
         results.append(entry)
     return results
 

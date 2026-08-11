@@ -1,138 +1,127 @@
 import React from "react";
+import { Handle, Position } from "@xyflow/react";
 import type { TopologyNode as TNode, NodeStatus } from "../../types/topology";
+import { Server, Database, Zap, Layers, Share2, Activity, Clock, AlertCircle } from "lucide-react";
 
-// ---------------------------------------------------------------------------
-// Node type → SVG icon path
-// ---------------------------------------------------------------------------
-
-const TYPE_ICONS: Record<string, string> = {
-  service:
-    "M4 4h16v12H4zM8 16v4M16 16v4M1 20h22", // server box
-  database:
-    "M12 2C6.48 2 2 3.79 2 6v12c0 2.21 4.48 4 10 4s10-1.79 10-4V6c0-2.21-4.48-4-10-4z", // cylinder
-  cache:
-    "M13 2L3 14h9l-1 8 10-12h-9l1-8z", // lightning
-  queue:
-    "M3 6h18v4H3zM3 14h18v4H3z", // stacked bars
-  gateway:
-    "M12 2l10 10-10 10L2 12z", // diamond
+const TYPE_ICONS: Record<string, React.ElementType> = {
+  service: Server,
+  database: Database,
+  cache: Zap,
+  queue: Layers,
+  gateway: Share2,
 };
 
-const STATUS_BORDER: Record<NodeStatus, string> = {
-  healthy: "#30363d",
-  degraded: "#d29922",
-  critical: "#f85149",
+const STATUS_CONFIG: Record<string, { border: string, bg: string, ring: string, text: string }> = {
+  healthy: { border: "border-[#30363d]", bg: "bg-[#0d1117]", ring: "ring-0", text: "text-[#3fb950]" },
+  degraded: { border: "border-[#d29922]", bg: "bg-[#d29922]/10", ring: "ring-1 ring-[#d29922]", text: "text-[#d29922]" },
+  critical: { border: "border-[#f85149]", bg: "bg-[#f85149]/10", ring: "ring-2 ring-[#f85149] ring-offset-2 ring-offset-[#0d1117] animate-pulse", text: "text-[#f85149]" },
 };
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-interface Props {
-  node: TNode;
-  x: number;
-  y: number;
+interface TopologyNodeProps {
+  data: {
+    node: TNode;
+    status: string; // 'healthy' | 'degraded' | 'critical'
+    isRoot: boolean;
+    isPath?: boolean; // Highlight path for blast radius
+    onNodeClick?: (id: string) => void;
+  };
   selected?: boolean;
-  onClick?: (nodeId: string) => void;
 }
 
-const TopologyNodeComponent: React.FC<Props> = React.memo(
-  ({ node, x, y, selected, onClick }) => {
-    const border = STATUS_BORDER[node.status] ?? "#30363d";
-    const statusClass = `topo-node--${node.status}`;
+const TopologyNodeComponent: React.FC<TopologyNodeProps> = ({ data, selected }) => {
+  const { node, status = "healthy", isRoot, isPath, onNodeClick } = data;
+  
+  const config = STATUS_CONFIG[status] || STATUS_CONFIG.healthy;
+  const Icon = TYPE_ICONS[node.type] || Server;
+  
+  const isSelected = selected;
+  const isCritical = status === "critical";
+  const isDegraded = status === "degraded";
 
-    return (
-      <g
-        id={`topo-node-${node.id}`}
-        data-node-id={node.id}
-        data-testid={`topo-node-${node.id}`}
-        className={`topo-node-group ${statusClass}`}
-        transform={`translate(${x}, ${y})`}
-        onClick={() => onClick?.(node.id)}
+  // Mock metrics if not present
+  const metrics = {
+    latency: Math.floor(Math.random() * 50) + 10,
+    errorRate: isCritical ? (Math.random() * 5 + 5).toFixed(1) : (Math.random() * 0.5).toFixed(2),
+    throughput: Math.floor(Math.random() * 2000) + 500,
+  };
+
+  return (
+    <>
+      <Handle type="target" position={Position.Top} className="w-2 h-2 !bg-[#484f58] border-none" />
+      
+      <div 
+        className={`
+          relative flex flex-col gap-2 px-3 py-3 min-w-[200px] rounded-xl cursor-pointer
+          transition-all duration-300
+          ${config.bg} border-2 ${isSelected ? "border-[#388bfd]" : config.border}
+          ${isPath ? "ring-2 ring-[#f85149] ring-offset-2 ring-offset-[#0d1117] shadow-[0_0_15px_rgba(248,81,73,0.3)]" : config.ring} shadow-lg backdrop-blur-sm
+          hover:brightness-110
+        `}
+        onClick={() => onNodeClick?.(node.id)}
       >
-        {/* Blast-radius ring (hidden by default, shown imperatively) */}
-        <circle
-          className="topo-blast-ring"
-          cx={0}
-          cy={0}
-          r={22}
-          fill="none"
-          stroke="#f85149"
-          strokeWidth={1.5}
-          opacity={0}
-          data-blast-ring={node.id}
-        />
+        {isRoot && (
+          <div className="absolute -top-3 -right-3 w-6 h-6 rounded-full bg-[#f85149] flex items-center justify-center shadow-[0_0_12px_rgba(248,81,73,0.6)] z-10">
+            <span className="text-white text-[10px] font-bold">R</span>
+          </div>
+        )}
 
-        {/* Main node body */}
-        <rect
-          x={-44}
-          y={-24}
-          width={88}
-          height={48}
-          rx={8}
-          fill="#0d1117"
-          stroke={selected ? "#388bfd" : border}
-          strokeWidth={selected ? 2 : 1.5}
-        />
+        {/* Top Header Row */}
+        <div className="flex items-start gap-3">
+          <div className={`
+            flex items-center justify-center w-10 h-10 rounded-lg shrink-0
+            ${isCritical ? 'bg-[#f85149]/20 text-[#f85149]' : isDegraded ? 'bg-[#d29922]/20 text-[#d29922]' : 'bg-[#21262d] text-[#7d8590]'}
+          `}>
+            <Icon className="w-5 h-5" />
+          </div>
+          
+          <div className="flex flex-col min-w-0 flex-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[#e6edf3] font-semibold text-sm truncate">{node.label}</span>
+              {status !== "healthy" && (
+                <span className={`text-[10px] font-bold ${config.text} uppercase`}>
+                  {status}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-[#7d8590] text-[10px] uppercase tracking-wider font-medium">{node.type}</span>
+              <span className="px-1.5 py-0.5 rounded text-[8px] uppercase tracking-wider font-bold bg-[#161b22] border border-[#30363d] text-[#c9d1d9]">
+                PROD
+              </span>
+            </div>
+          </div>
+        </div>
 
-        {/* Type icon */}
-        <svg
-          x={-38}
-          y={-16}
-          width={14}
-          height={14}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="topo-node-icon"
-        >
-          <path d={TYPE_ICONS[node.type] ?? TYPE_ICONS.service} />
-        </svg>
-
-        {/* Label */}
-        <text
-          x={0}
-          y={-4}
-          textAnchor="middle"
-          className="topo-node-label"
-          style={{
-            fontSize: "11px",
-            fontWeight: 600,
-            fill: "#e6edf3",
-            fontFamily:
-              "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
-          }}
-        >
-          {node.label.length > 14
-            ? `${node.label.slice(0, 12)}…`
-            : node.label}
-        </text>
-
-        {/* Sublabel: type + status */}
-        <text
-          x={0}
-          y={12}
-          textAnchor="middle"
-          className="topo-node-sublabel"
-          style={{
-            fontSize: "8px",
-            fontWeight: 500,
-            fill: "#484f58",
-            textTransform: "uppercase" as const,
-            letterSpacing: "0.06em",
-            fontFamily:
-              "Inter, -apple-system, BlinkMacSystemFont, sans-serif",
-          }}
-        >
-          {node.type}
-        </text>
-      </g>
-    );
-  },
-);
+        {/* Metrics Row */}
+        <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-[#30363d]/50">
+          <div className="flex flex-col items-center">
+            <div className="flex items-center gap-1 text-[#7d8590] mb-0.5">
+              <Clock className="w-3 h-3" />
+              <span className="text-[9px] uppercase font-semibold">Lat</span>
+            </div>
+            <span className={`text-[11px] font-mono ${isCritical ? 'text-[#f85149]' : 'text-[#c9d1d9]'}`}>{metrics.latency}ms</span>
+          </div>
+          <div className="flex flex-col items-center border-l border-r border-[#30363d]/50">
+            <div className="flex items-center gap-1 text-[#7d8590] mb-0.5">
+              <AlertCircle className="w-3 h-3" />
+              <span className="text-[9px] uppercase font-semibold">Err</span>
+            </div>
+            <span className={`text-[11px] font-mono ${isCritical ? 'text-[#f85149]' : 'text-[#c9d1d9]'}`}>{metrics.errorRate}%</span>
+          </div>
+          <div className="flex flex-col items-center">
+            <div className="flex items-center gap-1 text-[#7d8590] mb-0.5">
+              <Activity className="w-3 h-3" />
+              <span className="text-[9px] uppercase font-semibold">Ops</span>
+            </div>
+            <span className="text-[11px] font-mono text-[#c9d1d9]">{metrics.throughput}/s</span>
+          </div>
+        </div>
+      </div>
+      
+      <Handle type="source" position={Position.Bottom} className="w-2 h-2 !bg-[#484f58] border-none" />
+    </>
+  );
+};
 
 TopologyNodeComponent.displayName = "TopologyNode";
 

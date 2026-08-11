@@ -1,9 +1,10 @@
 import type { Incident } from "../types/monitoring";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
-import { TopologyGraph } from "../components/topology/TopologyGraph";
-import { Bell, CheckCircle, Clock, Flame, XCircle, AlertTriangle, ChevronDown, ChevronRight, X } from "lucide-react";
+import { ServiceTopologyGraph } from "../components/topology/ServiceTopologyGraph";
+import { Bell, CheckCircle, Clock, Flame, XCircle, AlertTriangle, ChevronRight, X } from "lucide-react";
 import { useState } from "react";
 import { EmptyState } from "../components/common/EmptyState";
+import { AnomalyDrawer } from "../components/dashboard/AnomalyDrawer";
 
 const SEVERITY_CONFIG = {
   critical: { label: "CRITICAL", color: "#f85149", bg: "rgba(218,54,51,0.12)", border: "rgba(218,54,51,0.35)", icon: Flame },
@@ -18,23 +19,18 @@ const STATUS_CONFIG = {
   resolved:      { label: "Resolved",      color: "#3fb950", dot: "bg-[#3fb950]" },
 };
 
-
-
-function IncidentCard({ incident }: { incident: Incident }) {
-  const [expanded, setExpanded] = useState(false);
+function IncidentCard({ incident, onClick }: { incident: Incident, onClick: () => void }) {
   const sev = SEVERITY_CONFIG[incident.severity];
   const stat = STATUS_CONFIG[incident.status];
   const SevIcon = sev.icon;
 
   return (
     <div
-      className="rounded-xl border overflow-hidden"
+      className="rounded-xl border overflow-hidden hover:opacity-80 transition-opacity cursor-pointer"
       style={{ background: sev.bg, borderColor: sev.border }}
+      onClick={onClick}
     >
-      <button
-        className="w-full flex items-start gap-3 p-4 text-left"
-        onClick={() => setExpanded((e) => !e)}
-      >
+      <div className="w-full flex items-start gap-3 p-4 text-left">
         <div className="flex items-center justify-center w-8 h-8 rounded-lg shrink-0" style={{ background: `${sev.color}25` }}>
           <SevIcon className="w-4 h-4" style={{ color: sev.color }} />
         </div>
@@ -56,55 +52,34 @@ function IncidentCard({ incident }: { incident: Incident }) {
             <Clock className="w-3 h-3" /> Started at {incident.timestamp}
           </div>
         </div>
-        {expanded ? <ChevronDown className="w-4 h-4 text-[#484f58] shrink-0 mt-1" /> : <ChevronRight className="w-4 h-4 text-[#484f58] shrink-0 mt-1" />}
-      </button>
-
-      {expanded && (
-        <div className="px-4 pb-4 border-t border-[#21262d]/40 pt-3 space-y-3">
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { label: "Severity", value: sev.label, color: sev.color },
-              { label: "Status", value: stat.label, color: stat.color },
-              { label: "Duration", value: "~5 min", color: "#7d8590" },
-            ].map((m) => (
-              <div key={m.label} className="p-2 rounded-lg bg-[#0d1117] border border-[#21262d] text-center">
-                <div style={{ fontSize: "12px", fontWeight: 700, color: m.color }}>{m.value}</div>
-                <div className="text-[#484f58]" style={{ fontSize: "9px" }}>{m.label}</div>
-              </div>
-            ))}
-          </div>
-          <div className="p-3 rounded-lg bg-[#0d1117] border border-[#21262d]">
-            <span className="text-[#484f58]" style={{ fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>Recommended Action</span>
-            <p className="text-[#7d8590] mt-1" style={{ fontSize: "11px", lineHeight: 1.5 }}>
-              Check the AI Analysis page for detailed root cause breakdown and step-by-step remediation instructions.
-            </p>
-          </div>
-        </div>
-      )}
+        <ChevronRight className="w-4 h-4 text-[#484f58] shrink-0 mt-2" />
+      </div>
     </div>
   );
 }
 
 export function IncidentsPage() {
   const { activeTrackingLoops, latestPerformanceEvents } = useTelemetryStream();
+  const [selectedIncident, setSelectedIncident] = useState<any | null>(null);
 
   // Derive incidents from live tracking loops and performance alerts
-  const incidents: Incident[] = [
+  const incidents: any[] = [
     ...activeTrackingLoops.map(loop => ({
+      ...loop,
       id: loop.window_id,
       service: loop.suspected_root_service || "multiple-services",
-      severity: (loop.severity === "medium" || loop.severity === "low" || loop.severity === "high" || loop.severity === "critical" ? loop.severity : "medium") as any,
+      severity: (loop.severity === "medium" || loop.severity === "low" || loop.severity === "high" || loop.severity === "critical" ? loop.severity : "medium"),
       timestamp: new Date().toLocaleTimeString(),
-      description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(0)}`,
-      status: (loop.status === "open" || loop.status === "investigating" || loop.status === "resolved" ? loop.status : "open") as any
+      description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(2)}`,
+      status: (loop.status === "open" || loop.status === "investigating" || loop.status === "resolved" ? loop.status : "open")
     })),
     ...latestPerformanceEvents.map(event => ({
       id: event.metric_name,
       service: "infrastructure",
-      severity: (event.severity === "medium" || event.severity === "low" || event.severity === "high" || event.severity === "critical" ? event.severity : "medium") as any,
+      severity: (event.severity === "medium" || event.severity === "low" || event.severity === "high" || event.severity === "critical" ? event.severity : "medium"),
       timestamp: new Date().toLocaleTimeString(),
       description: `Performance alert: ${event.metric_name} is ${event.current_value.toFixed(0)} (threshold ${event.threshold})`,
-      status: "open" as any
+      status: "open"
     }))
   ];
 
@@ -134,7 +109,7 @@ export function IncidentsPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 relative">
       <div>
         <h1 className="text-[#e6edf3]" style={{ fontSize: "18px", fontWeight: 700 }}>Incidents</h1>
         <p className="text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>Track, triage and resolve service incidents - {open.length} open now</p>
@@ -157,7 +132,7 @@ export function IncidentsPage() {
 
       {/* Topology Dependency Graph */}
       <div className="rounded-xl overflow-hidden" style={{ height: 480 }}>
-        <TopologyGraph
+        <ServiceTopologyGraph
           mode="full"
           selectedNodeId={selectedServiceFilter}
           onNodeSelect={setSelectedServiceFilter}
@@ -189,12 +164,16 @@ export function IncidentsPage() {
         <div className="p-4">
           <div className="flex flex-col gap-3">
             {incidents.map((ev, idx) => {
-              const bg = ev.severity === "critical" || ev.severity === "high" ? "bg-red-50 dark:bg-red-500/10 border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400" : ev.severity === "medium" ? "bg-orange-50 dark:bg-orange-500/10 border-orange-200 dark:border-orange-500/20 text-orange-600 dark:text-orange-400" : "bg-gray-50 dark:bg-gray-500/10 border-gray-200 dark:border-gray-500/20 text-gray-600 dark:text-gray-400";
-              const dot = ev.severity === "critical" || ev.severity === "high" ? "bg-red-500" : ev.severity === "medium" ? "bg-orange-500" : "bg-gray-500";
+              const bg = ev.severity === "critical" || ev.severity === "high" ? "bg-red-50 dark:bg-[#f85149]/10 border-red-200 dark:border-[#f85149]/20 text-red-600 dark:text-[#f85149]" : ev.severity === "medium" ? "bg-orange-50 dark:bg-[#d29922]/10 border-orange-200 dark:border-[#d29922]/20 text-orange-600 dark:text-[#d29922]" : "bg-gray-50 dark:bg-[#7d8590]/10 border-gray-200 dark:border-[#7d8590]/20 text-gray-600 dark:text-[#7d8590]";
+              const dot = ev.severity === "critical" || ev.severity === "high" ? "bg-[#f85149]" : ev.severity === "medium" ? "bg-[#d29922]" : "bg-[#7d8590]";
               const typeLabel = ev.severity;
               
               return (
-                <div key={idx} className="flex items-center gap-3 p-3 rounded-lg border bg-slate-50 dark:bg-[#0d1117] border-slate-200 dark:border-[#21262d] hover:border-slate-300 dark:hover:border-[#30363d] transition-all shadow-sm">
+                <div 
+                  key={idx} 
+                  className="flex items-center gap-3 p-3 rounded-lg border bg-slate-50 dark:bg-[#0d1117] border-slate-200 dark:border-[#21262d] hover:border-[#388bfd]/50 transition-all shadow-sm cursor-pointer"
+                  onClick={() => setSelectedIncident(ev)}
+                >
                   <div className={`w-2.5 h-2.5 rounded-full shrink-0 shadow-[0_0_8px_rgba(0,0,0,0.5)] dark:shadow-none ${dot}`} style={{ boxShadow: `0 0 10px ${dot.replace('bg-', '')}` }} />
                   <span className="text-slate-500 dark:text-[#484f58] shrink-0 font-medium" style={{ fontSize: "11px", fontFamily: "monospace" }}>{ev.timestamp}</span>
                   <span className="text-slate-700 dark:text-[#c9d1d9] truncate font-medium ml-1" style={{ fontSize: "13px" }}>{ev.description}</span>
@@ -215,7 +194,7 @@ export function IncidentsPage() {
           <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Open Incidents</span>
         </div>
         <div className="space-y-2">
-          {open.map((i) => <IncidentCard key={i.id} incident={i} />)}
+          {open.map((i) => <IncidentCard key={i.id} incident={i} onClick={() => setSelectedIncident(i)} />)}
         </div>
       </div>
 
@@ -227,10 +206,17 @@ export function IncidentsPage() {
             <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Resolved (last 24h)</span>
           </div>
           <div className="space-y-2">
-            {resolved.map((i) => <IncidentCard key={i.id} incident={i} />)}
+            {resolved.map((i) => <IncidentCard key={i.id} incident={i} onClick={() => setSelectedIncident(i)} />)}
           </div>
         </div>
       )}
+
+      <AnomalyDrawer 
+        isOpen={!!selectedIncident} 
+        onClose={() => setSelectedIncident(null)} 
+        incident={selectedIncident} 
+      />
     </div>
   );
 }
+

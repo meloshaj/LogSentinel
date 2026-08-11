@@ -121,15 +121,11 @@ END $$;
 
 SELECT add_job('safe_drop_chunks_job', '1 day', config => '{"retention_interval": "30 days", "max_retries": 5}');
 
-ALTER TABLE logs
-    ADD COLUMN IF NOT EXISTS template_text TEXT NULL,
-    ADD COLUMN IF NOT EXISTS parameters JSONB NOT NULL DEFAULT '[]'::jsonb,
-    ADD COLUMN IF NOT EXISTS level VARCHAR(32) NULL,
-    ADD COLUMN IF NOT EXISTS source VARCHAR(255) NULL,
-    ADD COLUMN IF NOT EXISTS environment VARCHAR(255) NULL,
-    ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    ADD COLUMN IF NOT EXISTS parsed_at TIMESTAMPTZ NULL,
-    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+-- NOTE: Columns template_text, parameters, level, source, environment,
+-- metadata, parsed_at, created_at are already defined in the CREATE TABLE
+-- above. A previous ALTER TABLE ADD COLUMN block was removed because
+-- TimescaleDB disallows ADD COLUMN with non-constant defaults (e.g. NOW())
+-- on hypertables with columnstore (compression) enabled.
 
 -- ---------------------------------------------------------------------------
 -- Incidents Table
@@ -243,7 +239,7 @@ CREATE TABLE IF NOT EXISTS tracking_loops (
     window_id       VARCHAR(128)    NOT NULL
                         REFERENCES feature_windows(window_id) ON DELETE CASCADE,
     anomaly_score   FLOAT           NOT NULL,
-    status          VARCHAR(32)     NOT NULL DEFAULT 'triggered',
+    status          VARCHAR(32)     NOT NULL DEFAULT 'ACTIVE',
     blast_radius    JSONB           NULL,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()

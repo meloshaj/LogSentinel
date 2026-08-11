@@ -1,15 +1,14 @@
-import { DependencyGraph } from "../components/common/DependencyGraph";
+import { ServiceTopologyGraph } from "../components/topology/ServiceTopologyGraph";
+import { TopologySyncProvider } from "../hooks/useTopologySync";
 import { Brain, ChevronRight, Lightbulb, Network, Sparkles, Target, Wrench } from "lucide-react";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
-import type { RootCause, ServiceGraph } from "../types/monitoring";
+import type { RootCause } from "../types/monitoring";
 
 
 
 export function AIAnalysisPage() {
   const { activeTrackingLoops } = useTelemetryStream();
 
-  // Create a dynamic graph representing current blast radius from live telemetry
-  const dynamicGraph: ServiceGraph = { nodes: [], edges: [] };
   const rootCauses: RootCause[] = [];
   const dynamicSummaries: any[] = [];
   const dynamicFixes: any[] = [];
@@ -55,25 +54,6 @@ export function AIAnalysisPage() {
         severity: node.impact_score > 0.8 || node.impact_score > 80 ? "#f85149" : node.impact_score > 0.5 || node.impact_score > 50 ? "#ffa657" : "#d29922",
       });
     });
-    
-    // Arrange nodes in a circle
-    const nodes = Array.from(nodesMap.values());
-    const cx = 200, cy = 140, r = 100;
-    nodes.forEach((n, i) => {
-      const angle = (Math.PI * 2 * i) / nodes.length;
-      n.x = cx + Math.cos(angle) * r;
-      n.y = cy + Math.sin(angle) * r;
-      dynamicGraph.nodes.push(n);
-    });
-
-    // connect them to the root
-    if (loop.suspected_root_service) {
-      nodes.forEach(n => {
-        if (n.id !== loop.suspected_root_service) {
-          dynamicGraph.edges.push({ from: loop.suspected_root_service!, to: n.id });
-        }
-      });
-    }
   }
 
   return (
@@ -94,6 +74,31 @@ export function AIAnalysisPage() {
           <span className="text-[#bc8cff]" style={{ fontSize: "11px", fontWeight: 500 }}>Analyzing 2.45M logs</span>
         </div>
       </div>
+
+      {/* Blast Radius Ribbon */}
+      {rootCauses.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-xl bg-[#f85149]/10 border border-[#f85149]/20 shadow-[0_0_15px_rgba(248,81,73,0.1)] gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-[#f85149]/20 rounded-lg text-[#f85149]">
+               <Target className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-[#e6edf3] font-semibold text-sm">Blast Radius Analysis Active</h3>
+              <p className="text-[#f85149] text-xs mt-0.5">Primary vector isolated: <span className="font-mono">{rootCauses[0].service}</span></p>
+            </div>
+          </div>
+          <div className="flex gap-6">
+            <div className="flex flex-col">
+               <span className="text-[#7d8590] text-[10px] uppercase font-bold tracking-wider">Impact Depth</span>
+               <span className="text-[#e6edf3] font-mono text-sm mt-0.5">{rootCauses[0].affectedDeps.length > 0 ? rootCauses[0].affectedDeps.length + 1 : 1} Nodes</span>
+            </div>
+            <div className="flex flex-col">
+               <span className="text-[#7d8590] text-[10px] uppercase font-bold tracking-wider">Affected Services</span>
+               <span className="text-[#e6edf3] font-mono text-sm mt-0.5 truncate max-w-[150px]">{rootCauses[0].affectedDeps.join(', ') || 'None'}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Root Cause Ranking */}
       <div className="rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
@@ -168,8 +173,10 @@ export function AIAnalysisPage() {
             <Network className="w-4 h-4 text-[#388bfd]" />
             <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Service Dependency Graph</span>
           </div>
-          <div className="bg-[#0d1117]" style={{ height: 280 }}>
-            <DependencyGraph graph={dynamicGraph} glowRadius={20} nodeRadius={14} strokeWidth={2} labelOffset={28} />
+          <div className="bg-[#0d1117] relative" style={{ height: 380 }}>
+            <TopologySyncProvider>
+              <ServiceTopologyGraph mode="root-cause-focus" />
+            </TopologySyncProvider>
           </div>
           <div className="flex gap-4 px-4 py-2 border-t border-[#21262d]">
             {[{ color: "#f85149", label: "Critical path" }, { color: "#d29922", label: "Warning" }, { color: "#3fb950", label: "Healthy" }].map((i) => (

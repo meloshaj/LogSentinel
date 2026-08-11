@@ -41,7 +41,7 @@ vi.mock("../../../hooks/useTelemetryStream", () => ({
 // Import after mocks
 // ---------------------------------------------------------------------------
 
-import { TopologyGraph } from "../TopologyGraph";
+import { ServiceTopologyGraph } from "../ServiceTopologyGraph";
 
 // ---------------------------------------------------------------------------
 // Setup & Teardown
@@ -84,7 +84,7 @@ const SAMPLE_EDGES = [
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("TopologyGraph", () => {
+describe("ServiceTopologyGraph", () => {
   it("Test 1: renders nodes and edges from /api/v1/topology data", async () => {
     mockTopologyReturn = {
       ...mockTopologyReturn,
@@ -92,7 +92,7 @@ describe("TopologyGraph", () => {
       edges: SAMPLE_EDGES,
     };
 
-    render(<TopologyGraph mode="full" />);
+    render(<ServiceTopologyGraph mode="full" />);
 
     // Graph container should be present
     expect(screen.getByTestId("topology-graph")).toBeDefined();
@@ -118,7 +118,7 @@ describe("TopologyGraph", () => {
       edges: SAMPLE_EDGES,
     };
 
-    const { rerender } = render(<TopologyGraph mode="full" />);
+    const { rerender } = render(<ServiceTopologyGraph mode="full" />);
 
     // Verify node starts with healthy class
     const authNode = screen.getByTestId("topo-node-service-auth");
@@ -156,7 +156,7 @@ describe("TopologyGraph", () => {
     ];
 
     // Re-render with updated tracking loops
-    rerender(<TopologyGraph mode="full" />);
+    rerender(<ServiceTopologyGraph mode="full" />);
 
     // Wait for RAF to apply overlays
     await act(async () => {
@@ -179,7 +179,7 @@ describe("TopologyGraph", () => {
       error: "HTTP 500: Internal Server Error",
     };
 
-    render(<TopologyGraph mode="full" />);
+    render(<ServiceTopologyGraph mode="full" />);
 
     // Error alert should render
     const errorEl = screen.getByTestId("topology-error");
@@ -200,7 +200,7 @@ describe("TopologyGraph", () => {
       edges: originalEdges,
     };
 
-    const { rerender } = render(<TopologyGraph mode="full" />);
+    const { rerender } = render(<ServiceTopologyGraph mode="full" />);
     renderCount = 1;
 
     // Simulate 100 rapid tracking loop updates (as if log events poured in)
@@ -223,7 +223,7 @@ describe("TopologyGraph", () => {
         edges: originalEdges,
       };
 
-      rerender(<TopologyGraph mode="full" />);
+      rerender(<ServiceTopologyGraph mode="full" />);
     }
 
     // The static graph nodes should still be the exact same DOM elements
@@ -249,7 +249,7 @@ describe("TopologyGraph", () => {
       edges: SAMPLE_EDGES,
     };
 
-    render(<TopologyGraph mode="compact" />);
+    render(<ServiceTopologyGraph mode="compact" />);
 
     const container = screen.getByTestId("topology-graph");
     expect(container.className).toContain("topology-graph--compact");
