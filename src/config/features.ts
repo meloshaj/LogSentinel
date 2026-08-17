@@ -3,6 +3,7 @@ export interface FeatureFlags {
   ENABLE_GITHUB_AUTH: boolean;
   ENABLE_PASSWORD_RESET: boolean;
   ENABLE_GOOGLE_AUTH: boolean;
+  ENABLE_DEMO_MODE: boolean;
 }
 
 export const FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
@@ -15,4 +16,8 @@ export const FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
   ENABLE_GOOGLE_AUTH:
     import.meta.env.VITE_FEATURE_ENABLE_GOOGLE_AUTH === 'true' ||
     Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID),
+  ENABLE_DEMO_MODE:
+    import.meta.env.VITE_DEMO_MODE === 'true' ||
+    import.meta.env.VITE_FEATURE_ENABLE_DEMO_MODE === 'true' ||
+    false,
 });

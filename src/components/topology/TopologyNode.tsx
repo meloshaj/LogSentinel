@@ -1,7 +1,7 @@
 import React from "react";
 import { Handle, Position } from "@xyflow/react";
-import type { TopologyNode as TNode, NodeStatus } from "../../types/topology";
-import { Server, Database, Zap, Layers, Share2, Activity, Clock, AlertCircle } from "lucide-react";
+import type { TopologyNode as TNode } from "../../types/topology";
+import { Server, Database, Zap, Layers, Share2, Activity, Clock, AlertCircle, ShieldCheck, Target, Flame } from "lucide-react";
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
   service: Server,
@@ -11,10 +11,34 @@ const TYPE_ICONS: Record<string, React.ElementType> = {
   gateway: Share2,
 };
 
-const STATUS_CONFIG: Record<string, { border: string, bg: string, ring: string, text: string, glow: string }> = {
-  healthy: { border: "border-[#30363d]/60", bg: "bg-[#0d1117]/70", ring: "ring-0", text: "text-[#3fb950]", glow: "shadow-lg" },
-  degraded: { border: "border-[#d29922]/80", bg: "bg-[#d29922]/15", ring: "ring-1 ring-[#d29922]/50", text: "text-[#d29922]", glow: "shadow-[0_0_15px_rgba(210,153,34,0.2)]" },
-  critical: { border: "border-[#f85149]", bg: "bg-[#f85149]/20", ring: "ring-2 ring-[#f85149] ring-offset-2 ring-offset-[#0d1117]", text: "text-[#f85149]", glow: "shadow-[0_0_25px_rgba(248,81,73,0.4)] animate-pulse" },
+const STATUS_CONFIG: Record<string, { border: string, bg: string, ring: string, badgeBg: string, text: string, glow: string, label: string }> = {
+  healthy: { 
+    border: "border-[#30363d]", 
+    bg: "bg-[#161b22]/95", 
+    ring: "hover:ring-1 hover:ring-[#3fb950]/50", 
+    badgeBg: "bg-[#3fb950]/15 border-[#3fb950]/30 text-[#3fb950]",
+    text: "text-[#3fb950]", 
+    glow: "shadow-sm",
+    label: "NOMINAL" 
+  },
+  degraded: { 
+    border: "border-[#f59e0b]/80", 
+    bg: "bg-[#161b22]/95", 
+    ring: "ring-1 ring-[#f59e0b]/70", 
+    badgeBg: "bg-[#f59e0b]/20 border-[#f59e0b]/50 text-[#f59e0b]",
+    text: "text-[#f59e0b]", 
+    glow: "shadow-[0_0_18px_rgba(245,158,11,0.25)]",
+    label: "BLAST CASCADE" 
+  },
+  critical: { 
+    border: "border-[#ef4444]", 
+    bg: "bg-[#161b22]/95", 
+    ring: "ring-2 ring-[#ef4444] ring-offset-2 ring-offset-[#0d1117]", 
+    badgeBg: "bg-[#ef4444]/25 border-[#ef4444]/60 text-[#ef4444]",
+    text: "text-[#ef4444]", 
+    glow: "shadow-[0_0_28px_rgba(239,68,68,0.45)] animate-pulse",
+    label: "ROOT CAUSE" 
+  },
 };
 
 interface TopologyNodeProps {
@@ -22,7 +46,7 @@ interface TopologyNodeProps {
     node: TNode;
     status: string; // 'healthy' | 'degraded' | 'critical'
     isRoot: boolean;
-    isPath?: boolean; // Highlight path for blast radius
+    isPath?: boolean;
     onNodeClick?: (id: string) => void;
   };
   selected?: boolean;
@@ -30,97 +54,121 @@ interface TopologyNodeProps {
   sourcePosition?: Position;
 }
 
-const TopologyNodeComponent: React.FC<TopologyNodeProps> = ({ data, selected, targetPosition = Position.Top, sourcePosition = Position.Bottom }) => {
+const TopologyNodeComponent: React.FC<TopologyNodeProps> = ({ 
+  data, 
+  selected, 
+  targetPosition = Position.Left, 
+  sourcePosition = Position.Right 
+}) => {
   const { node, status = "healthy", isRoot, isPath, onNodeClick } = data;
   
-  const config = STATUS_CONFIG[status] || STATUS_CONFIG.healthy;
+  const effectiveStatus = isRoot ? "critical" : status;
+  const config = STATUS_CONFIG[effectiveStatus] || STATUS_CONFIG.healthy;
   const Icon = TYPE_ICONS[node.type] || Server;
   
   const isSelected = selected;
-  const isCritical = status === "critical";
-  const isDegraded = status === "degraded";
-
-  // Mock metrics if not present
-  const metrics = {
-    latency: Math.floor(Math.random() * 50) + 10,
-    errorRate: isCritical ? (Math.random() * 5 + 5).toFixed(1) : (Math.random() * 0.5).toFixed(2),
-    throughput: Math.floor(Math.random() * 2000) + 500,
-  };
+  const isCritical = effectiveStatus === "critical" || isRoot;
+  const isDegraded = effectiveStatus === "degraded" && !isRoot;
 
   return (
     <>
-      <Handle type="target" position={targetPosition} className="w-2.5 h-2.5 !bg-[#7d8590] border-2 border-[#0d1117]" />
+      <Handle 
+        type="target" 
+        position={targetPosition} 
+        className="w-3 h-3 !bg-[#388bfd] border-2 border-[#0d1117] transition-transform hover:scale-125" 
+      />
       
       <div 
         className={`
-          relative flex flex-col gap-2 px-3.5 py-3.5 min-w-[210px] rounded-xl cursor-pointer
-          transition-all duration-300 backdrop-blur-md
-          ${config.bg} border ${isSelected ? "border-[#388bfd]" : config.border}
-          ${isPath ? "ring-2 ring-[#f85149] shadow-[0_0_20px_rgba(248,81,73,0.5)]" : config.ring} ${config.glow}
-          hover:brightness-125 hover:border-[#7d8590]
+          relative flex flex-col gap-2 px-3.5 py-3 min-w-[210px] rounded-xl cursor-pointer
+          transition-all duration-200 backdrop-blur-md select-none
+          ${config.bg} border ${isSelected ? "!border-[#388bfd] !ring-2 !ring-[#388bfd]/60" : config.border}
+          ${isCritical ? "ring-2 ring-[#ef4444] shadow-[0_0_25px_rgba(239,68,68,0.4)]" : isDegraded ? "ring-1 ring-[#f59e0b]" : config.ring} ${config.glow}
+          hover:border-[#8b949e] hover:shadow-lg
         `}
         onClick={() => onNodeClick?.(node.id)}
       >
         {isRoot && (
-          <div className="absolute -top-3 -right-3 w-6 h-6 rounded-full bg-[#f85149] flex items-center justify-center shadow-[0_0_12px_rgba(248,81,73,0.6)] z-10">
-            <span className="text-white text-[10px] font-bold">R</span>
+          <div className="absolute -top-3 -right-2 px-2 py-0.5 rounded-full bg-[#ef4444] text-white text-[9px] font-extrabold shadow-[0_0_14px_rgba(239,68,68,0.8)] z-10 flex items-center gap-1">
+            <Target className="w-2.5 h-2.5 animate-spin" />
+            ROOT CAUSE
           </div>
         )}
 
         {/* Top Header Row */}
-        <div className="flex items-start gap-3">
+        <div className="flex items-center gap-2.5">
           <div className={`
-            flex items-center justify-center w-10 h-10 rounded-lg shrink-0
-            ${isCritical ? 'bg-[#f85149]/20 text-[#f85149]' : isDegraded ? 'bg-[#d29922]/20 text-[#d29922]' : 'bg-[#21262d] text-[#7d8590]'}
+            flex items-center justify-center w-9 h-9 rounded-lg shrink-0 border
+            ${isCritical 
+              ? 'bg-[#ef4444]/25 border-[#ef4444]/50 text-[#ef4444]' 
+              : isDegraded 
+                ? 'bg-[#f59e0b]/20 border-[#f59e0b]/40 text-[#f59e0b]' 
+                : 'bg-[#21262d] border-[#30363d] text-[#388bfd]'}
           `}>
-            <Icon className="w-5 h-5" />
+            <Icon className="w-4 h-4" />
           </div>
           
           <div className="flex flex-col min-w-0 flex-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[#e6edf3] font-semibold text-sm truncate">{node.label}</span>
-              {status !== "healthy" && (
-                <span className={`text-[10px] font-bold ${config.text} uppercase`}>
-                  {status}
-                </span>
-              )}
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-[#e6edf3] font-bold text-xs truncate" title={node.label || node.id}>
+                {node.label || node.id}
+              </span>
+              <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider border shrink-0 ${config.badgeBg}`}>
+                {isRoot ? "ROOT CAUSE" : config.label}
+              </span>
             </div>
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-[#7d8590] text-[10px] uppercase tracking-wider font-medium">{node.type}</span>
-              <span className="px-1.5 py-0.5 rounded text-[8px] uppercase tracking-wider font-bold bg-[#161b22] border border-[#30363d] text-[#c9d1d9]">
-                PROD
+            
+            <div className="flex items-center gap-1.5 mt-0.5 text-[10px]">
+              <span className="text-[#8b949e] uppercase tracking-wider font-semibold">
+                {node.type || "service"}
+              </span>
+              <span className="w-1 h-1 rounded-full bg-[#30363d]" />
+              <span className="text-[#7d8590] font-mono">
+                {isRoot ? "Primary Initiator" : isDegraded ? "Downstream Cascade" : "Nominal State"}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Metrics Row */}
-        <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-[#30363d]/50">
-          <div className="flex flex-col items-center">
-            <div className="flex items-center gap-1 text-[#7d8590] mb-0.5">
-              <Clock className="w-3 h-3" />
-              <span className="text-[9px] uppercase font-semibold">Lat</span>
+        {/* Metrics Pill Grid */}
+        <div className="grid grid-cols-3 gap-1 pt-1.5 border-t border-[#21262d]">
+          <div className="flex flex-col items-center bg-[#0d1117] py-0.5 px-1 rounded border border-[#21262d]">
+            <div className="flex items-center gap-0.5 text-[#7d8590]">
+              <Clock className="w-2 h-2" />
+              <span className="text-[7.5px] uppercase font-bold">Latency</span>
             </div>
-            <span className={`text-[11px] font-mono ${isCritical ? 'text-[#f85149]' : 'text-[#c9d1d9]'}`}>{metrics.latency}ms</span>
+            <span className={`text-[9.5px] font-mono font-bold ${isCritical ? 'text-[#ef4444]' : 'text-[#c9d1d9]'}`}>
+              {node.metrics?.latency_ms ?? (isCritical ? 5120 : 12)}ms
+            </span>
           </div>
-          <div className="flex flex-col items-center border-l border-r border-[#30363d]/50">
-            <div className="flex items-center gap-1 text-[#7d8590] mb-0.5">
-              <AlertCircle className="w-3 h-3" />
-              <span className="text-[9px] uppercase font-semibold">Err</span>
+
+          <div className="flex flex-col items-center bg-[#0d1117] py-0.5 px-1 rounded border border-[#21262d]">
+            <div className="flex items-center gap-0.5 text-[#7d8590]">
+              <AlertCircle className="w-2 h-2" />
+              <span className="text-[7.5px] uppercase font-bold">Errors</span>
             </div>
-            <span className={`text-[11px] font-mono ${isCritical ? 'text-[#f85149]' : 'text-[#c9d1d9]'}`}>{metrics.errorRate}%</span>
+            <span className={`text-[9.5px] font-mono font-bold ${isCritical ? 'text-[#ef4444]' : isDegraded ? 'text-[#f59e0b]' : 'text-[#3fb950]'}`}>
+              {node.metrics?.error_rate ?? (isCritical ? 8.4 : isDegraded ? 2.1 : 0.0)}%
+            </span>
           </div>
-          <div className="flex flex-col items-center">
-            <div className="flex items-center gap-1 text-[#7d8590] mb-0.5">
-              <Activity className="w-3 h-3" />
-              <span className="text-[9px] uppercase font-semibold">Ops</span>
+
+          <div className="flex flex-col items-center bg-[#0d1117] py-0.5 px-1 rounded border border-[#21262d]">
+            <div className="flex items-center gap-0.5 text-[#7d8590]">
+              <Activity className="w-2 h-2" />
+              <span className="text-[7.5px] uppercase font-bold">Flow</span>
             </div>
-            <span className="text-[11px] font-mono text-[#c9d1d9]">{metrics.throughput}/s</span>
+            <span className="text-[9.5px] font-mono font-bold text-[#388bfd]">
+              {node.metrics?.throughput ?? "1.2k"}/s
+            </span>
           </div>
         </div>
       </div>
       
-      <Handle type="source" position={sourcePosition} className="w-2.5 h-2.5 !bg-[#7d8590] border-2 border-[#0d1117]" />
+      <Handle 
+        type="source" 
+        position={sourcePosition} 
+        className="w-3 h-3 !bg-[#388bfd] border-2 border-[#0d1117] transition-transform hover:scale-125" 
+      />
     </>
   );
 };

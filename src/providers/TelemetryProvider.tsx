@@ -37,6 +37,8 @@ import {
 import type { ReactNode } from "react";
 import type { LogEntry, LogLevel } from "../types/monitoring";
 import type { TelemetryEvent } from "../types/telemetry";
+import { FEATURE_FLAGS } from "../config/features";
+import { mockTelemetry } from "../services/mockTelemetry";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -140,7 +142,8 @@ function normalizeLevel(level: unknown): LogLevel {
     level === "WARN" ||
     level === "ERROR" ||
     level === "DEBUG" ||
-    level === "FATAL"
+    level === "FATAL" ||
+    level === "CRITICAL"
   ) {
     return level;
   }
@@ -378,8 +381,7 @@ function isTrackingLoopEvent(value: unknown): value is TrackingLoopEvent {
   return (
     typeof value.window_id === "string" &&
     typeof value.anomaly_score === "number" &&
-    typeof value.severity === "string" &&
-    typeof value.status === "string" &&
+    (typeof value.severity === "string" || typeof value.severity === "undefined") &&
     (value.blast_radius === undefined ||
       value.blast_radius === null ||
       isBlastRadius(value.blast_radius)) &&
@@ -407,6 +409,10 @@ function isPerformanceEvent(value: unknown): value is PerformanceEvent {
 // ---------------------------------------------------------------------------
 
 async function fetchBackfillLogs(): Promise<LogEntry[]> {
+  if (FEATURE_FLAGS.ENABLE_DEMO_MODE) {
+    return mockTelemetry.getInitialBackfillLogs(40);
+  }
+
   const urls = buildBackfillUrls();
   let lastError: Error | null = null;
 
@@ -437,6 +443,10 @@ async function fetchBackfillLogs(): Promise<LogEntry[]> {
 }
 
 async function fetchBackfillTrackingLoops(): Promise<TrackingLoopEvent[]> {
+  if (FEATURE_FLAGS.ENABLE_DEMO_MODE) {
+    return [];
+  }
+
   const urls = buildTrackingLoopsBackfillUrls();
   let lastError: Error | null = null;
 
@@ -638,7 +648,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
 
       const eventType: string = event.type;
 
-      // 3. Handle tracking loops and performance events
+      // 3. Handle tracking loops, anomalies, and performance events
       if (eventType === "frame_update" && isRecord(event.payload)) {
         const framePayload = event.payload as Record<string, unknown>;
         if (Array.isArray(framePayload.events)) {
@@ -651,9 +661,21 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
               innerType === "infrastructure.tracking_loop.triggered" &&
               isTrackingLoopEvent(innerPayload)
             ) {
-              pendingTrackingUpdates.current.push(innerPayload);
-            }
-            if (
+              pendingTrackingUpdates.current.push({
+                ...innerPayload,
+                status: "triggered",
+              });
+            } else if (innerType === "anomaly.detected" && isRecord(innerPayload)) {
+              const p = innerPayload as Record<string, unknown>;
+              pendingTrackingUpdates.current.push({
+                window_id: typeof p.window_id === "string" ? p.window_id : `anom-${Date.now()}`,
+                anomaly_score: typeof p.anomaly_score === "number" ? p.anomaly_score : 0.85,
+                severity: typeof p.severity === "string" ? p.severity : "critical",
+                status: "triggered",
+                suspected_root_service: typeof p.service === "string" ? p.service : typeof p.suspected_root_service === "string" ? p.suspected_root_service : null,
+                blast_radius: isBlastRadius(p.blast_radius) ? p.blast_radius : null,
+              });
+            } else if (
               innerType === "infrastructure.performance.alert" &&
               isPerformanceEvent(innerPayload)
             ) {
@@ -665,7 +687,20 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
         eventType === "infrastructure.tracking_loop.triggered" &&
         isTrackingLoopEvent(event.payload)
       ) {
-        pendingTrackingUpdates.current.push(event.payload as TrackingLoopEvent);
+        pendingTrackingUpdates.current.push({
+          ...event.payload,
+          status: "triggered",
+        });
+      } else if (eventType === "anomaly.detected" && isRecord(event.payload)) {
+        const p = event.payload as Record<string, unknown>;
+        pendingTrackingUpdates.current.push({
+          window_id: typeof p.window_id === "string" ? p.window_id : `anom-${Date.now()}`,
+          anomaly_score: typeof p.anomaly_score === "number" ? p.anomaly_score : 0.85,
+          severity: typeof p.severity === "string" ? p.severity : "critical",
+          status: "triggered",
+          suspected_root_service: typeof p.service === "string" ? p.service : typeof p.suspected_root_service === "string" ? p.suspected_root_service : null,
+          blast_radius: isBlastRadius(p.blast_radius) ? p.blast_radius : null,
+        });
       } else if (
         eventType === "infrastructure.performance.alert" &&
         isPerformanceEvent(event.payload)
@@ -728,21 +763,38 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // ---- Persistent WebSocket connection ----
+  // ---- Persistent WebSocket connection / Demo Mode Mock ----
   useEffect(() => {
     let cancelled = false;
     let reconnectEnabled = true;
+
+    function updateConnectionState(nextState: ConnectionState) {
+      connectionStateRef.current = nextState;
+      setConnectionState(nextState);
+    }
+
+    if (FEATURE_FLAGS.ENABLE_DEMO_MODE) {
+      updateConnectionState("connected");
+      setConnectionUrl("mock://in-browser-telemetry-emitter");
+      mockTelemetry.start();
+      const unsubscribe = mockTelemetry.subscribe((event) => {
+        if (!cancelled) {
+          processEvent(event);
+        }
+      });
+
+      return () => {
+        cancelled = true;
+        unsubscribe();
+        mockTelemetry.stop();
+      };
+    }
 
     const clearReconnectTimer = () => {
       if (reconnectTimerRef.current !== null) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-    };
-
-    const updateConnectionState = (nextState: ConnectionState) => {
-      connectionStateRef.current = nextState;
-      setConnectionState(nextState);
     };
 
     const scheduleReconnect = (nextIndex: number) => {

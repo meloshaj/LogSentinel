@@ -28,13 +28,14 @@ class DrainParser:
     log template mining algorithm.
     """
 
-    def __init__(self, config_path: str | None = None, state_path: str | None = None) -> None:
+    def __init__(self, config_path: str | None = None, state_path: str | None = None, persistence: Any | None = None) -> None:
         """
         Initialize the Drain3 parser with optional custom paths.
         
         Args:
             config_path: Optional path to the drain3.ini configuration file.
             state_path: Optional path for the binary state persistence file.
+            persistence: Optional persistence handler (RedisPersistence or FilePersistence).
         """
         self.config_path: Path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
         self.state_path: Path = Path(state_path) if state_path else DEFAULT_STATE_PATH
@@ -44,12 +45,21 @@ class DrainParser:
         config.load(str(self.config_path))
         config.parameter_extraction_cache_capacity = int(config.parameter_extraction_cache_capacity)
 
-        redis_host = os.getenv("REDIS_HOST", "localhost")
-        redis_port = int(os.getenv("REDIS_PORT", "6379"))
-        self.redis_client = redis.Redis(host=redis_host, port=redis_port, decode_responses=False)
-        
-        persistence = RedisPersistence(redis_host=redis_host, redis_port=redis_port, redis_db=0, redis_pass=None, is_ssl=False, redis_key="logsentinel:drain3:state")
-        self._miner = TemplateMiner(persistence_handler=persistence, config=config)
+        if persistence is not None:
+            self._miner = TemplateMiner(persistence_handler=persistence, config=config)
+            self.redis_client = None
+        else:
+            redis_host = os.getenv("REDIS_HOST", "localhost")
+            redis_port = int(os.getenv("REDIS_PORT", "6379"))
+            try:
+                self.redis_client = redis.Redis(host=redis_host, port=redis_port, decode_responses=False, socket_timeout=1.0)
+                redis_pers = RedisPersistence(redis_host=redis_host, redis_port=redis_port, redis_db=0, redis_pass=None, is_ssl=False, redis_key="logsentinel:drain3:state")
+                self._miner = TemplateMiner(persistence_handler=redis_pers, config=config)
+            except Exception:
+                from drain3.file_persistence import FilePersistence
+                file_pers = FilePersistence(str(self.state_path))
+                self._miner = TemplateMiner(persistence_handler=file_pers, config=config)
+                self.redis_client = None
 
     def parse(self, raw_message: str, metadata: dict[str, Any] | None = None) -> ParsedLog:
         """

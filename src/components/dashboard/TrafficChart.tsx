@@ -1,6 +1,6 @@
-import { BarChart2, Filter } from "lucide-react";
+import { BarChart2, Filter, Activity, AlertTriangle, Flame } from "lucide-react";
 import {
-  Bar,
+  Area,
   Line,
   ComposedChart,
   CartesianGrid,
@@ -8,17 +8,16 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-  Scatter,
 } from "recharts";
 import { useLiveLogs } from "../../hooks/useLiveLogs";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { useMemo, useState } from "react";
 
 const SEVERITY_COLOR: Record<string, string> = {
-  critical: "#f85149",
-  high: "#f85149",
-  medium: "#d29922",
-  low: "#388bfd",
+  critical: "#ef4444",
+  high: "#f97316",
+  medium: "#f59e0b",
+  low: "#6366f1",
 };
 
 export function TrafficChart() {
@@ -36,23 +35,43 @@ export function TrafficChart() {
   };
 
   const timeSeriesData = useMemo(() => {
-    if (filteredLogs.length === 0) return [];
-    
-    // Bucket logs by minute
-    const buckets: Record<string, any> = {};
+    const windowMinutes = 20;
+    const now = new Date();
+    now.setSeconds(0, 0);
+    const buckets = new Map<string, {
+      time: string;
+      logs: number;
+      errors: number;
+      anomalies: number;
+      anomalyData: Array<{ severity: string; score: number; service: string; color: string }>;
+    }>();
+
+    // Pre-fill the visible window. This keeps the initial chart baseline honest:
+    // absent telemetry is represented as zero rather than a fabricated sample.
+    for (let index = windowMinutes - 1; index >= 0; index -= 1) {
+      const bucketTime = new Date(now.getTime() - index * 60_000);
+      const time = bucketTime.toTimeString().slice(0, 5);
+      buckets.set(time, { time, logs: 0, errors: 0, anomalies: 0, anomalyData: [] });
+    }
+
+    const ensureBucket = (time: string) => {
+      const existing = buckets.get(time);
+      if (existing) return existing;
+      const bucket = { time, logs: 0, errors: 0, anomalies: 0, anomalyData: [] };
+      buckets.set(time, bucket);
+      return bucket;
+    };
     
     filteredLogs.forEach(log => {
       const minute = log.timestamp.split(':').slice(0, 2).join(':');
-      if (!buckets[minute]) {
-        buckets[minute] = { time: minute, logs: 0, errors: 0, anomalies: 0 };
-      }
-      buckets[minute].logs += 1;
-      if (log.level === 'ERROR') {
-        buckets[minute].errors += 1;
+      const bucket = ensureBucket(minute);
+      bucket.logs += 1;
+      if (log.level === 'ERROR' || log.level === 'FATAL' || log.level === 'CRITICAL') {
+        bucket.errors += 1;
       }
     });
 
-    // Process tracking loops to overlay anomalies on the correct minute buckets
+    // Overlay live anomalies onto corresponding minute buckets
     activeTrackingLoops.forEach(loop => {
       const isHigh = loop.severity === 'critical' || loop.severity === 'high';
       const isMed = loop.severity === 'medium';
@@ -66,72 +85,63 @@ export function TrafficChart() {
         return;
       }
 
-      // fallback to current time if no created_at
       const d = (loop as any).created_at ? new Date((loop as any).created_at) : new Date();
       const minute = d.toTimeString().split(':').slice(0, 2).join(':');
       
-      if (buckets[minute]) {
-        buckets[minute].anomalies += 1;
-        // Keep track of the most severe anomaly in this bucket for rendering
-        if (!buckets[minute].anomalyData) {
-          buckets[minute].anomalyData = [];
-        }
-        buckets[minute].anomalyData.push({
-          severity: loop.severity,
-          score: loop.anomaly_score,
-          service: loop.suspected_root_service || "unknown",
-          color: SEVERITY_COLOR[loop.severity] || SEVERITY_COLOR.medium
-        });
-        
-        // The scatter point's Y value can just be placed at the log volume, or a fixed height
-        buckets[minute].scatterY = buckets[minute].logs;
-        buckets[minute].scatterColor = buckets[minute].anomalyData.some((a: any) => a.severity === 'critical' || a.severity === 'high') 
-          ? SEVERITY_COLOR.high 
-          : buckets[minute].anomalyData.some((a: any) => a.severity === 'medium')
-            ? SEVERITY_COLOR.medium
-            : SEVERITY_COLOR.low;
-      }
+      const bucket = ensureBucket(minute);
+      bucket.anomalies += 1;
+      bucket.anomalyData.push({
+        severity: loop.severity,
+        score: loop.anomaly_score,
+        service: loop.suspected_root_service || "unknown",
+        color: SEVERITY_COLOR[loop.severity] || SEVERITY_COLOR.high
+      });
     });
 
-    return Object.values(buckets).slice(-20);
+    return Array.from(buckets.values())
+      .sort((a: any, b: any) => a.time.localeCompare(b.time))
+      .slice(-20);
   }, [filteredLogs, activeTrackingLoops, filters]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
-      // Find logs and errors from payload
       const data = payload[0].payload;
       return (
-        <div className="bg-[#0d1117]/90 backdrop-blur-sm border border-[#21262d] rounded-xl p-4 shadow-xl min-w-[200px]">
-          <p className="text-[#e6edf3] font-bold mb-3 text-[13px] border-b border-[#21262d] pb-2">{label} UTC</p>
-          <div className="space-y-2 text-xs font-medium">
-            <div className="flex justify-between gap-6 items-center">
+        <div className="bg-[#0d1117]/95 backdrop-blur-md border border-[#21262d] rounded-xl p-3.5 shadow-2xl min-w-[210px]">
+          <p className="text-[#e6edf3] font-bold mb-2.5 text-xs border-b border-[#21262d] pb-1.5">{label} UTC</p>
+          <div className="space-y-1.5 text-xs font-medium">
+            <div className="flex justify-between gap-4 items-center">
               <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-sm bg-[#388bfd]" />
-                <span className="text-[#8b949e]">Total Logs</span>
+                <span className="w-2 h-2 rounded-sm bg-[#6366f1]" />
+                <span className="text-[#8b949e]">Log Volume</span>
               </div>
-              <span className="text-[#e6edf3] font-mono">{data.logs}</span>
+              <span className="text-[#e6edf3] font-mono font-bold">{data.logs}</span>
             </div>
-            <div className="flex justify-between gap-6 items-center">
+            <div className="flex justify-between gap-4 items-center">
               <div className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-[#d29922]" />
+                <span className="w-2 h-2 rounded-full bg-[#f59e0b]" />
                 <span className="text-[#8b949e]">Errors</span>
               </div>
-              <span className="text-[#e6edf3] font-mono">{data.errors}</span>
+              <span className="text-[#f59e0b] font-mono font-bold">{data.errors}</span>
+            </div>
+            <div className="flex justify-between gap-4 items-center">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#ef4444] animate-pulse" />
+                <span className="text-[#ef4444]">Anomalies</span>
+              </div>
+              <span className="text-[#ef4444] font-mono font-bold">{data.anomalies || 0}</span>
             </div>
           </div>
           {data.anomalyData && data.anomalyData.length > 0 && (
-            <div className="mt-4 pt-3 border-t border-[#21262d]">
-              <p className="text-[11px] text-[#8b949e] uppercase tracking-wider font-bold mb-2">Anomalies Detected</p>
-              <div className="space-y-2.5">
+            <div className="mt-3 pt-2.5 border-t border-[#21262d]">
+              <p className="text-[9px] text-[#8b949e] uppercase tracking-wider font-bold mb-1.5">Detected Anomaly Events</p>
+              <div className="space-y-1.5">
                 {data.anomalyData.map((a: any, i: number) => (
-                  <div key={i} className="flex flex-col gap-1 bg-[#161b22] p-2 rounded-md border border-[#30363d]">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[#e6edf3] font-semibold text-[11px]">{a.service}</span>
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase" style={{ background: `${a.color}20`, color: a.color }}>
-                        {a.severity}
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-[#7d8590]">Score: <span className="font-mono text-[#c9d1d9]">{a.score.toFixed(3)}</span></div>
+                  <div key={i} className="flex items-center justify-between bg-[#161b22] px-2 py-1 rounded border border-[#30363d] text-[10px]">
+                    <span className="text-[#e6edf3] font-semibold font-mono">{a.service}</span>
+                    <span className="px-1.5 py-0.2 rounded font-bold uppercase text-[8px]" style={{ background: `${a.color}20`, color: a.color }}>
+                      {a.severity} ({a.score.toFixed(2)})
+                    </span>
                   </div>
                 ))}
               </div>
@@ -144,29 +154,30 @@ export function TrafficChart() {
   };
 
   return (
-    <div className="flex flex-col rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#21262d]">
+    <div className="flex flex-col rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-[#21262d]">
         <div className="flex items-center gap-2">
-          <BarChart2 className="w-4 h-4 text-[#388bfd]" />
-          <span className="text-[#e6edf3]" style={{ fontSize: "13px", fontWeight: 600 }}>Telemetry Stream & Anomalies</span>
+          <Activity className="w-4 h-4 text-[#6366f1]" />
+          <span className="text-[#e6edf3] text-[13px] font-bold">Telemetry Stream & Live Anomalies</span>
         </div>
+        
         <div className="flex items-center gap-4">
-          {/* Severity Filter Bar */}
-          <div className="flex items-center gap-2 bg-[#0d1117] px-3 py-1.5 rounded-lg border border-[#30363d] shadow-sm">
-            <Filter className="w-3.5 h-3.5 text-[#8b949e]" />
-            <span className="text-[#8b949e] text-[11px] uppercase font-bold mr-2">Anomalies:</span>
+          {/* Severity Filter */}
+          <div className="flex items-center gap-1.5 bg-[#0d1117] px-2.5 py-1 rounded-lg border border-[#30363d] shadow-sm">
+            <Filter className="w-3 h-3 text-[#8b949e]" />
+            <span className="text-[#8b949e] text-[9px] uppercase font-bold mr-1">Severity:</span>
             {[
-              { id: 'high', label: 'High', color: SEVERITY_COLOR.high },
-              { id: 'medium', label: 'Medium', color: SEVERITY_COLOR.medium },
-              { id: 'low', label: 'Low', color: SEVERITY_COLOR.low },
+              { id: 'high', label: 'High', color: "#ef4444" },
+              { id: 'medium', label: 'Med', color: "#f59e0b" },
+              { id: 'low', label: 'Low', color: "#6366f1" },
             ].map((f) => {
               const active = filters[f.id as keyof typeof filters];
               return (
                 <button
                   key={f.id}
                   onClick={() => toggleFilter(f.id as keyof typeof filters)}
-                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold transition-all border ${
-                    active ? "text-white" : "text-[#8b949e] hover:text-[#c9d1d9]"
+                  className={`px-2 py-0.5 rounded-full text-[9px] font-bold transition-all border ${
+                    active ? "text-white shadow-sm" : "text-[#8b949e] hover:text-[#c9d1d9]"
                   }`}
                   style={{
                     backgroundColor: active ? f.color : 'transparent',
@@ -178,59 +189,86 @@ export function TrafficChart() {
               );
             })}
           </div>
-          <div className="hidden sm:flex gap-4">
-            {[
-              { color: "#388bfd", label: "Logs" },
-              { color: "#d29922", label: "Errors" },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full" style={{ background: item.color }} />
-                <span className="text-[#7d8590]" style={{ fontSize: "10px" }}>{item.label}</span>
-              </div>
-            ))}
+
+          {/* Three-Metric Legend */}
+          <div className="flex items-center gap-3.5 text-xs">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-sm bg-[#6366f1]" />
+              <span className="text-[#8b949e] text-[11px] font-medium">Log Volume</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b]" />
+              <span className="text-[#8b949e] text-[11px] font-medium">Errors</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444] animate-pulse" />
+              <span className="text-[#ef4444] text-[11px] font-bold">Anomalies</span>
+            </div>
           </div>
         </div>
       </div>
+
       <div className="px-4 pb-4 pt-2">
-        <ResponsiveContainer width="100%" height={160}>
-          <ComposedChart data={timeSeriesData.length > 0 ? timeSeriesData : [{ time: '00:00', logs: 0, errors: 0, anomalies: 0 }]} margin={{ top: 15, right: 0, left: -20, bottom: 0 }}>
+        <ResponsiveContainer width="100%" height={175}>
+          <ComposedChart 
+            data={timeSeriesData} 
+            margin={{ top: 15, right: 10, left: -20, bottom: 0 }}
+          >
             <defs>
-              <linearGradient id="gradLogs" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor="#388bfd" stopOpacity={0.25} />
-                <stop offset="95%" stopColor="#388bfd" stopOpacity={0} />
+              <linearGradient id="gradTotalLogs" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
+                <stop offset="95%" stopColor="#6366f1" stopOpacity={0.01} />
               </linearGradient>
-              <linearGradient id="gradErrors" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%"  stopColor="#d29922" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="#d29922" stopOpacity={0} />
+              <linearGradient id="gradErrorsGlow" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.30} />
+                <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.01} />
               </linearGradient>
             </defs>
-            <CartesianGrid key="grid" strokeDasharray="3 3" stroke="#21262d" vertical={false} />
-            <XAxis key="xaxis" dataKey="time" tick={{ fill: "#8b949e", fontSize: 11 }} axisLine={{ stroke: "#30363d" }} tickLine={false} dy={5} />
-            <YAxis key="yaxis" tick={{ fill: "#8b949e", fontSize: 11 }} axisLine={false} tickLine={false} dx={-5} />
-            <Tooltip
-              content={<CustomTooltip />}
-              cursor={{ fill: "#21262d", opacity: 0.4 }}
+            
+            <CartesianGrid strokeDasharray="3 3" stroke="#21262d" vertical={false} />
+            <XAxis dataKey="time" tick={{ fill: "#8b949e", fontSize: 10 }} axisLine={{ stroke: "#30363d" }} tickLine={false} dy={5} />
+            <YAxis 
+              tick={{ fill: "#8b949e", fontSize: 10 }} 
+              axisLine={false} 
+              tickLine={false} 
+              dx={-5} 
+              domain={[0, 'auto']} 
+              allowDataOverflow={false} 
             />
             
-            {/* Logs as subtle bars */}
-            <Bar dataKey="logs" fill="#388bfd" radius={[2, 2, 0, 0]} barSize={12} opacity={0.8} />
+            <Tooltip content={<CustomTooltip />} cursor={{ fill: "#21262d", opacity: 0.3 }} />
             
-            {/* Errors as a distinct line overlay */}
-            <Line dataKey="errors" type="monotone" stroke="#d29922" strokeWidth={2} dot={{ r: 3, fill: "#d29922", strokeWidth: 0 }} activeDot={{ r: 5, fill: "#d29922" }} />
+            {/* Graph 1: Total Log Volume Soft Glowing Area */}
+            <Area 
+              type="monotone" 
+              dataKey="logs" 
+              name="Logs"
+              stroke="#6366f1" 
+              strokeWidth={1.8} 
+              fill="url(#gradTotalLogs)" 
+              dot={false} 
+            />
+
+            {/* Graph 2: Errors Rate Amber Line Overlay */}
+            <Line 
+              dataKey="errors" 
+              type="monotone" 
+              name="Errors"
+              stroke="#f59e0b" 
+              strokeWidth={2} 
+              dot={{ r: 2.5, fill: "#f59e0b", strokeWidth: 0 }} 
+              activeDot={{ r: 4.5, fill: "#f59e0b" }} 
+            />
             
-            {/* Scatter points for anomalies with high contrast */}
-            <Scatter 
-              dataKey="scatterY" 
-              shape={(props: any) => {
-                const { cx, cy, payload } = props;
-                if (!payload.scatterColor) return <g />;
-                return (
-                  <g transform={`translate(${cx},${cy - 10})`}>
-                    <path d="M 0 -8 L 8 6 L -8 6 Z" fill={payload.scatterColor} className="animate-pulse" />
-                    <path d="M 0 -8 L 8 6 L -8 6 Z" fill="none" stroke="#fff" strokeWidth={1.5} opacity={0.8} />
-                  </g>
-                );
-              }}
+            {/* Graph 3: Anomalies High-Contrast Red Line with glowing pulse dots */}
+            <Line 
+              dataKey="anomalies" 
+              type="monotone" 
+              name="Anomalies"
+              stroke="#ef4444" 
+              strokeWidth={2.5} 
+              dot={{ r: 3.5, fill: "#ef4444", stroke: "#0d1117", strokeWidth: 1.5 }} 
+              activeDot={{ r: 6.0, fill: "#ef4444", stroke: "#ffffff", strokeWidth: 2 }} 
             />
           </ComposedChart>
         </ResponsiveContainer>

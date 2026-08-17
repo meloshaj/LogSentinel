@@ -1,4 +1,4 @@
-export type LogLevel = "INFO" | "WARN" | "ERROR" | "DEBUG" | "FATAL";
+export type LogLevel = "INFO" | "WARN" | "ERROR" | "DEBUG" | "FATAL" | "CRITICAL";
 
 export interface LogEntry {
   id: string;
@@ -9,6 +9,11 @@ export interface LogEntry {
   template_id?: string;
   metadata?: Record<string, unknown>;
   latency_ms?: number;
+  template_text?: string;
+  parameters?: unknown[];
+  cluster_size?: number;
+  source?: string;
+  environment?: string;
 }
 
 export interface ServiceAnomaly {
