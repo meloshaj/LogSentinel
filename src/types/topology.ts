@@ -3,33 +3,40 @@
 // strict frontend typing and safe defaults for untyped backend dicts.
 // ---------------------------------------------------------------------------
 
-export type NodeType = "service" | "database" | "cache" | "queue" | "gateway";
+export type NodeType = "gateway" | "service" | "database" | "cache" | "queue";
 
 export type NodeStatus = "healthy" | "degraded" | "critical";
 
-export type EdgeStatus = "normal" | "stressed" | "failing";
+export interface TopologyNodeMetrics {
+  latency_p95_ms: number;
+  error_rate_pct: number;
+  throughput_rps: number;
+}
 
 export interface TopologyNode {
   id: string;
-  label: string;
+  name: string;
   type: NodeType;
   status: NodeStatus;
-  metadata?: Record<string, unknown>;
+  metrics: TopologyNodeMetrics;
+  active_anomaly_id: string | null;
+  is_root_cause: boolean;
 }
 
 export interface TopologyEdge {
   id: string;
   source: string;
   target: string;
-  latency_ms?: number;
-  error_rate?: number;
-  status?: EdgeStatus;
+  call_count: number;
+  avg_latency_ms: number;
+  error_count: number;
+  is_blast_path: boolean;
 }
 
 export interface TopologyResponse {
   nodes: TopologyNode[];
   edges: TopologyEdge[];
-  updated_at: string;
+  snapshot_timestamp: string;
 }
 
 /**

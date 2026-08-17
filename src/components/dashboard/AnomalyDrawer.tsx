@@ -1,4 +1,4 @@
-import { X, Flame, Bell, Clock, Activity, ShieldAlert, XCircle, ArrowRight, AlertTriangle } from "lucide-react";
+import { X, Flame, Bell, Clock, Activity, ShieldAlert, XCircle, ArrowRight, AlertTriangle, UserPlus, CheckCircle, ListChecks } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import type { TrackingLoopEvent } from "../../providers/TelemetryProvider";
 import { Skeleton } from "../common/Skeleton";
@@ -32,9 +32,29 @@ export function AnomalyDrawer({ isOpen, onClose, incident, isLoading }: AnomalyD
 
   if (!isOpen) return null;
 
+  const [localStatus, setLocalStatus] = useState<string>("open");
+  const [auditLog, setAuditLog] = useState<{action: string; time: string; user: string}[]>([]);
+
+  useEffect(() => {
+    if (incident) {
+      setLocalStatus(incident.status || "open");
+      setAuditLog([
+        { action: "Incident auto-detected by AI", time: incident.timestamp || new Date().toLocaleTimeString(), user: "System" }
+      ]);
+    }
+  }, [incident]);
+
   const severity = incident?.severity || "medium";
   const sev = SEVERITY_CONFIG[severity] || SEVERITY_CONFIG.medium;
   const SevIcon = sev?.icon || AlertTriangle;
+
+  const handleTriage = (action: string, newStatus: string) => {
+    setLocalStatus(newStatus);
+    setAuditLog(prev => [
+      { action, time: new Date().toLocaleTimeString(), user: "Current User" },
+      ...prev
+    ]);
+  };
 
   return (
     <>
@@ -93,8 +113,8 @@ export function AnomalyDrawer({ isOpen, onClose, incident, isLoading }: AnomalyD
                 <div className="p-4 rounded-xl bg-[#161b22] border border-[#21262d]">
                   <span className="text-[#7d8590] text-xs font-semibold uppercase tracking-wider">Status</span>
                   <div className="mt-1 flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-[#f85149] animate-pulse" />
-                    <span className="text-[#e6edf3] font-bold capitalize">{incident.status || "Open"}</span>
+                    <span className={`w-2 h-2 rounded-full ${localStatus === 'resolved' ? 'bg-[#3fb950]' : localStatus === 'investigating' ? 'bg-[#f59e0b] animate-pulse' : 'bg-[#f85149] animate-pulse'}`} />
+                    <span className="text-[#e6edf3] font-bold capitalize">{localStatus}</span>
                   </div>
                 </div>
               </div>
@@ -163,13 +183,57 @@ export function AnomalyDrawer({ isOpen, onClose, incident, isLoading }: AnomalyD
                 </div>
               )}
 
+              {/* Audit Timeline */}
+              <div className="space-y-3">
+                <h3 className="text-[#e6edf3] font-semibold text-sm flex items-center gap-2">
+                  <ListChecks className="w-4 h-4 text-[#388bfd]" />
+                  Audit Timeline
+                </h3>
+                <div className="bg-[#161b22] border border-[#21262d] rounded-xl p-4">
+                  <div className="relative border-l border-[#30363d] ml-3 space-y-4">
+                    {auditLog.map((log, i) => (
+                      <div key={i} className="relative pl-5">
+                        <div className="absolute -left-[5px] top-1.5 w-2 h-2 rounded-full bg-[#388bfd] ring-4 ring-[#161b22]" />
+                        <div className="flex flex-col">
+                          <span className="text-[#e6edf3] text-sm">{log.action}</span>
+                          <span className="text-[#7d8590] text-xs">{log.user} • {log.time}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               {/* Actions */}
-              <div className="pt-4 flex gap-3">
-                <button className="flex-1 py-2.5 rounded-lg bg-[#3fb950] text-white font-semibold text-sm hover:bg-[#2ea043] transition-colors">
-                  Acknowledge
-                </button>
-                <button className="flex-1 py-2.5 rounded-lg bg-[#21262d] text-[#c9d1d9] font-semibold text-sm hover:bg-[#30363d] transition-colors">
-                  View Logs
+              <div className="pt-4 flex flex-col gap-3 pb-6">
+                <div className="flex gap-3">
+                  {localStatus === 'open' && (
+                    <button 
+                      onClick={() => handleTriage("Acknowledged incident", "investigating")}
+                      className="flex-1 py-2.5 rounded-lg bg-[#3fb950] text-white font-semibold text-sm hover:bg-[#2ea043] transition-colors"
+                    >
+                      Acknowledge
+                    </button>
+                  )}
+                  {localStatus !== 'resolved' && (
+                    <button 
+                      onClick={() => handleTriage("Assigned incident to on-call", localStatus)}
+                      className="flex-1 py-2.5 flex items-center justify-center gap-2 rounded-lg bg-[#388bfd] text-white font-semibold text-sm hover:bg-[#2f81f7] transition-colors"
+                    >
+                      <UserPlus className="w-4 h-4" /> Assign
+                    </button>
+                  )}
+                  {localStatus !== 'resolved' && (
+                    <button 
+                      onClick={() => handleTriage("Resolved incident", "resolved")}
+                      className="flex-1 py-2.5 flex items-center justify-center gap-2 rounded-lg border border-[#3fb950] text-[#3fb950] font-semibold text-sm hover:bg-[#3fb950]/10 transition-colors"
+                    >
+                      <CheckCircle className="w-4 h-4" /> Resolve
+                    </button>
+                  )}
+                </div>
+                <button className="w-full py-2.5 rounded-lg bg-[#21262d] text-[#c9d1d9] font-semibold text-sm hover:bg-[#30363d] transition-colors">
+                  View Raw Logs
                 </button>
               </div>
             </>

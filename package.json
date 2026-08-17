@@ -16,6 +16,7 @@
     "@react-oauth/google": "^0.13.5",
     "@types/dagre": "^0.7.54",
     "@xyflow/react": "^12.9.0",
+    "cytoscape": "^3.34.1",
     "dagre": "^0.8.5",
     "lucide-react": "0.487.0",
     "motion": "^12.42.2",
