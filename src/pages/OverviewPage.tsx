@@ -8,6 +8,7 @@ import { Activity, AlertTriangle, ArrowRight, CheckCircle, Clock, Database, Eye,
 import { useNavigate } from "react-router";
 import { EmptyState } from "../components/common/EmptyState";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
+import { AddDataSourceButton } from "../components/integrations/DataSourceModal";
 
 const BenchmarkingHUD = import.meta.env.VITE_ENABLE_BENCHMARKING === 'true'
   ? React.lazy(() => import("../components/dashboard/BenchmarkingHUD").then(m => ({ default: m.BenchmarkingHUD })))
@@ -63,11 +64,14 @@ export function OverviewPage() {
 
   if (totalLogCount === 0 && !isBackfillLoading) {
     return (
-      <EmptyState
-        title="No Telemetry Detected"
-        description="We're waiting for the first logs to arrive. Ensure your services are configured to send telemetry to the ingestion gateway."
-        icon={Database}
-      />
+      <div className="flex flex-col items-center gap-6">
+        <EmptyState
+          title="No Telemetry Detected"
+          description="We're waiting for the first logs to arrive. Connect a data source to start streaming telemetry."
+          icon={Database}
+        />
+        <AddDataSourceButton />
+      </div>
     );
   }
 
@@ -83,6 +87,7 @@ export function OverviewPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <AddDataSourceButton variant="compact" />
           <button
             onClick={() => setShowLowSeverity(!showLowSeverity)}
             className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
