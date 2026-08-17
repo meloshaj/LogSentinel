@@ -39,9 +39,11 @@ from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
 from .workers.event_manager import EventManager
 from .workers.feature_worker import FeatureExtractionWorker
+from .workers.stream_cleaner import StreamCleanerWorker
 from .repositories.tracking_repository import TrackingRepository
 from .routers.auth_router import router as auth_router
 from .routers.benchmark_router import router as benchmark_router
+from .routers.ingest_bulk import router as ingest_bulk_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -144,6 +146,12 @@ drain_worker = DrainWorker(
     benchmarking_collector=benchmarking_collector,
 )
 
+stream_cleaner = StreamCleanerWorker(
+    check_interval_seconds=60.0,
+    min_idle_time_ms=120_000,
+    batch_size=100
+)
+
 
 _JWT_DEV_DEFAULTS = frozenset({
     "logsentinel_jwt_secret_key_change_me_in_prod",
@@ -186,15 +194,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await conn.run_sync(Base.metadata.create_all)
 
     drain_worker.set_redis_client(app.state.redis)
+    stream_cleaner.set_redis_client(app.state.redis)
     drain_worker.start()
     feature_worker.start()
     event_manager.start()
+    stream_cleaner.start()
     telemetry_manager.set_redis_client(app.state.redis)
     telemetry_manager.start()
     try:
         yield
     finally:
         # Drain parsing first so feature extraction receives every accepted log.
+        await stream_cleaner.stop()
         await drain_worker.stop()
         await feature_worker.stop()
         await event_manager.stop()
@@ -279,6 +290,7 @@ from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(auth_router)
+app.include_router(ingest_bulk_router)
 
 benchmarking_settings = get_benchmarking_settings()
 if benchmarking_settings.enable_benchmarking_endpoints:

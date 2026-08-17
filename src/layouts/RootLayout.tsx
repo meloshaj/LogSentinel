@@ -5,6 +5,7 @@ import { useClock } from "../hooks/useClock";
 import { useThemeMode } from "../hooks/useThemeMode";
 import { Sidebar } from "./Sidebar";
 import { TelemetryProvider } from "../providers/TelemetryProvider";
+import { AddDataSourceButton } from "../components/integrations/DataSourceModal";
 
 function Header() {
   const location = useLocation();
@@ -36,6 +37,7 @@ function Header() {
             style={{ fontSize: "12px" }}
           />
         </div>
+        <AddDataSourceButton variant="compact" />
         <button aria-label="View notifications" className="relative flex items-center justify-center w-8 h-8 rounded-lg bg-[#161b22] border border-[#21262d] text-[#7d8590] hover:text-[#e6edf3] transition-colors">
           <Bell className="w-4 h-4" />
           <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[#f85149]" />

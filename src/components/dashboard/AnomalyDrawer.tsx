@@ -30,8 +30,6 @@ export function AnomalyDrawer({ isOpen, onClose, incident, isLoading }: AnomalyD
     };
   }, [isOpen]);
 
-  if (!isOpen) return null;
-
   const [localStatus, setLocalStatus] = useState<string>("open");
   const [auditLog, setAuditLog] = useState<{action: string; time: string; user: string}[]>([]);
 
@@ -43,6 +41,8 @@ export function AnomalyDrawer({ isOpen, onClose, incident, isLoading }: AnomalyD
       ]);
     }
   }, [incident]);
+
+  if (!isOpen) return null;
 
   const severity = incident?.severity || "medium";
   const sev = SEVERITY_CONFIG[severity] || SEVERITY_CONFIG.medium;
