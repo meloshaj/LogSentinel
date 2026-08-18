@@ -29,7 +29,7 @@ export function ServiceInvestigationDrawer({ nodeId, nodes, onClose }: ServiceIn
   if (!node) return null;
 
   // Filter logs for this service
-  const serviceLogs = filteredLogs.filter(log => {
+  const serviceLogs = filteredLogs.filter((log: any) => {
     const serviceName = (log.service_name || log.service || "").toLowerCase();
     return serviceName === node.name.toLowerCase() || serviceName === node.id.toLowerCase();
   }).slice(-20);
@@ -129,10 +129,10 @@ export function ServiceInvestigationDrawer({ nodeId, nodes, onClose }: ServiceIn
                         <span className={`text-xs font-bold px-2 py-0.5 rounded ${isRoot ? 'bg-[#ef4444] text-white' : 'bg-[#f59e0b] text-[#161b22]'}`}>
                           {isRoot ? 'ROOT CAUSE' : 'BLAST RADIUS'}
                         </span>
-                        <span className="text-[#8b949e] text-xs font-mono">ID: {anomaly.window_id?.split('-')[0] || anomaly.id}</span>
+                        <span className="text-[#8b949e] text-xs font-mono">ID: {anomaly.window_id?.split('-')[0] || (anomaly as any).id || 'unknown'}</span>
                       </div>
                       <div className="text-sm text-[#e6edf3]">
-                        Confidence: <span className="font-mono text-[#388bfd]">{(anomaly.root_cause_confidence * 100).toFixed(1)}%</span>
+                        Confidence: <span className="font-mono text-[#388bfd]">{(((anomaly as any).root_cause_confidence || 0) * 100).toFixed(1)}%</span>
                       </div>
                     </div>
                   );
@@ -154,11 +154,11 @@ export function ServiceInvestigationDrawer({ nodeId, nodes, onClose }: ServiceIn
                     <div key={idx} className="text-xs font-mono py-1 border-b border-[#21262d]/50 last:border-0 hover:bg-[#21262d]/30 px-1 rounded">
                       <div className="flex gap-2">
                         <span className="text-[#8b949e] whitespace-nowrap">
-                          {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, fractionalSecondDigits: 2 })}
+                          {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, fractionalSecondDigits: 3 } as any)}
                         </span>
                         <span className={`${
-                          log.level === 'error' || log.level === 'fatal' ? 'text-[#ef4444]' :
-                          log.level === 'warn' || log.level === 'warning' ? 'text-[#f59e0b]' :
+                          log.level === 'ERROR' || log.level === 'FATAL' || log.level === 'CRITICAL' ? 'text-[#ef4444]' :
+                          log.level === 'WARN' || (log.level as string) === 'warning' ? 'text-[#f59e0b]' :
                           'text-[#3fb950]'
                         } uppercase w-10`}>
                           {log.level.substring(0, 4)}

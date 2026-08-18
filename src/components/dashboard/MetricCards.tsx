@@ -152,7 +152,7 @@ export function MetricCards({ showLowSeverity = true, onToggleLowSeverity }: { s
     }
   });
   
-  const totalServices = topology?.node_count || 0;
+  const totalServices = topology?.nodes?.length || 0;
   const numDegraded = affectedServices.size;
   const healthScore = totalServices > 0 
     ? Math.max(0, 100 - Math.round((numDegraded / totalServices) * 100))
