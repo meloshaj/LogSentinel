@@ -1,14 +1,13 @@
 import gzip
 import json
 import logging
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Query, Header, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import ValidationError
 
-from ..schemas.ingest import BulkLogEntry, BulkIngestPayload, BulkIngestResponse
-from ..security import require_ingestion_api_key
 from ..core.rate_limit import limiter
+from ..schemas.ingest import BulkIngestPayload, BulkIngestResponse, BulkLogEntry
+from ..security import require_ingestion_api_key
 
 logger = logging.getLogger("logsentinel.ingest.bulk")
 

@@ -7,7 +7,6 @@ AsyncSession ORM adapter.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,14 +20,14 @@ class UserRepository:
     """Repository class managing CRUD operations for UserRecord ORM models."""
 
     @staticmethod
-    async def get_user_by_email(db: AsyncSession, email: str) -> Optional[UserRecord]:
+    async def get_user_by_email(db: AsyncSession, email: str) -> UserRecord | None:
         """Retrieve a user by their unique email address."""
         stmt = select(UserRecord).where(UserRecord.email == email)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[UserRecord]:
+    async def get_user_by_id(db: AsyncSession, user_id: int) -> UserRecord | None:
         """Retrieve a user by their primary key id."""
         stmt = select(UserRecord).where(UserRecord.id == user_id)
         result = await db.execute(stmt)
@@ -38,9 +37,9 @@ class UserRepository:
     async def create_user(
         db: AsyncSession,
         email: str,
-        hashed_password: Optional[str] = None,
-        full_name: Optional[str] = None,
-        organization: Optional[str] = None,
+        hashed_password: str | None = None,
+        full_name: str | None = None,
+        organization: str | None = None,
         commit: bool = True,
     ) -> UserRecord:
         """Persist a user, optionally leaving commit control to the caller."""

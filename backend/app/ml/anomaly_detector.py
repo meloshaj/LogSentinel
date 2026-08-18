@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import joblib
 from sklearn.ensemble import IsolationForest
@@ -54,7 +54,7 @@ class IsolationForestAnomalyDetector:
         """
         self.random_state: int = random_state
         self.contamination: float = contamination
-        self.model: Optional[IsolationForest] = None
+        self.model: IsolationForest | None = None
         self.model_version: str = "isolation_forest_v1"
         self.training_samples: int = 0
 
@@ -141,7 +141,7 @@ class IsolationForestAnomalyDetector:
         joblib.dump({"model": self.model, "model_version": self.model_version, "feature_columns": FEATURE_COLUMNS, "training_samples": self.training_samples}, model_path)
 
     @classmethod
-    def load_model(cls, path: str | Path) -> "IsolationForestAnomalyDetector":
+    def load_model(cls, path: str | Path) -> IsolationForestAnomalyDetector:
         """Load a previously serialized detector from disk."""
         model_path = Path(path)
         if not model_path.exists():

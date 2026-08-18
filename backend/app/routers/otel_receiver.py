@@ -3,12 +3,16 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, Response, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..core.redis import init_redis_pool
+from ..schemas.otel import (
+    ExportLogsPartialSuccess,
+    ExportLogsServiceRequest,
+    ExportLogsServiceResponse,
+)
 from ..security import require_ingestion_api_key
-from ..schemas.otel import ExportLogsServiceRequest, ExportLogsServiceResponse, ExportLogsPartialSuccess
 
 logger = logging.getLogger("logsentinel.otel")
 

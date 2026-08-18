@@ -1,8 +1,7 @@
-import asyncio
-import time
-from typing import Optional, Any
-from collections import deque
 import logging
+import time
+from collections import deque
+from typing import Any
 
 from ..models import PerformanceEvent
 

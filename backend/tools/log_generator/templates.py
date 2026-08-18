@@ -15,7 +15,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Random-value generators (deterministic when seeded via the caller's RNG)
 # ---------------------------------------------------------------------------

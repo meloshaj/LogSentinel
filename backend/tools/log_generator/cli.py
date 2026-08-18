@@ -19,9 +19,8 @@ import asyncio
 import logging
 import signal
 import sys
-from typing import Any
 
-from .config import GeneratorConfig, default_ecommerce_topology
+from .config import default_ecommerce_topology
 from .generator import LogPayloadGenerator
 from .scenarios import SCENARIO_REGISTRY
 from .streamer import LogStreamer

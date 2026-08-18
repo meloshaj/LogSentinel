@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Any, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -11,18 +11,18 @@ class BulkLogEntry(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the log event was emitted",
     )
-    service_name: Optional[str] = Field(
+    service_name: str | None = Field(
         None, description="Name of the emitting service"
     )
     level: str = Field(default="INFO", description="Log severity")
     message: str = Field(..., min_length=1, description="The log message payload")
-    trace_id: Optional[str] = Field(None, description="Distributed trace identifier")
-    span_id: Optional[str] = Field(None, description="Current span identifier")
-    parent_span_id: Optional[str] = Field(None, description="Parent span identifier")
+    trace_id: str | None = Field(None, description="Distributed trace identifier")
+    span_id: str | None = Field(None, description="Current span identifier")
+    parent_span_id: str | None = Field(None, description="Parent span identifier")
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Optional structured metadata"
     )
-    raw: Optional[str] = Field(default=None, description="Raw log line if available")
+    raw: str | None = Field(default=None, description="Raw log line if available")
 
     @field_validator("level", mode="before")
     @classmethod
@@ -65,5 +65,5 @@ class BulkIngestPayload(BaseModel):
 class BulkIngestResponse(BaseModel):
     status: str = Field(..., description="Status message, typically 'accepted'")
     ingested_count: int = Field(..., description="Number of logs successfully ingested")
-    stream_id_last: Optional[str] = Field(None, description="Redis stream ID of the last inserted message")
+    stream_id_last: str | None = Field(None, description="Redis stream ID of the last inserted message")
     dropped_count: int = Field(0, description="Number of logs dropped due to malformed data (NDJSON)")

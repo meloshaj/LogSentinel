@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import ulid
 
+import redis
+import ulid
 from drain3 import TemplateMiner
 from drain3.redis_persistence import RedisPersistence
 from drain3.template_miner_config import TemplateMinerConfig
-import redis
-import os
 
 from ..models import ParsedLog
-
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "drain3.ini"
 DEFAULT_STATE_PATH = Path(__file__).resolve().parents[3] / "state" / "drain3_state.bin"

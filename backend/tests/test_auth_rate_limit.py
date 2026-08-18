@@ -1,5 +1,7 @@
 from fastapi.testclient import TestClient
+
 from app.main import app
+
 
 def test_auth_login_rate_limit():
     with TestClient(app) as client:

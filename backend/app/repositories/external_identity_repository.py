@@ -11,7 +11,6 @@ Email is never used as an identity lookup key.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +29,7 @@ class ExternalIdentityRepository:
         provider: str,
         issuer: str,
         subject: str,
-    ) -> Optional[ExternalIdentityRecord]:
+    ) -> ExternalIdentityRecord | None:
         """Look up an external identity by its stable triple (provider, issuer, subject)."""
         stmt = (
             select(ExternalIdentityRecord)
@@ -46,7 +45,7 @@ class ExternalIdentityRepository:
         db: AsyncSession,
         user_id: int,
         provider: str,
-    ) -> Optional[ExternalIdentityRecord]:
+    ) -> ExternalIdentityRecord | None:
         """Look up an external identity for a specific user and provider."""
         stmt = (
             select(ExternalIdentityRecord)
@@ -73,10 +72,10 @@ class ExternalIdentityRepository:
         provider: str,
         issuer: str,
         subject: str,
-        tenant_id: Optional[str] = None,
-        provider_object_id: Optional[str] = None,
-        email: Optional[str] = None,
-        display_name: Optional[str] = None,
+        tenant_id: str | None = None,
+        provider_object_id: str | None = None,
+        email: str | None = None,
+        display_name: str | None = None,
         commit: bool = True,
     ) -> ExternalIdentityRecord:
         """Persist an identity, optionally leaving commit control to the caller."""

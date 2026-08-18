@@ -11,7 +11,6 @@ import networkx as nx
 
 from .runtime_dependency_parser import TraceObservation
 
-
 TransactionKey = tuple[str | None, str]
 
 
@@ -489,7 +488,7 @@ class NetworkXTopologyPipeline:
         return cleaned or None
 
     def _min_datetime(self, left: datetime, right: datetime) -> datetime:
-        return left if left <= right else right
+        return min(left, right)
 
     def _max_datetime(
         self,

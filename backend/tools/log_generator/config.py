@@ -7,10 +7,7 @@ provides a realistic 5-service e-commerce topology out of the box.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Service-level configuration
@@ -76,7 +73,7 @@ class GeneratorConfig(BaseModel):
         default="http://localhost:8000/ingest-log",
         description="Full URL of the LogSentinel ingestion endpoint.",
     )
-    api_key: Optional[str] = Field(
+    api_key: str | None = Field(
         default=None,
         description="Ingestion API key sent via X-API-Key header.",
     )

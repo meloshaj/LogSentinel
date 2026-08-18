@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime, timezone, timedelta
+import json
 import logging
+from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import json
-from sqlalchemy import Column, DateTime, MetaData, Table, Text, and_, insert, select, delete
-from sqlalchemy.dialects.postgresql import BIGINT, JSONB, VARCHAR
+from sqlalchemy import (
+    Column,
+    DateTime,
+    MetaData,
+    Table,
+    Text,
+    and_,
+    delete,
+    insert,
+    select,
+)
+from sqlalchemy.dialects.postgresql import JSONB, VARCHAR
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..core.database import get_engine

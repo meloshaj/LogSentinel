@@ -1,9 +1,10 @@
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
 
-from app.repositories.log_repository import LogRepository
+import pytest
+
 from app.models import ParsedLog
+from app.repositories.log_repository import LogRepository
 
 
 @pytest.fixture

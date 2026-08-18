@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import json
+import logging
 import uuid
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
+
 from redis.asyncio import Redis
 
 from ..models import ParsedLog
@@ -17,7 +18,10 @@ from ..schemas.alerting import IncidentAlertPayload
 from ..services.alerting import dispatch_incident_alert
 from ..services.batch_manager import ParsedLogBatchManager
 from ..services.drain_parser import DrainParser
-from ..services.runtime_dependency_parser import RuntimeDependencyParser, TraceObservation
+from ..services.runtime_dependency_parser import (
+    RuntimeDependencyParser,
+    TraceObservation,
+)
 from ..services.telemetry import telemetry_event, telemetry_manager
 
 logger = logging.getLogger("logsentinel.drain_worker")
@@ -38,9 +42,9 @@ class DrainWorker:
         parser: DrainParser,
         batch_manager: ParsedLogBatchManager | None = None,
         recent_limit: int = 1000,
-        on_log_parsed: Optional[Callable[[ParsedLog], None]] = None,
+        on_log_parsed: Callable[[ParsedLog], None] | None = None,
         runtime_dependency_parser: RuntimeDependencyParser | None = None,
-        on_trace_observation: Optional[Callable[[TraceObservation], None]] = None,
+        on_trace_observation: Callable[[TraceObservation], None] | None = None,
         recent_trace_observation_limit: int = 1000,
         queue_drain_timeout_seconds: float = 30.0,
         benchmarking_collector: Any = None,
@@ -70,12 +74,12 @@ class DrainWorker:
         self.parser: DrainParser = parser
         self.batch_manager: ParsedLogBatchManager = batch_manager or ParsedLogBatchManager()
         self._recent_parsed_logs: deque[ParsedLog] = deque(maxlen=recent_limit)
-        self._on_log_parsed: Optional[Callable[[ParsedLog], None]] = on_log_parsed
-        self.runtime_dependency_parser: Optional[RuntimeDependencyParser] = runtime_dependency_parser
+        self._on_log_parsed: Callable[[ParsedLog], None] | None = on_log_parsed
+        self.runtime_dependency_parser: RuntimeDependencyParser | None = runtime_dependency_parser
         self._recent_trace_observations: deque[TraceObservation] = deque(
             maxlen=recent_trace_observation_limit
         )
-        self._on_trace_observation: Optional[Callable[[TraceObservation], None]] = on_trace_observation
+        self._on_trace_observation: Callable[[TraceObservation], None] | None = on_trace_observation
         self.queue_drain_timeout_seconds: float = queue_drain_timeout_seconds
         self.benchmarking_collector: Any = benchmarking_collector
         self.stream_name: str = "logs:stream"

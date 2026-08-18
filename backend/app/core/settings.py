@@ -8,7 +8,6 @@ backed and stateless for machine-to-machine log ingestion.
 from __future__ import annotations
 
 import os
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -75,7 +74,7 @@ class DatabaseSettings(BaseModel):
     )
 
     # Optional full DSN override — takes precedence over individual fields
-    database_url_override: Optional[str] = Field(
+    database_url_override: str | None = Field(
         default=None,
         description="Full DSN override (env: DATABASE_URL).  When set, "
         "individual host/port/user/password/db_name fields are ignored.",

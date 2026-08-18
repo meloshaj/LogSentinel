@@ -11,10 +11,13 @@ import logging
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..ml.anomaly_detector import IsolationForestAnomalyDetector
-from ..ml.feature_extractor import SlidingWindowFeatureExtractor as SlidingWindowExtractor, WindowConfig
+from ..ml.feature_extractor import (
+    SlidingWindowFeatureExtractor as SlidingWindowExtractor,
+)
+from ..ml.feature_extractor import WindowConfig
 from ..models import FeatureVector, ParsedLog
 from ..repositories.feature_repository import FeatureRepository
 from ..services.telemetry import telemetry_event, telemetry_manager
@@ -35,13 +38,13 @@ class FeatureExtractionWorker:
     
     def __init__(
         self,
-        window_config: Optional[WindowConfig] = None,
+        window_config: WindowConfig | None = None,
         extraction_interval_seconds: float = 10.0,
         feature_buffer_size: int = 1000,
-        anomaly_detector: Optional[IsolationForestAnomalyDetector] = None,
-        anomaly_model_path: Optional[str | Path] = None,
-        feature_repository: Optional[FeatureRepository] = None,
-        event_manager: Optional[EventManager] = None,
+        anomaly_detector: IsolationForestAnomalyDetector | None = None,
+        anomaly_model_path: str | Path | None = None,
+        feature_repository: FeatureRepository | None = None,
+        event_manager: EventManager | None = None,
     ) -> None:
         """Initialize the feature extraction worker.
         
@@ -66,7 +69,7 @@ class FeatureExtractionWorker:
         self._running = False
         self._features_extracted = 0
         self._extraction_errors = 0
-        self._last_extraction_at: Optional[str] = None
+        self._last_extraction_at: str | None = None
         
         logger.info(
             "FeatureExtractionWorker initialized: interval=%ds window=%ds stride=%ds",
@@ -112,7 +115,7 @@ class FeatureExtractionWorker:
                 self._extraction_errors += 1
                 logger.exception("Feature extraction worker encountered an error")
     
-    async def extract_pending_features(self, current_time: Optional[datetime] = None) -> list[FeatureVector]:
+    async def extract_pending_features(self, current_time: datetime | None = None) -> list[FeatureVector]:
         """Generate all pending windows and extract features.
         
         Returns:
@@ -208,9 +211,9 @@ class FeatureExtractionWorker:
 
     @staticmethod
     def _resolve_anomaly_detector(
-        anomaly_detector: Optional[IsolationForestAnomalyDetector],
-        anomaly_model_path: Optional[str | Path],
-    ) -> Optional[IsolationForestAnomalyDetector]:
+        anomaly_detector: IsolationForestAnomalyDetector | None,
+        anomaly_model_path: str | Path | None,
+    ) -> IsolationForestAnomalyDetector | None:
         if anomaly_detector is not None:
             return anomaly_detector
 

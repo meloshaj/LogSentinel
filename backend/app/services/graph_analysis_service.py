@@ -218,7 +218,6 @@ class GraphAnalysisService:
             elif normalized_level in {"warning", "warn"}:
                 accumulators[service].warning_count += 1
             # Removed root_cause and propagated_symptom trust from arbitrary metadata
-            pass
 
 
 def normalize_anomaly_score(

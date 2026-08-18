@@ -1,5 +1,7 @@
 import os
+
 from pydantic import BaseModel, Field
+
 
 class WebhookSettings(BaseModel):
     """Configuration for webhook notifications."""

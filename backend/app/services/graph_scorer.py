@@ -13,6 +13,7 @@ from typing import Any
 import networkx as nx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..schemas.alerting import IncidentAlertPayload
 from ..schemas.blast_radius import (
     BlastRadiusNode,
     BlastRadiusResult,
@@ -21,7 +22,6 @@ from ..schemas.blast_radius import (
     RootCauseCandidate,
     ServiceAnomalyEvidence,
 )
-from ..schemas.alerting import IncidentAlertPayload
 from .alerting import dispatch_incident_alert
 
 
@@ -71,7 +71,7 @@ class PathwayScoreWeights(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     @model_validator(mode="after")
-    def _validate_positive_total(self) -> "PathwayScoreWeights":
+    def _validate_positive_total(self) -> PathwayScoreWeights:
         if sum(self.model_dump().values()) <= 0:
             raise ValueError("at least one pathway score weight must be positive")
         return self
@@ -94,7 +94,7 @@ class RootAggregationWeights(BaseModel):
     model_config = ConfigDict(validate_assignment=True)
 
     @model_validator(mode="after")
-    def _validate_positive_total(self) -> "RootAggregationWeights":
+    def _validate_positive_total(self) -> RootAggregationWeights:
         if sum(self.model_dump().values()) <= 0:
             raise ValueError("at least one root aggregation weight must be positive")
         return self

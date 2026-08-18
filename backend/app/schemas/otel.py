@@ -1,14 +1,16 @@
-from typing import Any, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
+
 class OtelAnyValue(BaseModel):
-    string_value: Optional[str] = Field(None, alias="stringValue")
-    bool_value: Optional[bool] = Field(None, alias="boolValue")
-    int_value: Optional[int] = Field(None, alias="intValue")
-    double_value: Optional[float] = Field(None, alias="doubleValue")
-    array_value: Optional[dict] = Field(None, alias="arrayValue")
-    kvlist_value: Optional[dict] = Field(None, alias="kvlistValue")
-    bytes_value: Optional[str] = Field(None, alias="bytesValue")
+    string_value: str | None = Field(None, alias="stringValue")
+    bool_value: bool | None = Field(None, alias="boolValue")
+    int_value: int | None = Field(None, alias="intValue")
+    double_value: float | None = Field(None, alias="doubleValue")
+    array_value: dict | None = Field(None, alias="arrayValue")
+    kvlist_value: dict | None = Field(None, alias="kvlistValue")
+    bytes_value: str | None = Field(None, alias="bytesValue")
 
     def get_value(self) -> Any:
         if self.string_value is not None: return self.string_value
@@ -22,43 +24,43 @@ class OtelAnyValue(BaseModel):
 
 class OtelKeyValue(BaseModel):
     key: str
-    value: Optional[OtelAnyValue] = None
+    value: OtelAnyValue | None = None
 
 class OtelResource(BaseModel):
-    attributes: List[OtelKeyValue] = Field(default_factory=list)
+    attributes: list[OtelKeyValue] = Field(default_factory=list)
 
 class OtelScope(BaseModel):
-    name: Optional[str] = None
-    version: Optional[str] = None
+    name: str | None = None
+    version: str | None = None
 
 class OtelLogRecord(BaseModel):
-    time_unix_nano: Optional[str] = Field(None, alias="timeUnixNano")
-    observed_time_unix_nano: Optional[str] = Field(None, alias="observedTimeUnixNano")
-    severity_number: Optional[int] = Field(None, alias="severityNumber")
-    severity_text: Optional[str] = Field(None, alias="severityText")
-    body: Optional[OtelAnyValue] = None
-    attributes: List[OtelKeyValue] = Field(default_factory=list)
-    dropped_attributes_count: Optional[int] = Field(None, alias="droppedAttributesCount")
-    flags: Optional[int] = None
-    trace_id: Optional[str] = Field(None, alias="traceId")
-    span_id: Optional[str] = Field(None, alias="spanId")
+    time_unix_nano: str | None = Field(None, alias="timeUnixNano")
+    observed_time_unix_nano: str | None = Field(None, alias="observedTimeUnixNano")
+    severity_number: int | None = Field(None, alias="severityNumber")
+    severity_text: str | None = Field(None, alias="severityText")
+    body: OtelAnyValue | None = None
+    attributes: list[OtelKeyValue] = Field(default_factory=list)
+    dropped_attributes_count: int | None = Field(None, alias="droppedAttributesCount")
+    flags: int | None = None
+    trace_id: str | None = Field(None, alias="traceId")
+    span_id: str | None = Field(None, alias="spanId")
 
 class OtelScopeLogs(BaseModel):
-    scope: Optional[OtelScope] = None
-    log_records: List[OtelLogRecord] = Field(default_factory=list, alias="logRecords")
-    schema_url: Optional[str] = Field(None, alias="schemaUrl")
+    scope: OtelScope | None = None
+    log_records: list[OtelLogRecord] = Field(default_factory=list, alias="logRecords")
+    schema_url: str | None = Field(None, alias="schemaUrl")
 
 class OtelResourceLogs(BaseModel):
-    resource: Optional[OtelResource] = None
-    scope_logs: List[OtelScopeLogs] = Field(default_factory=list, alias="scopeLogs")
-    schema_url: Optional[str] = Field(None, alias="schemaUrl")
+    resource: OtelResource | None = None
+    scope_logs: list[OtelScopeLogs] = Field(default_factory=list, alias="scopeLogs")
+    schema_url: str | None = Field(None, alias="schemaUrl")
 
 class ExportLogsServiceRequest(BaseModel):
-    resource_logs: List[OtelResourceLogs] = Field(default_factory=list, alias="resourceLogs")
+    resource_logs: list[OtelResourceLogs] = Field(default_factory=list, alias="resourceLogs")
 
 class ExportLogsPartialSuccess(BaseModel):
-    rejected_log_records: Optional[int] = Field(None, alias="rejectedLogRecords")
-    error_message: Optional[str] = Field(None, alias="errorMessage")
+    rejected_log_records: int | None = Field(None, alias="rejectedLogRecords")
+    error_message: str | None = Field(None, alias="errorMessage")
 
 class ExportLogsServiceResponse(BaseModel):
-    partial_success: Optional[ExportLogsPartialSuccess] = Field(None, alias="partialSuccess")
+    partial_success: ExportLogsPartialSuccess | None = Field(None, alias="partialSuccess")
