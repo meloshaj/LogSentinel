@@ -13,6 +13,8 @@ from typing import Any, Optional
 from redis.asyncio import Redis
 
 from ..models import ParsedLog
+from ..schemas.alerting import IncidentAlertPayload
+from ..services.alerting import dispatch_incident_alert
 from ..services.batch_manager import ParsedLogBatchManager
 from ..services.drain_parser import DrainParser
 from ..services.runtime_dependency_parser import RuntimeDependencyParser, TraceObservation
@@ -285,6 +287,19 @@ class DrainWorker:
             self._schedule_log_parsed_event(parsed)
             if trace_observation is not None:
                 self._record_trace_observation(trace_observation)
+                
+            # Trigger base alert for errors (which will be deduplicated)
+            if parsed.level.lower() == "error":
+                payload = IncidentAlertPayload(
+                    incident_id=parsed.id,
+                    root_cause_service=parsed.service,
+                    triggering_template=parsed.template_text or parsed.raw_message,
+                    affected_services=[],
+                    propagation_chain=[parsed.service],
+                    confidence_score=0.5,
+                    is_critical=False
+                )
+                asyncio.create_task(dispatch_incident_alert(payload))
             
             # Notify subscribers (e.g., feature extraction worker)
             if self._on_log_parsed:

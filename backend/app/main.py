@@ -44,6 +44,7 @@ from .repositories.tracking_repository import TrackingRepository
 from .routers.auth_router import router as auth_router
 from .routers.benchmark_router import router as benchmark_router
 from .routers.ingest_bulk import router as ingest_bulk_router
+from .routers.otel_receiver import router as otel_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -291,6 +292,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(auth_router)
 app.include_router(ingest_bulk_router)
+app.include_router(otel_router)
 
 benchmarking_settings = get_benchmarking_settings()
 if benchmarking_settings.enable_benchmarking_endpoints:

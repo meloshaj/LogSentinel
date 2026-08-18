@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
+import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,6 +21,8 @@ from ..schemas.blast_radius import (
     RootCauseCandidate,
     ServiceAnomalyEvidence,
 )
+from ..schemas.alerting import IncidentAlertPayload
+from .alerting import dispatch_incident_alert
 
 
 def _clamp(value: float) -> float:
@@ -191,7 +195,7 @@ class DynamicGraphPathwayScorer:
             ),
         )
 
-        return BlastRadiusResult(
+        result = BlastRadiusResult(
             suspected_root_service=winner.service_name,
             root_cause_score=winner.root_cause_score,
             confidence=self._calculate_confidence(candidates),
@@ -208,6 +212,27 @@ class DynamicGraphPathwayScorer:
             calculated_at=calculated,
             algorithm_version=self.config.algorithm_version,
         )
+        
+        # Trigger alert if confidence is high
+        if result.confidence >= 0.7:
+            payload = IncidentAlertPayload(
+                incident_id=winner.supporting_event_ids[0] if winner.supporting_event_ids else str(uuid.uuid4()),
+                root_cause_service=winner.service_name,
+                triggering_template=f"Score: {winner.root_cause_score:.2f}",
+                affected_services=result.affected_services,
+                propagation_chain=[item.service_name for item in blast_radius],
+                confidence_score=result.confidence,
+                is_critical=(result.confidence >= 0.9 or directly_affected > 2)
+            )
+            
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(dispatch_incident_alert(payload))
+            except RuntimeError:
+                # No running loop, can't easily dispatch async from sync here
+                pass
+                
+        return result
 
     def rank_root_candidates(
         self,
