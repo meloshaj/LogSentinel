@@ -237,6 +237,7 @@ class ParsedLogBatchManager:
 
     async def _invoke_sink(self, batch: list[ParsedLog]) -> Any:
         import time
+
         from ..core.profiler import db_profiler
         
         start_time = time.perf_counter()

@@ -8,16 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from ..core.settings import GraphScoringSettings, get_graph_scoring_settings
 from ..ml.anomaly_scoring import normalize_prediction_anomaly_score
 from ..models import FeatureVector, PerformanceEvent
 from ..repositories.tracking_repository import TrackingRepository
 from ..schemas.blast_radius import BlastRadiusResult
+from ..services.benchmarking import BenchmarkingCollector
 from ..services.graph_analysis_service import GraphAnalysisService
 from ..services.telemetry import telemetry_event, telemetry_manager
-from ..services.benchmarking import BenchmarkingCollector
 
 logger = logging.getLogger("logsentinel.event_manager")
 
@@ -27,11 +27,11 @@ class EventManager:
 
     def __init__(
         self,
-        tracking_repository: Optional[TrackingRepository] = None,
-        graph_analysis_service: Optional[GraphAnalysisService] = None,
-        graph_scoring_settings: Optional[GraphScoringSettings] = None,
+        tracking_repository: TrackingRepository | None = None,
+        graph_analysis_service: GraphAnalysisService | None = None,
+        graph_scoring_settings: GraphScoringSettings | None = None,
         telemetry_broadcaster: Any | None = None,
-        benchmarking_collector: Optional[BenchmarkingCollector] = None,
+        benchmarking_collector: BenchmarkingCollector | None = None,
         max_queue_size: int = 10000,
     ) -> None:
         """Initialize the event manager.

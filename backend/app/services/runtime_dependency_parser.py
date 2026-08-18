@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from ..models import ParsedLog
-
 
 TraceIdentifierName = Literal[
     "transaction_id",

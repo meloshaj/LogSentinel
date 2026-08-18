@@ -60,13 +60,13 @@ function DependencyNode({ data }: NodeProps<Node<DependencyNodeData>>) {
           <Icon className="h-4 w-4" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-[11px] font-bold text-[#f8fafc]">{data.node.label}</span>
+          <span className="block truncate font-mono text-[11px] font-bold text-[#f8fafc]">{data.node.name}</span>
           <span className="mt-0.5 flex items-center gap-1.5 text-[8px] font-bold uppercase tracking-wide text-[#94a3b8]">
             <i className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: accent }} />
             {root ? "Root cause" : affected ? "Affected" : "Nominal"}
           </span>
-          <span className="mt-1 block text-[8px] uppercase tracking-wide text-[#64748b]">
-            {data.node.type}
+          <span className="text-[#8b949e] font-mono text-[10px] bg-[#0d1117]/80 px-1.5 py-0.5 rounded border border-[#30363d] shadow-sm">
+            {data.node.metrics?.latency_p95_ms?.toFixed(1)}ms
           </span>
         </span>
       </div>
@@ -152,7 +152,7 @@ export function ServiceDependencyGraph({
         type: "dependency",
         sourceHandle: "traffic-out",
         targetHandle: "traffic-in",
-        data: { kind: "traffic", latency: edge.latency_ms },
+        data: { kind: "traffic", latency: edge.avg_latency_ms },
         markerEnd: { type: MarkerType.ArrowClosed, color: "#388bfd", width: 13, height: 13 },
       };
     });

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+
 from redis.asyncio import Redis
 
 logger = logging.getLogger("logsentinel.workers.stream_cleaner")

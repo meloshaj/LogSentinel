@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional, Union
 
 from sqlalchemy import (
     BigInteger,
@@ -20,7 +19,6 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 class Base(DeclarativeBase):
     """Shared declarative base for all LogSentinel ORM models."""
 
-    pass
 
 
 # ---------------------------------------------------------------------------
@@ -46,19 +44,19 @@ class LogRecord(Base):
     service: Mapped[str] = mapped_column(VARCHAR(255), nullable=False)
     raw_message: Mapped[str] = mapped_column(Text, nullable=False)
     template_id: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
-    template_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    parameters: Mapped[Union[dict, list]] = mapped_column(JSONB, nullable=False, default=list)
-    level: Mapped[Optional[str]] = mapped_column(VARCHAR(32), nullable=True)
-    source: Mapped[Optional[str]] = mapped_column(VARCHAR(255), nullable=True)
-    environment: Mapped[Optional[str]] = mapped_column(VARCHAR(255), nullable=True)
-    correlation_id: Mapped[Optional[str]] = mapped_column(VARCHAR(128), nullable=True)
+    template_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parameters: Mapped[dict | list] = mapped_column(JSONB, nullable=False, default=list)
+    level: Mapped[str | None] = mapped_column(VARCHAR(32), nullable=True)
+    source: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+    environment: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+    correlation_id: Mapped[str | None] = mapped_column(VARCHAR(128), nullable=True)
     metadata_: Mapped[dict] = mapped_column(
         "metadata",
         JSONB,
         nullable=False,
         default=dict,
     )
-    parsed_at: Mapped[Optional[datetime]] = mapped_column(
+    parsed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
@@ -89,7 +87,7 @@ class FeatureWindowRecord(Base):
     window_id: Mapped[str] = mapped_column(VARCHAR(128), nullable=False, unique=True)
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    service: Mapped[Optional[str]] = mapped_column(VARCHAR(255), nullable=True)
+    service: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     log_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     feature_vector: Mapped[dict] = mapped_column(
         JSONB,
@@ -97,7 +95,7 @@ class FeatureWindowRecord(Base):
         default=dict,
         comment="Full FeatureVector dict serialized as JSON",
     )
-    anomaly_prediction: Mapped[Optional[dict]] = mapped_column(
+    anomaly_prediction: Mapped[dict | None] = mapped_column(
         JSONB,
         nullable=True,
         comment="Structured anomaly detection output (scores, labels, etc.)",
@@ -136,8 +134,8 @@ class AnomalyEventRecord(Base):
     )
     event_type: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
     severity: Mapped[str] = mapped_column(VARCHAR(32), nullable=False)
-    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    details: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -158,9 +156,9 @@ class UserRecord(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(VARCHAR(255), nullable=False, unique=True)
-    hashed_password: Mapped[Optional[str]] = mapped_column(VARCHAR(255), nullable=True)
-    full_name: Mapped[Optional[str]] = mapped_column(VARCHAR(255), nullable=True)
-    organization: Mapped[Optional[str]] = mapped_column(VARCHAR(255), nullable=True)
+    hashed_password: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+    full_name: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+    organization: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -192,8 +190,8 @@ class AccountRecord(Base):
     )
     provider: Mapped[str] = mapped_column(VARCHAR(32), nullable=False)
     provider_account_id: Mapped[str] = mapped_column(VARCHAR(512), nullable=False)
-    access_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -242,18 +240,18 @@ class ExternalIdentityRecord(Base):
     provider: Mapped[str] = mapped_column(VARCHAR(32), nullable=False)
     issuer: Mapped[str] = mapped_column(VARCHAR(512), nullable=False)
     subject: Mapped[str] = mapped_column(VARCHAR(512), nullable=False)
-    tenant_id: Mapped[Optional[str]] = mapped_column(VARCHAR(128), nullable=True)
-    provider_object_id: Mapped[Optional[str]] = mapped_column(
+    tenant_id: Mapped[str | None] = mapped_column(VARCHAR(128), nullable=True)
+    provider_object_id: Mapped[str | None] = mapped_column(
         VARCHAR(128),
         nullable=True,
         comment="Microsoft oid or provider-specific immutable object ID",
     )
-    email: Mapped[Optional[str]] = mapped_column(
+    email: Mapped[str | None] = mapped_column(
         VARCHAR(255),
         nullable=True,
         comment="Contact email from the provider (informational only, not a lookup key)",
     )
-    display_name: Mapped[Optional[str]] = mapped_column(VARCHAR(255), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -291,7 +289,7 @@ class TrackingLoopRecord(Base):
     )
     anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
     status: Mapped[str] = mapped_column(VARCHAR(32), nullable=False, default="triggered")
-    blast_radius: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    blast_radius: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

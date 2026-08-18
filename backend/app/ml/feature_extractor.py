@@ -12,7 +12,7 @@ import logging
 import math
 from collections import Counter
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -29,7 +29,7 @@ class WindowConfig(BaseModel):
     stride_seconds: int = Field(default=5, ge=1, description="Spacing between windows")
     min_logs_per_window: int = Field(default=1, ge=0, description="Minimum logs required to emit a window")
     max_logs_per_window: int = Field(default=10000, ge=1, description="Maximum logs to keep per window")
-    service_filter: Optional[str] = Field(default=None, description="Optional service filter")
+    service_filter: str | None = Field(default=None, description="Optional service filter")
 
     def validate_config(self) -> None:
         """Validate the window configuration."""
@@ -49,14 +49,14 @@ class SlidingWindowFeatureExtractor:
     to a structured feature vector that is independent from any anomaly model.
     """
 
-    def __init__(self, config: Optional[WindowConfig] = None) -> None:
+    def __init__(self, config: WindowConfig | None = None) -> None:
         self.config = config or WindowConfig()
         self.config.validate_config()
 
         self._log_buffer: list[ParsedLog] = []
         self._logs_processed = 0
         self._windows_generated = 0
-        self._last_window_end: Optional[datetime] = None
+        self._last_window_end: datetime | None = None
 
     def add_log(self, log: ParsedLog) -> None:
         """Add a parsed log to the buffer."""
@@ -68,7 +68,7 @@ class SlidingWindowFeatureExtractor:
         for log in logs:
             self.add_log(log)
 
-    def get_pending_windows(self, current_time: Optional[datetime] = None) -> list[LogWindow]:
+    def get_pending_windows(self, current_time: datetime | None = None) -> list[LogWindow]:
         """Generate closed windows from the buffered log history."""
         if not self._log_buffer:
             return []
@@ -110,7 +110,7 @@ class SlidingWindowFeatureExtractor:
 
         return windows
 
-    def extract_features(self, window: Optional[LogWindow]) -> FeatureVector:
+    def extract_features(self, window: LogWindow | None) -> FeatureVector:
         """Extract a fixed-size feature vector from a log window."""
         if window is None or not window.logs:
             return self._empty_feature_vector()

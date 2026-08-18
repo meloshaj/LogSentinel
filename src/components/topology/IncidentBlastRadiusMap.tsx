@@ -44,8 +44,8 @@ function RadarNode({ data }: NodeProps<Node<RadarNodeData>>) {
   const root = data.status === "root";
   const affected = data.status === "affected";
   const accent = root ? "#EF4444" : affected ? "#F59E0B" : "#334155";
-  const latency = data.node.metrics?.latency_ms ?? (root ? 5120 : affected ? 860 : 24);
-  const errorRate = data.node.metrics?.error_rate ?? (root ? 8.4 : affected ? 2.1 : 0);
+  const latency = data.node.metrics?.latency_p95_ms ?? (root ? 5120 : affected ? 860 : 24);
+  const errorRate = data.node.metrics?.error_rate_pct ?? (root ? 8.4 : affected ? 2.1 : 0);
 
   return (
     <div className="relative flex h-[138px] w-[138px] items-center justify-center">
@@ -54,22 +54,29 @@ function RadarNode({ data }: NodeProps<Node<RadarNodeData>>) {
       <button
         type="button"
         onClick={() => data.onSelect(data.node.id)}
-        title={`Inspect ${data.node.label}`}
+        title={`Inspect ${data.node.name}`}
         className="relative flex h-[118px] w-[118px] flex-col items-center justify-center rounded-full border bg-[#111827] px-2 text-center shadow-lg transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[#388bfd]"
         style={{ borderColor: accent, boxShadow: root ? "0 0 28px rgba(239,68,68,0.7)" : affected ? "0 0 18px rgba(245,158,11,0.45)" : "none" }}
       >
         <span className="flex h-7 w-7 items-center justify-center rounded-full" style={{ backgroundColor: `${accent}22`, color: accent }}>
           {root ? <AlertTriangle className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
         </span>
-        <span className="mt-1 max-w-[100px] truncate font-mono text-[10px] font-bold text-[#e6edf3]">{data.node.label}</span>
+        <span className="mt-1 max-w-[100px] truncate font-mono text-[10px] font-bold text-[#e6edf3]">{data.node.name}</span>
         <span className="mt-0.5 text-[8px] font-bold uppercase tracking-wide" style={{ color: accent }}>
           {root ? "Root cause" : affected ? "Cascade" : "Nominal"}
         </span>
-        <span className="mt-1 flex items-center gap-1.5 text-[8px] font-mono text-[#94a3b8]">
-          <span>{latency >= 1000 ? `${(latency / 1000).toFixed(1)}s` : `${latency}ms`}</span>
-          <span className="h-1 w-1 rounded-full bg-[#475569]" />
-          <span>{errorRate.toFixed(1)}% err</span>
-        </span>
+        <div className="flex flex-col items-center mt-1 text-[8px] font-mono text-[#94a3b8]">
+            <div className="flex justify-between w-full">
+              <span className="text-[#8b949e]">Latency</span>
+              <span>{data.node.metrics.latency_p95_ms.toFixed(1)}ms</span>
+            </div>
+            <div className="flex justify-between w-full">
+              <span className="text-[#8b949e]">Error Rate</span>
+              <span className={data.node.metrics.error_rate_pct > 5 ? 'text-[#ef4444]' : 'text-[#3fb950]'}>
+                {(data.node.metrics.error_rate_pct).toFixed(2)}%
+              </span>
+            </div>
+        </div>
         <span className="mt-0.5 text-[7px] uppercase tracking-wide text-[#64748b]">{data.node.type}</span>
       </button>
       <Handle type="source" position={Position.Right} className="!opacity-0" />
@@ -116,9 +123,12 @@ export function IncidentBlastRadiusMap({ rootCause, affectedServices, onSelect }
   useEffect(() => {
     const rootNode = topologyNodes.find((node) => node.id === rootCause) ?? {
       id: rootCause,
-      label: rootCause,
+      name: rootCause,
       type: "service" as const,
       status: "critical" as const,
+      metrics: { latency_p95_ms: 0, error_rate_pct: 0, throughput_rps: 0 },
+      active_anomaly_id: null,
+      is_root_cause: true
     };
     const otherNodes = topologyNodes.filter((node) => node.id !== rootNode.id);
     const center = { x: 420, y: 215 };

@@ -1,8 +1,10 @@
+
 import pytest
-import os
 from fastapi import FastAPI
+
 from app.main import lifespan
 from app.security import auth
+
 
 @pytest.mark.asyncio
 async def test_production_jwt_guard(monkeypatch):

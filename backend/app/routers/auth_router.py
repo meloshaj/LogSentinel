@@ -9,24 +9,25 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Annotated, Optional
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from ..core.database import AsyncSessionDep
-from ..core.settings import get_microsoft_auth_settings, get_github_auth_settings
+from ..core.orm import UserRecord
+from ..core.settings import get_github_auth_settings, get_microsoft_auth_settings
+from ..repositories.account_repository import AccountRepository
 from ..repositories.external_identity_repository import ExternalIdentityRepository
 from ..repositories.user_repository import UserRepository
-from ..repositories.account_repository import AccountRepository
 from ..security.auth import (
+    JWT_ALGORITHM,
+    JWT_SECRET_KEY,
     create_access_token,
     get_current_user,
     hash_password,
     verify_password,
-    JWT_SECRET_KEY,
-    JWT_ALGORITHM,
 )
 from ..security.microsoft_auth import (
     InvalidMicrosoftTenantError,
@@ -37,7 +38,6 @@ from ..security.microsoft_auth import (
     MicrosoftTokenVerifier,
     MissingRequiredScopeError,
 )
-from ..core.orm import UserRecord
 
 logger = logging.getLogger("logsentinel.auth_router")
 
@@ -53,8 +53,8 @@ class UserRegisterRequest(BaseModel):
     """Schema for user registration request."""
     email: EmailStr
     password: str = Field(..., min_length=8, description="Password must be at least 8 characters long")
-    fullName: Optional[str] = Field(None, description="Optional full name of the user")
-    organization: Optional[str] = Field(None, description="Optional organization name")
+    fullName: str | None = Field(None, description="Optional full name of the user")
+    organization: str | None = Field(None, description="Optional organization name")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -75,8 +75,8 @@ class UserResponse(BaseModel):
     """Schema for authenticated user profile details."""
     id: int
     email: str
-    full_name: Optional[str]
-    organization: Optional[str]
+    full_name: str | None
+    organization: str | None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -376,7 +376,7 @@ async def reset_password(
 # ─── Microsoft SSO ───────────────────────────────────────────────────────────
 
 # Lazy-initialized verifier — created on first use to pick up env at startup
-_microsoft_verifier: Optional[MicrosoftTokenVerifier] = None
+_microsoft_verifier: MicrosoftTokenVerifier | None = None
 
 
 def _get_microsoft_verifier() -> MicrosoftTokenVerifier:
@@ -535,12 +535,12 @@ async def microsoft_login(
 
 # ─── GitHub SSO ──────────────────────────────────────────────────────────────
 
-from fastapi.responses import RedirectResponse
-import httpx
+import secrets
 import urllib.parse
 
-from fastapi import Request
-import secrets
+import httpx
+from fastapi.responses import RedirectResponse
+
 
 @router.get("/github")
 async def github_login_redirect(request: Request):

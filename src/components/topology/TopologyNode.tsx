@@ -110,8 +110,8 @@ const TopologyNodeComponent: React.FC<TopologyNodeProps> = ({
           
           <div className="flex flex-col min-w-0 flex-1">
             <div className="flex items-center justify-between gap-1">
-              <span className="text-[#e6edf3] font-bold text-xs truncate" title={node.label || node.id}>
-                {node.label || node.id}
+              <span className="text-[#e6edf3] font-bold text-xs truncate" title={node.name || node.id}>
+                {node.name || node.id}
               </span>
               <span className={`px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider border shrink-0 ${config.badgeBg}`}>
                 {isRoot ? "ROOT CAUSE" : config.label}
@@ -138,7 +138,7 @@ const TopologyNodeComponent: React.FC<TopologyNodeProps> = ({
               <span className="text-[7.5px] uppercase font-bold">Latency</span>
             </div>
             <span className={`text-[9.5px] font-mono font-bold ${isCritical ? 'text-[#ef4444]' : 'text-[#c9d1d9]'}`}>
-              {node.metrics?.latency_ms ?? (isCritical ? 5120 : 12)}ms
+              {node.metrics?.latency_p95_ms ?? (isCritical ? 5120 : 12)}ms
             </span>
           </div>
 
@@ -148,7 +148,7 @@ const TopologyNodeComponent: React.FC<TopologyNodeProps> = ({
               <span className="text-[7.5px] uppercase font-bold">Errors</span>
             </div>
             <span className={`text-[9.5px] font-mono font-bold ${isCritical ? 'text-[#ef4444]' : isDegraded ? 'text-[#f59e0b]' : 'text-[#3fb950]'}`}>
-              {node.metrics?.error_rate ?? (isCritical ? 8.4 : isDegraded ? 2.1 : 0.0)}%
+              {node.metrics?.error_rate_pct ?? (isCritical ? 8.4 : isDegraded ? 2.1 : 0.0)}%
             </span>
           </div>
 
@@ -158,7 +158,7 @@ const TopologyNodeComponent: React.FC<TopologyNodeProps> = ({
               <span className="text-[7.5px] uppercase font-bold">Flow</span>
             </div>
             <span className="text-[9.5px] font-mono font-bold text-[#388bfd]">
-              {node.metrics?.throughput ?? "1.2k"}/s
+              {node.metrics?.throughput_rps ?? "1.2k"}/s
             </span>
           </div>
         </div>

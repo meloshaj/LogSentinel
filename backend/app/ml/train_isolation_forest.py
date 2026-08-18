@@ -14,8 +14,8 @@ or novel template explosion will be flagged as anomalous.
 from __future__ import annotations
 
 import random
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from ..models import FeatureVector
 from .anomaly_detector import IsolationForestAnomalyDetector

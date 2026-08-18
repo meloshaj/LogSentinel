@@ -10,7 +10,7 @@ import logging
 import math
 from collections import Counter, deque
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -43,7 +43,7 @@ class WindowConfig(BaseModel):
         ge=1,
         description="Maximum logs to include in a single window",
     )
-    service_filter: Optional[str] = Field(
+    service_filter: str | None = Field(
         None,
         description="Optional service name filter",
     )
@@ -74,7 +74,7 @@ class SlidingWindowExtractor:
         self._log_buffer: deque[ParsedLog] = deque(maxlen=buffer_size)
         
         # Track window generation
-        self._last_window_end: Optional[datetime] = None
+        self._last_window_end: datetime | None = None
         self._windows_generated = 0
         self._logs_processed = 0
         
@@ -97,7 +97,7 @@ class SlidingWindowExtractor:
     
     def get_pending_windows(
         self,
-        current_time: Optional[datetime] = None,
+        current_time: datetime | None = None,
     ) -> list[LogWindow]:
         """Generate all pending windows up to current_time.
         

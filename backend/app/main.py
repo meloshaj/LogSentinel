@@ -1,15 +1,22 @@
-import asyncio
+import json
 import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlsplit
 
-import json
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Query
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
@@ -18,32 +25,36 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from .core.redis import init_redis_pool, close_redis_pool
 from .core import Base, dispose_engine, get_database_settings, get_engine, init_engine
-from .core.settings import get_drain3_pipeline_settings, get_graph_scoring_settings, get_benchmarking_settings
+from .core.redis import close_redis_pool, init_redis_pool
+from .core.settings import (
+    get_benchmarking_settings,
+    get_drain3_pipeline_settings,
+    get_graph_scoring_settings,
+)
 from .ml.anomaly_detector import IsolationForestAnomalyDetector
 from .ml.feature_extractor import WindowConfig
-from .repositories.db_health import check_database_health
 from .repositories.feature_repository import FeatureRepository
 from .repositories.log_repository import LogRepository
+from .repositories.tracking_repository import TrackingRepository
+from .routers.auth_router import router as auth_router
+from .routers.benchmark_router import router as benchmark_router
+from .routers.ingest_bulk import router as ingest_bulk_router
+from .routers.otel_receiver import router as otel_router
 from .schemas.blast_radius import BlastRadiusResult
 from .schemas.graph_api import BlastRadiusRetrievalResponse, TopologyResponse
+from .security import require_ingestion_api_key
 from .services.batch_manager import ParsedLogBatchManager
+from .services.benchmarking import BenchmarkingCollector
 from .services.drain_parser import DrainParser
 from .services.graph_analysis_service import GraphAnalysisService
 from .services.runtime_dependency_parser import RuntimeDependencyParser
 from .services.telemetry import telemetry_event, telemetry_manager
 from .services.topology_pipeline import NetworkXTopologyPipeline
-from .services.benchmarking import BenchmarkingCollector
-from .security import require_ingestion_api_key
 from .workers.drain_worker import DrainWorker
 from .workers.event_manager import EventManager
 from .workers.feature_worker import FeatureExtractionWorker
 from .workers.stream_cleaner import StreamCleanerWorker
-from .repositories.tracking_repository import TrackingRepository
-from .routers.auth_router import router as auth_router
-from .routers.benchmark_router import router as benchmark_router
-from .routers.ingest_bulk import router as ingest_bulk_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +66,7 @@ logger = logging.getLogger("logsentinel.ingest")
 class LogEntry(BaseModel):
     """A single service log event emitted by a microservice."""
 
-    timestamp: Optional[datetime] = Field(
+    timestamp: datetime | None = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the log event was emitted",
     )
@@ -63,7 +74,7 @@ class LogEntry(BaseModel):
     level: str = Field(default="info", min_length=1, description="Log severity")
     message: str = Field(..., min_length=1, description="The log message payload")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Optional structured metadata")
-    raw: Optional[str] = Field(default=None, description="Raw log line if available")
+    raw: str | None = Field(default=None, description="Raw log line if available")
 
 
 class IngestPayload(BaseModel):
@@ -72,7 +83,7 @@ class IngestPayload(BaseModel):
     source: str = Field(default="unknown", min_length=1, description="Origin of the payload")
     environment: str = Field(default="development", min_length=1, description="Runtime environment")
     logs: list[LogEntry] = Field(..., min_length=1, description="A batch of log events")
-    correlation_id: Optional[str] = Field(default=None, description="Optional request correlation identifier")
+    correlation_id: str | None = Field(default=None, description="Optional request correlation identifier")
 
 
 class IngestResponse(BaseModel):
@@ -98,7 +109,7 @@ batch_manager = ParsedLogBatchManager(
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "isolation_forest.pkl"
 
-anomaly_detector: Optional[IsolationForestAnomalyDetector] = None
+anomaly_detector: IsolationForestAnomalyDetector | None = None
 if DEFAULT_MODEL_PATH.exists():
     anomaly_detector = IsolationForestAnomalyDetector.load_model(DEFAULT_MODEL_PATH)
 else:
@@ -165,7 +176,9 @@ _JWT_DEV_DEFAULTS = frozenset({
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # --- Startup: production environment guardrails ---
     environment = os.getenv("ENVIRONMENT", os.getenv("NODE_ENV", "development")).lower()
-    from .security.auth import JWT_SECRET_KEY  # noqa: E402  (already imported at module level for router)
+    from .security.auth import (
+        JWT_SECRET_KEY,
+    )
     if environment == "production":
         if not JWT_SECRET_KEY or JWT_SECRET_KEY in _JWT_DEV_DEFAULTS:
             raise RuntimeError(
@@ -285,12 +298,13 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Response compression
 # ---------------------------------------------------------------------------
-from fastapi.middleware.gzip import GZipMiddleware  # noqa: E402
+from fastapi.middleware.gzip import GZipMiddleware
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(auth_router)
 app.include_router(ingest_bulk_router)
+app.include_router(otel_router)
 
 benchmarking_settings = get_benchmarking_settings()
 if benchmarking_settings.enable_benchmarking_endpoints:

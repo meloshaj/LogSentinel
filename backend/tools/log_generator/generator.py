@@ -10,18 +10,16 @@ domain-specific log messages.
 from __future__ import annotations
 
 import random
-import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .cascading_errors import CascadingExceptionEngine
 from .config import GeneratorConfig, default_ecommerce_topology
+from .scenarios import SCENARIO_REGISTRY, BaseScenario
 from .templates import render_log
 from .topology import ServiceTopology
-from .cascading_errors import CascadingExceptionEngine
-from .scenarios import SCENARIO_REGISTRY, BaseScenario
-
 
 # ---------------------------------------------------------------------------
 # Pydantic schemas matching the backend's IngestPayload / LogEntry contract
@@ -33,14 +31,14 @@ from .scenarios import SCENARIO_REGISTRY, BaseScenario
 class LogEntry(BaseModel):
     """Wire-compatible mirror of ``backend.app.main.LogEntry``."""
 
-    timestamp: Optional[datetime] = Field(
+    timestamp: datetime | None = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
     service_name: str = Field(..., min_length=1)
     level: str = Field(default="info", min_length=1)
     message: str = Field(..., min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
-    raw: Optional[str] = Field(default=None)
+    raw: str | None = Field(default=None)
 
 
 class IngestPayload(BaseModel):
@@ -49,7 +47,7 @@ class IngestPayload(BaseModel):
     source: str = Field(default="unknown", min_length=1)
     environment: str = Field(default="development", min_length=1)
     logs: list[LogEntry] = Field(..., min_length=1)
-    correlation_id: Optional[str] = Field(default=None)
+    correlation_id: str | None = Field(default=None)
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,6 @@ AsyncSession ORM adapter.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +24,7 @@ class AccountRepository:
         db: AsyncSession,
         provider: str,
         provider_account_id: str,
-    ) -> Optional[AccountRecord]:
+    ) -> AccountRecord | None:
         """Look up an account by its unique provider and providerAccountId pair."""
         stmt = (
             select(AccountRecord)
@@ -51,8 +50,8 @@ class AccountRepository:
         user_id: int,
         provider: str,
         provider_account_id: str,
-        access_token: Optional[str] = None,
-        refresh_token: Optional[str] = None,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
         commit: bool = True,
     ) -> AccountRecord:
         """Persist an account, optionally leaving commit control to the caller."""

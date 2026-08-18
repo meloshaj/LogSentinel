@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,7 +48,7 @@ class ParsedLog(BaseModel):
         ...,
         description="Drain3 cluster ID for the log template",
     )
-    template_text: Optional[str] = Field(
+    template_text: str | None = Field(
         None,
         description="Extracted log template with parameters replaced by wildcards",
     )
@@ -56,26 +56,26 @@ class ParsedLog(BaseModel):
         default_factory=list,
         description="Extracted parameters from the log message",
     )
-    cluster_size: Optional[int] = Field(
+    cluster_size: int | None = Field(
         None,
         ge=0,
         description="Number of logs in the Drain3 cluster",
     )
-    change_type: Optional[str] = Field(
+    change_type: str | None = Field(
         None,
         description="Drain3 change type (none, cluster_created, cluster_template_changed)",
     )
     
     # Optional metadata fields
-    source: Optional[str] = Field(
+    source: str | None = Field(
         None,
         description="Source system or ingestion point",
     )
-    environment: Optional[str] = Field(
+    environment: str | None = Field(
         None,
         description="Deployment environment (development, staging, production)",
     )
-    correlation_id: Optional[str] = Field(
+    correlation_id: str | None = Field(
         None,
         description="Distributed trace correlation identifier",
     )
@@ -85,7 +85,7 @@ class ParsedLog(BaseModel):
     )
     
     # Processing timestamps
-    parsed_at: Optional[datetime] = Field(
+    parsed_at: datetime | None = Field(
         None,
         description="Timestamp when Drain3 parsing completed",
     )
@@ -149,7 +149,7 @@ class LogWindow(BaseModel):
         default_factory=list,
         description="Parsed logs within this time window",
     )
-    service: Optional[str] = Field(
+    service: str | None = Field(
         None,
         description="Service filter applied to this window (if any)",
     )
@@ -186,11 +186,11 @@ class FeatureVector(BaseModel):
         ...,
         description="Feature vector creation timestamp",
     )
-    window_start: Optional[datetime] = Field(
+    window_start: datetime | None = Field(
         None,
         description="Inclusive start of the source window",
     )
-    window_end: Optional[datetime] = Field(
+    window_end: datetime | None = Field(
         None,
         description="Exclusive end of the source window",
     )
@@ -222,7 +222,7 @@ class FeatureVector(BaseModel):
         default_factory=dict,
         description="Normalized frequency of each template ID",
     )
-    template_entropy: Optional[float] = Field(
+    template_entropy: float | None = Field(
         None,
         ge=0.0,
         description="Shannon entropy of template distribution",
@@ -235,22 +235,22 @@ class FeatureVector(BaseModel):
     )
     
     # Temporal features
-    logs_per_second: Optional[float] = Field(
+    logs_per_second: float | None = Field(
         None,
         ge=0.0,
         description="Average log rate in this window",
     )
     
     # Raw feature array for ML models
-    feature_array: Optional[list[float]] = Field(
+    feature_array: list[float] | None = Field(
         None,
         description="Flattened numerical feature array for ML models",
     )
-    feature_names: Optional[list[str]] = Field(
+    feature_names: list[str] | None = Field(
         None,
         description="Names corresponding to feature_array elements",
     )
-    anomaly_prediction: Optional[dict[str, Any]] = Field(
+    anomaly_prediction: dict[str, Any] | None = Field(
         None,
         description="Structured anomaly detection output for this feature vector",
     )

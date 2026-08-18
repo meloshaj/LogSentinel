@@ -1,6 +1,7 @@
-import os
 import logging
-from redis.asyncio import Redis, ConnectionPool
+import os
+
+from redis.asyncio import ConnectionPool, Redis
 
 logger = logging.getLogger(__name__)
 

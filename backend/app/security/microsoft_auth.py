@@ -25,10 +25,10 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 import threading
-from dataclasses import dataclass, field
-from typing import Any, Optional
+import time
+from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 import jwt
@@ -122,13 +122,13 @@ class VerifiedMicrosoftIdentity:
     tenant_id: str
     """Microsoft Entra tenant ID (``tid`` claim)."""
 
-    object_id: Optional[str] = None
+    object_id: str | None = None
     """Microsoft directory object ID (``oid`` claim)."""
 
-    email: Optional[str] = None
+    email: str | None = None
     """Contact email (``email`` or ``preferred_username`` claim).  Informational only."""
 
-    display_name: Optional[str] = None
+    display_name: str | None = None
     """Display name (``name`` claim).  Informational only."""
 
 
@@ -145,7 +145,7 @@ class _CachedJWKClient:
         self._timeout = timeout
         self._cache_ttl = cache_ttl
         self._lock = threading.Lock()
-        self._client: Optional[PyJWKClient] = None
+        self._client: PyJWKClient | None = None
         self._created_at: float = 0.0
 
     def _ensure_client(self) -> PyJWKClient:
@@ -279,9 +279,7 @@ class MicrosoftTokenVerifier:
         if configured_tenant not in {"common", "organizations", "consumers"}:
             if normalized_tid != configured_tenant:
                 raise InvalidMicrosoftTenantError()
-        elif configured_tenant == "consumers" and normalized_tid != _CONSUMER_TENANT_ID:
-            raise InvalidMicrosoftTenantError()
-        elif configured_tenant == "organizations" and normalized_tid == _CONSUMER_TENANT_ID:
+        elif configured_tenant == "consumers" and normalized_tid != _CONSUMER_TENANT_ID or configured_tenant == "organizations" and normalized_tid == _CONSUMER_TENANT_ID:
             raise InvalidMicrosoftTenantError()
 
         if (
@@ -302,7 +300,7 @@ class MicrosoftTokenVerifier:
             raise InvalidMicrosoftTokenError("Token is missing the subject claim.")
 
         # ── Extract profile information (informational only) ──────────
-        email: Optional[str] = None
+        email: str | None = None
         raw_email = payload.get("email")
         if isinstance(raw_email, str) and "@" in raw_email:
             email = raw_email

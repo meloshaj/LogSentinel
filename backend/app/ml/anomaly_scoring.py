@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Mapping
-
+from collections.abc import Mapping
+from typing import Any
 
 RAW_SCORE_DECAY = 4.0
 

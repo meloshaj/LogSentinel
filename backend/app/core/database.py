@@ -48,7 +48,7 @@ def init_engine(settings: DatabaseSettings) -> AsyncEngine:
 
     Returns the newly created engine for convenience.
     """
-    global _engine, _session_factory  # noqa: PLW0603
+    global _engine, _session_factory
 
     if _engine is not None:
         logger.warning("init_engine() called while an engine already exists — disposing the old one first")
@@ -97,7 +97,7 @@ async def dispose_engine() -> None:
     After this call, ``get_engine()`` will raise until ``init_engine()`` is
     called again.
     """
-    global _engine, _session_factory  # noqa: PLW0603
+    global _engine, _session_factory
 
     if _engine is None:
         logger.debug("dispose_engine() called but no engine exists — nothing to do")

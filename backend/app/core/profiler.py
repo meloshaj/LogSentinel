@@ -7,9 +7,9 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
 from sqlalchemy import event
 from sqlalchemy.engine import Engine, ExecutionContext
-import numpy as np
 
 logger = logging.getLogger("logsentinel.profiler")
 

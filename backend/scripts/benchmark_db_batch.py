@@ -7,14 +7,13 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import text
-
-from backend.app.core.database import init_engine, dispose_engine
-from backend.app.core.settings import get_database_settings
+from backend.app.core.database import dispose_engine, init_engine
 from backend.app.core.profiler import db_profiler
+from backend.app.core.settings import get_database_settings
 from backend.app.models import ParsedLog
 from backend.app.repositories.log_repository import LogRepository
-from backend.app.services.batch_manager import ParsedLogBatchManager
+from sqlalchemy import text
+
 
 def generate_synthetic_payloads(count: int) -> list[ParsedLog]:
     """Generate synthetic ParsedLog payloads in memory."""

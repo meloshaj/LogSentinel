@@ -28,7 +28,6 @@ from .cascading_errors import CascadingExceptionEngine
 from .config import GeneratorConfig, default_ecommerce_topology
 from .topology import ServiceTopology
 
-
 # ---------------------------------------------------------------------------
 # Scenario step model
 # ---------------------------------------------------------------------------
@@ -52,7 +51,7 @@ class ScenarioStep:
         The trace identifier shared across cascade events (if any).
     """
 
-    __slots__ = ("step_index", "phase", "description", "logs", "correlation_id")
+    __slots__ = ("correlation_id", "description", "logs", "phase", "step_index")
 
     def __init__(
         self,
@@ -276,8 +275,9 @@ class DatabasePoolExhaustionScenario(BaseScenario):
         )
         
         # Inject 500 explicit CRITICAL/ERROR log bursts tagged with correlation_id
-        from .generator import LogEntry
         from datetime import timedelta
+
+        from .generator import LogEntry
         burst_logs: list[Any] = []
         base_ts = datetime.now(timezone.utc)
         

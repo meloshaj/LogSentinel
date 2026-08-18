@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .blast_radius import BlastRadiusResult
 
-
 TopologyNodeType = Literal["gateway", "service", "database", "cache", "queue"]
 TopologyNodeStatus = Literal["healthy", "degraded", "critical"]
 
