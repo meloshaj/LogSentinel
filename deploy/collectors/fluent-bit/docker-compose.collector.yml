@@ -11,6 +11,6 @@ services:
     environment:
       - LOGSENTINEL_HOST=${LOGSENTINEL_HOST:-localhost}
       - LOGSENTINEL_PORT=${LOGSENTINEL_PORT:-8000}
-      - LOGSENTINEL_API_KEY=${LOGSENTINEL_API_KEY:-change_me}
+      - LOGSENTINEL_API_KEY=${LOGSENTINEL_API_KEY:-dev-local-key}
     network_mode: "host" # Useful for reaching localhost backends
     restart: always
