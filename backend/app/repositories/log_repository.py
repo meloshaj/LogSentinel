@@ -9,23 +9,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import (
-    Column,
-    DateTime,
-    MetaData,
-    Table,
-    Text,
     and_,
     delete,
     insert,
     select,
 )
-from sqlalchemy.dialects.postgresql import JSONB, VARCHAR
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..core.database import get_engine
-from ..models import ParsedLog
-
 from ..core.orm import LogRecord
+from ..models import ParsedLog
 
 logs_table = LogRecord.__table__
 

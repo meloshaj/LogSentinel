@@ -25,7 +25,14 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-from .core import Base, dispose_engine, get_database_settings, get_engine, init_engine, verify_connectivity
+from .core import (
+    Base,
+    dispose_engine,
+    get_database_settings,
+    get_engine,
+    init_engine,
+    verify_connectivity,
+)
 from .core.constants import LOG_WORKERS_GROUP
 from .core.redis import close_redis_pool, init_redis_pool
 from .core.settings import (
@@ -512,8 +519,9 @@ async def telemetry_websocket(websocket: WebSocket, token: str | None = None) ->
     Clients receive updates for logs, topology, and anomalies.
     """
     import jwt as pyjwt
-    from .security.auth import JWT_SECRET_KEY, JWT_ALGORITHM
     from fastapi import status
+
+    from .security.auth import JWT_ALGORITHM, JWT_SECRET_KEY
 
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)

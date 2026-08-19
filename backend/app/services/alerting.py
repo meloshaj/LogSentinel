@@ -1,13 +1,11 @@
 import asyncio
 import logging
 import time
-from typing import Optional
 
 import httpx
 from redis.asyncio import Redis
 
 from ..config import get_webhook_settings
-from ..core.redis import _redis_pool as _global_redis_pool
 from ..schemas.alerting import IncidentAlertPayload
 
 logger = logging.getLogger("logsentinel.alerting")
@@ -15,13 +13,15 @@ logger = logging.getLogger("logsentinel.alerting")
 # Configuration
 WINDOW_SECONDS = 15.0
 
-def _get_fallback_redis() -> Optional[Redis]:
+def _get_fallback_redis() -> Redis | None:
     """Return a Redis client from the global pool when no client was injected.
 
     This is used exclusively by the graph scorer path which dispatches alerts
     from a synchronous context and cannot easily inject a client.
     """
-    from ..core.redis import _redis_pool  # noqa: WPS433 — late import to avoid circular deps
+    from ..core.redis import (
+        _redis_pool,  # noqa: WPS433 — late import to avoid circular deps
+    )
 
     if _redis_pool is not None:
         return Redis(connection_pool=_redis_pool)
@@ -31,7 +31,7 @@ def _get_fallback_redis() -> Optional[Redis]:
 async def dispatch_incident_alert(
     incident_data: IncidentAlertPayload,
     *,
-    redis_client: Optional[Redis] = None,
+    redis_client: Redis | None = None,
 ) -> None:
     """
     Non-blocking, intelligent alert dispatcher with Valkey-backed sliding window deduplication.

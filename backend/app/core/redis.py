@@ -60,7 +60,7 @@ async def init_redis_pool() -> Redis:
                 try:
                     await _redis_pool.disconnect(inuse_connections=True)
                 except Exception:
-                    pass
+                    logger.debug("Failed to disconnect failed Redis pool during retry cleanup", exc_info=True)
                 _redis_pool = None
             await asyncio.sleep(delay)
 

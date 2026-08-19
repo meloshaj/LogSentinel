@@ -71,7 +71,7 @@ jobs:
           POSTGRES_DB: logsentinel_db
           REDIS_URL: redis://localhost:6379/0
         run: |
-          pytest backend/tests/test_e2e_pipeline.py -v || echo "Tests need to be added"
+          pytest tests/test_e2e_pipeline.py -v || echo "Tests need to be added"
 
   frontend-checks:
     name: Frontend Build & Type Check

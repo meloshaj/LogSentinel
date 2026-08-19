@@ -1,7 +1,7 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -62,7 +62,7 @@ def extract_attributes(attributes: list) -> dict[str, Any]:
 @router.post("/logs", dependencies=[Depends(require_ingestion_api_key)])
 async def ingest_logs(
     request: Request,
-    redis_client: Redis = Depends(get_redis_client),
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
 ) -> JSONResponse:
     """
     Ingest OpenTelemetry logs natively.
@@ -74,8 +74,8 @@ async def ingest_logs(
     try:
         if "application/x-protobuf" in content_type:
             try:
-                from opentelemetry.proto.logs.v1.logs_pb2 import LogsData
                 from google.protobuf.json_format import MessageToDict
+                from opentelemetry.proto.logs.v1.logs_pb2 import LogsData
             except ImportError:
                 logger.error("opentelemetry-proto not installed")
                 raise HTTPException(status_code=500, detail="Protobuf dependencies missing")

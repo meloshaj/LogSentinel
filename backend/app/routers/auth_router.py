@@ -313,8 +313,9 @@ async def forgot_password(
     Always returns a success-shaped response regardless of whether the email
     exists to prevent email enumeration attacks.
     """
-    import jwt as pyjwt
     from datetime import datetime, timedelta, timezone
+
+    import jwt as pyjwt
     
     user = await UserRepository.get_user_by_email(db, payload.email)
 
