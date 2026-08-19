@@ -114,11 +114,21 @@ class LogEntry(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the log event was emitted",
     )
-    service_name: str = Field(..., min_length=1, description="Name of the emitting service")
-    level: str = Field(default="info", min_length=1, description="Log severity")
+    service_name: str | None = Field(default=None, description="Name of the emitting service")
+    service: str | None = Field(default=None, description="Name of the emitting service (alias)")
+    level: str = Field(default="info", description="Log severity")
     message: str = Field(..., min_length=1, description="The log message payload")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Optional structured metadata")
     raw: str | None = Field(default=None, description="Raw log line if available")
+    created_at: datetime | None = Field(default=None, description="Creation timestamp")
+
+    def model_post_init(self, context: Any) -> None:
+        if not self.service_name and self.service:
+            self.service_name = self.service
+        elif not self.service and self.service_name:
+            self.service = self.service_name
+        if self.created_at and not self.timestamp:
+            self.timestamp = self.created_at
 
 
 class IngestPayload(BaseModel):
@@ -558,6 +568,17 @@ async def validation_exception_handler(_: object, exc: RequestValidationError) -
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
+@app.get(
+    "/health",
+    tags=["Health"],
+    summary="Service Health Check",
+    response_model=dict[str, str],
+)
+async def health_check() -> dict[str, str]:
+    """Health check endpoint for reverse proxy, load balancers, and container monitoring."""
+    return {"status": "ok", "service": "logsentinel-backend"}
+
+
 @app.post(
     "/ingest-log",
     status_code=202,
@@ -573,9 +594,20 @@ async def validation_exception_handler(_: object, exc: RequestValidationError) -
         503: {"description": "Redis connection error; retry later", "model": IngestResponse},
     }
 )
-async def ingest_log(request: Request, payload: IngestPayload) -> JSONResponse:
+async def ingest_log(
+    request: Request,
+    payload: IngestPayload | list[LogEntry],
+) -> JSONResponse:
     """Accept log payloads asynchronously and enqueue them to Redis streams."""
-    normalized_payload = payload.model_dump(mode="json")
+    if isinstance(payload, IngestPayload):
+        normalized_payload = payload.model_dump(mode="json")
+    else:
+        logs_list = [item.model_dump(mode="json") for item in payload]
+        normalized_payload = {
+            "source": "api-gateway",
+            "environment": "development",
+            "logs": logs_list,
+        }
     
     try:
         redis = request.app.state.redis
