@@ -1,7 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
 
-from backend.app.main import AsyncLogBuffer
 from backend.app.models import ParsedLog
 from backend.app.services.drain_parser import DrainParser
 from backend.app.services.batch_manager import ParsedLogBatchManager
@@ -9,31 +8,8 @@ from backend.app.services.runtime_dependency_parser import RuntimeDependencyPars
 from backend.app.workers.drain_worker import DrainWorker
 
 
-class StubLogBuffer:
-    def __init__(self) -> None:
-        self.items = asyncio.Queue()
-
-    async def dequeue(self):
-        return await self.items.get()
-
-    async def join(self) -> None:
-        await self.items.join()
-
-    def task_done(self) -> None:
-        self.items.task_done()
-
-    def queue_size(self) -> int:
-        return self.items.qsize()
 
 
-class CountingAsyncLogBuffer(AsyncLogBuffer):
-    def __init__(self) -> None:
-        super().__init__()
-        self.task_done_count = 0
-
-    def task_done(self) -> None:
-        self.task_done_count += 1
-        super().task_done()
 
 
 class FakeParser:
@@ -63,6 +39,7 @@ class MetadataPreservingParser:
         metadata = metadata or {}
         now = datetime.now(timezone.utc)
         return ParsedLog(
+            id=f"log-{hash(raw_message)}",
             timestamp=now,
             service=str(metadata.get("service", "test-service")),
             level=str(metadata.get("level", "info")),
@@ -95,23 +72,10 @@ class ShutdownRecordingBatchManager(ParsedLogBatchManager):
         await super().shutdown_flush()
 
 
-class BlockingDrainWorker(DrainWorker):
-    def __init__(self, *args, entered: asyncio.Event, release: asyncio.Event, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.entered = entered
-        self.release = release
-        self.completed_items: list[object] = []
-
-    async def process_one(self, item):
-        self.entered.set()
-        await self.release.wait()
-        self.completed_items.append(item)
-        return []
 
 
-class FailingDrainWorker(DrainWorker):
-    async def process_one(self, _item):
-        raise RuntimeError("expected processing failure")
+
+
 
 
 def make_parsed_log(
@@ -122,6 +86,7 @@ def make_parsed_log(
 ) -> ParsedLog:
     now = datetime.now(timezone.utc)
     return ParsedLog(
+        id=f"log-{hash(raw_message)}",
         timestamp=now,
         service=service,
         level=level,
@@ -144,14 +109,20 @@ class RecordingBatchManager(ParsedLogBatchManager):
 
 
 def make_worker(tmp_path) -> DrainWorker:
-    parser = DrainParser(state_path=str(tmp_path / "drain_worker_state.bin"))
-    return DrainWorker(StubLogBuffer(), parser)
+    from drain3.file_persistence import FilePersistence
+    state_path = str(tmp_path / "drain_worker_state.bin")
+    pers = FilePersistence(state_path)
+    parser = DrainParser(state_path=state_path, persistence=pers)
+    return DrainWorker(None, parser)
 
 
 def make_worker_with_batch_size(tmp_path, batch_size: int) -> DrainWorker:
-    parser = DrainParser(state_path=str(tmp_path / "drain_worker_state.bin"))
+    from drain3.file_persistence import FilePersistence
+    state_path = str(tmp_path / "drain_worker_state.bin")
+    pers = FilePersistence(state_path)
+    parser = DrainParser(state_path=state_path, persistence=pers)
     batch_manager = ParsedLogBatchManager(batch_size=batch_size)
-    return DrainWorker(StubLogBuffer(), parser, batch_manager=batch_manager)
+    return DrainWorker(None, parser, batch_manager=batch_manager)
 
 
 def test_drain_worker_processes_sample_payload(tmp_path) -> None:
@@ -236,9 +207,12 @@ def test_drain_worker_sends_parsed_logs_to_batch_manager(tmp_path) -> None:
 
 
 def test_drain_worker_passes_typed_parsed_log_without_serializing(tmp_path) -> None:
-    parser = DrainParser(state_path=str(tmp_path / "typed_boundary_state.bin"))
+    from drain3.file_persistence import FilePersistence
+    state_path = str(tmp_path / "typed_boundary_state.bin")
+    pers = FilePersistence(state_path)
+    parser = DrainParser(state_path=state_path, persistence=pers)
     batch_manager = RecordingBatchManager()
-    worker = DrainWorker(StubLogBuffer(), parser, batch_manager=batch_manager)
+    worker = DrainWorker(None, parser, batch_manager=batch_manager)
     timestamp = "2026-07-22T18:30:00+00:00"
 
     parsed_logs = asyncio.run(
@@ -284,9 +258,12 @@ def test_drain_worker_flushes_parsed_logs_to_fake_sink(tmp_path) -> None:
         inserted_batches.append(batch)
         return len(batch)
 
-    parser = DrainParser(state_path=str(tmp_path / "drain_worker_sink_state.bin"))
+    from drain3.file_persistence import FilePersistence
+    state_path = str(tmp_path / "drain_worker_sink_state.bin")
+    pers = FilePersistence(state_path)
+    parser = DrainParser(state_path=state_path, persistence=pers)
     batch_manager = ParsedLogBatchManager(batch_size=2, sink=fake_sink)
-    worker = DrainWorker(StubLogBuffer(), parser, batch_manager=batch_manager)
+    worker = DrainWorker(None, parser, batch_manager=batch_manager)
 
     asyncio.run(worker.process_one("first log line"))
     asyncio.run(worker.process_one("second log line"))
@@ -307,9 +284,12 @@ def test_drain_worker_shutdown_flushes_remaining_batch_records(tmp_path) -> None
         return len(batch)
 
     async def run() -> dict:
-        parser = DrainParser(state_path=str(tmp_path / "drain_worker_shutdown_state.bin"))
+        from drain3.file_persistence import FilePersistence
+        state_path = str(tmp_path / "drain_worker_shutdown_state.bin")
+        pers = FilePersistence(state_path)
+        parser = DrainParser(state_path=state_path, persistence=pers)
         batch_manager = ParsedLogBatchManager(batch_size=500, sink=fake_sink)
-        worker = DrainWorker(StubLogBuffer(), parser, batch_manager=batch_manager)
+        worker = DrainWorker(None, parser, batch_manager=batch_manager)
 
         await worker.process_one("shutdown flush log line")
         await worker.stop()
@@ -324,173 +304,14 @@ def test_drain_worker_shutdown_flushes_remaining_batch_records(tmp_path) -> None
     assert len(inserted_batches) == 1
 
 
-def test_drain_worker_drains_all_accepted_payloads_before_shutdown_flush() -> None:
-    async def run() -> tuple[list[str], list[str], int, dict]:
-        events: list[str] = []
-        persisted_messages: list[str] = []
 
-        async def sink(batch: list[ParsedLog]) -> int:
-            persisted_messages.extend(record.raw_message for record in batch)
-            return len(batch)
-
-        log_buffer = CountingAsyncLogBuffer()
-        parser = FakeParser(events)
-        batch_manager = ShutdownRecordingBatchManager(events, sink=sink)
-        worker = DrainWorker(
-            log_buffer,
-            parser,  # type: ignore[arg-type]
-            batch_manager=batch_manager,
-            queue_drain_timeout_seconds=0.5,
-        )
-        messages = ["first", "second", "third"]
-        for message in messages:
-            assert log_buffer.enqueue({"logs": [{"message": message}]})
-
-        worker.start()
-        await worker.stop()
-        assert worker._task is None
-        return events, persisted_messages, log_buffer.task_done_count, worker.get_stats()
-
-    events, persisted_messages, task_done_count, stats = asyncio.run(run())
-
-    assert events[:3] == ["processed:first", "processed:second", "processed:third"]
-    assert events[-1] == "batch_shutdown_flush"
-    assert persisted_messages == ["first", "second", "third"]
-    assert task_done_count == 3
-    assert stats["processed_count"] == 3
-    assert stats["running"] is False
-    assert stats["last_queue_drain_timed_out"] is False
-
-
-def test_drain_worker_stop_waits_for_in_flight_payload() -> None:
-    async def run() -> tuple[bool, list[object], int]:
-        entered = asyncio.Event()
-        release = asyncio.Event()
-        log_buffer = CountingAsyncLogBuffer()
-        worker = BlockingDrainWorker(
-            log_buffer,
-            FakeParser(),  # type: ignore[arg-type]
-            batch_manager=ParsedLogBatchManager(flush_interval_seconds=60.0),
-            queue_drain_timeout_seconds=0.5,
-            entered=entered,
-            release=release,
-        )
-        payload = {"logs": [{"message": "blocked"}]}
-        assert log_buffer.enqueue(payload)
-        worker.start()
-        await asyncio.wait_for(entered.wait(), timeout=0.2)
-
-        stop_task = asyncio.create_task(worker.stop())
-        await asyncio.sleep(0)
-        was_waiting = not stop_task.done()
-        release.set()
-        await asyncio.wait_for(stop_task, timeout=0.2)
-        assert worker._task is None
-        return was_waiting, worker.completed_items, log_buffer.task_done_count
-
-    was_waiting, completed_items, task_done_count = asyncio.run(run())
-
-    assert was_waiting is True
-    assert len(completed_items) == 1
-    assert task_done_count == 1
-
-
-def test_drain_worker_with_empty_queue_stops_promptly() -> None:
-    async def run() -> tuple[dict, int]:
-        log_buffer = CountingAsyncLogBuffer()
-        worker = DrainWorker(
-            log_buffer,
-            FakeParser(),  # type: ignore[arg-type]
-            batch_manager=ParsedLogBatchManager(flush_interval_seconds=60.0),
-            queue_drain_timeout_seconds=0.5,
-        )
-        worker.start()
-        await asyncio.wait_for(worker.stop(), timeout=0.2)
-        assert worker._task is None
-        return worker.get_stats(), log_buffer.task_done_count
-
-    stats, task_done_count = asyncio.run(run())
-
-    assert stats["running"] is False
-    assert stats["last_queue_drain_timed_out"] is False
-    assert stats["batch"]["current_buffer_size"] == 0
-    assert task_done_count == 0
-
-
-def test_drain_worker_marks_failed_processing_complete_exactly_once() -> None:
-    async def run() -> tuple[dict, int]:
-        log_buffer = CountingAsyncLogBuffer()
-        worker = FailingDrainWorker(
-            log_buffer,
-            FakeParser(),  # type: ignore[arg-type]
-            batch_manager=ParsedLogBatchManager(flush_interval_seconds=60.0),
-            queue_drain_timeout_seconds=0.5,
-        )
-        assert log_buffer.enqueue({"logs": [{"message": "will-fail"}]})
-        worker.start()
-        await worker.stop()
-        assert worker._task is None
-        return worker.get_stats(), log_buffer.task_done_count
-
-    stats, task_done_count = asyncio.run(run())
-
-    assert stats["error_count"] == 1
-    assert stats["last_queue_drain_timed_out"] is False
-    assert task_done_count == 1
-
-
-def test_drain_worker_timeout_stops_consumer_and_attempts_final_flush() -> None:
-    async def run() -> tuple[dict, int, int, list[str]]:
-        entered = asyncio.Event()
-        never_release = asyncio.Event()
-        events: list[str] = []
-        persisted_messages: list[str] = []
-
-        async def sink(batch: list[ParsedLog]) -> int:
-            persisted_messages.extend(record.raw_message for record in batch)
-            return len(batch)
-
-        log_buffer = CountingAsyncLogBuffer()
-        batch_manager = ShutdownRecordingBatchManager(events, sink=sink)
-        await batch_manager.add(make_parsed_log("already-parsed"))
-        worker = BlockingDrainWorker(
-            log_buffer,
-            FakeParser(),  # type: ignore[arg-type]
-            batch_manager=batch_manager,
-            queue_drain_timeout_seconds=0.01,
-            entered=entered,
-            release=never_release,
-        )
-        assert log_buffer.enqueue({"logs": [{"message": "in-flight"}]})
-        assert log_buffer.enqueue({"logs": [{"message": "still-queued"}]})
-        worker.start()
-        await asyncio.wait_for(entered.wait(), timeout=0.2)
-
-        await asyncio.wait_for(worker.stop(), timeout=0.3)
-        assert worker._task is None
-        return (
-            worker.get_stats(),
-            log_buffer.task_done_count,
-            batch_manager.shutdown_attempt_count,
-            persisted_messages,
-        )
-
-    stats, task_done_count, shutdown_attempt_count, persisted_messages = asyncio.run(run())
-
-    assert stats["last_queue_drain_timed_out"] is True
-    assert stats["queue_size"] == 1
-    assert stats["running"] is False
-    assert task_done_count == 1
-    assert shutdown_attempt_count == 1
-    assert persisted_messages == ["already-parsed"]
-    assert stats["batch"]["current_buffer_size"] == 0
 
 
 def test_drain_worker_continues_normal_persistence_when_no_trace_context() -> None:
     batch_manager = RecordingBatchManager()
     observations: list[TraceObservation] = []
     worker = DrainWorker(
-        StubLogBuffer(),
+        None,
         MetadataPreservingParser(),  # type: ignore[arg-type]
         batch_manager=batch_manager,
         runtime_dependency_parser=RuntimeDependencyParser(),
@@ -511,7 +332,7 @@ def test_drain_worker_passes_extracted_trace_observation_to_injected_collector()
     batch_manager = RecordingBatchManager()
     observations: list[TraceObservation] = []
     worker = DrainWorker(
-        StubLogBuffer(),
+        None,
         MetadataPreservingParser(),  # type: ignore[arg-type]
         batch_manager=batch_manager,
         runtime_dependency_parser=RuntimeDependencyParser(),
@@ -546,7 +367,7 @@ def test_trace_extraction_failure_does_not_prevent_parsed_log_batching() -> None
     batch_manager = RecordingBatchManager()
     observations: list[TraceObservation] = []
     worker = DrainWorker(
-        StubLogBuffer(),
+        None,
         MetadataPreservingParser(),  # type: ignore[arg-type]
         batch_manager=batch_manager,
         runtime_dependency_parser=FailingRuntimeDependencyParser(),

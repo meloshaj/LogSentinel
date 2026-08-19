@@ -185,19 +185,12 @@ class EventManager:
                 "anomaly_score": anomaly_score,
                 "severity": severity,
                 "model_version": prediction.get("model_version"),
-                "status": "ACTIVE",
+                "status": "triggered",
             }
             if blast_radius_result is not None:
-                # Flatten blast_radius to just the node array so the frontend
-                # type guard (isBlastRadius: BlastRadiusNode[]) passes.
-                flat_nodes = (
-                    blast_radius_payload.get("blast_radius", [])
-                    if isinstance(blast_radius_payload, dict)
-                    else []
-                )
                 payload.update(
                     {
-                        "blast_radius": flat_nodes,
+                        "blast_radius": blast_radius_payload.get("blast_radius", []) if blast_radius_payload else [],
                         "suspected_root_service": blast_radius_result.suspected_root_service,
                         "root_cause_confidence": blast_radius_result.confidence,
                         "graph_analysis_version": blast_radius_result.algorithm_version,

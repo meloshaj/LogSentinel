@@ -3,6 +3,8 @@ import logging
 
 from redis.asyncio import Redis
 
+from ..core.constants import LOG_WORKERS_GROUP
+
 logger = logging.getLogger("logsentinel.workers.stream_cleaner")
 
 class StreamCleanerWorker:
@@ -11,7 +13,7 @@ class StreamCleanerWorker:
     def __init__(
         self,
         stream_name: str = "logs:stream",
-        group_name: str = "drain_workers",
+        group_name: str = LOG_WORKERS_GROUP,
         consumer_name: str = "orphan_cleaner",
         check_interval_seconds: float = 60.0,
         min_idle_time_ms: int = 120_000,

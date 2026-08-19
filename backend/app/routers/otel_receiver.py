@@ -1,12 +1,13 @@
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
 
-from ..core.redis import init_redis_pool
+from ..core.dependencies import get_redis_client
 from ..schemas.otel import (
     ExportLogsPartialSuccess,
     ExportLogsServiceRequest,
@@ -59,29 +60,41 @@ def extract_attributes(attributes: list) -> dict[str, Any]:
     return result
 
 @router.post("/logs", dependencies=[Depends(require_ingestion_api_key)])
-async def ingest_logs(request: Request):
+async def ingest_logs(
+    request: Request,
+    redis_client: Annotated[Redis, Depends(get_redis_client)],
+) -> JSONResponse:
     """
     Ingest OpenTelemetry logs natively.
-    Accepts application/json (OTLP/HTTP).
+    Accepts application/json and application/x-protobuf (OTLP/HTTP).
     """
     content_type = request.headers.get("Content-Type", "")
+    content_encoding = request.headers.get("Content-Encoding", "")
     
-    if "application/x-protobuf" in content_type:
-        # For now, we only implement the JSON mapping. Protobuf would require 
-        # opentelemetry.proto or generated python definitions.
-        raise HTTPException(
-            status_code=415, 
-            detail="application/x-protobuf is not currently supported natively without opentelemetry-proto dependencies. Please use application/json."
-        )
-        
     try:
-        body = await request.json()
-        payload = ExportLogsServiceRequest.model_validate(body)
+        if "application/x-protobuf" in content_type:
+            try:
+                from google.protobuf.json_format import MessageToDict
+                from opentelemetry.proto.logs.v1.logs_pb2 import LogsData
+            except ImportError:
+                logger.error("opentelemetry-proto not installed")
+                raise HTTPException(status_code=500, detail="Protobuf dependencies missing")
+            
+            raw_body = await request.body()
+            if "gzip" in content_encoding:
+                import gzip
+                raw_body = gzip.decompress(raw_body)
+            
+            pb_payload = LogsData.FromString(raw_body)
+            body = MessageToDict(pb_payload, use_integers_for_enums=True)
+            payload = ExportLogsServiceRequest.model_validate(body)
+        else:
+            body = await request.json()
+            payload = ExportLogsServiceRequest.model_validate(body)
     except Exception as e:
-        logger.error(f"Failed to parse OTLP JSON: {e}")
-        raise HTTPException(status_code=400, detail="Invalid OTLP JSON payload")
+        logger.error(f"Failed to parse OTLP payload: {e}")
+        raise HTTPException(status_code=400, detail="Invalid OTLP payload")
 
-    redis_client = await init_redis_pool()
     pipe = redis_client.pipeline(transaction=False)
     
     ingested_count = 0

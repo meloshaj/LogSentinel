@@ -20,9 +20,10 @@ from backend.tools.log_generator.scenarios import (
 )
 from tests.test_graph_api_routes import (
     FakeTrackingRepository as RouteTrackingRepository,
-    auth_headers,
 )
 
+def auth_headers() -> dict[str, str]:
+    return {"Authorization": "Bearer fake-test-token"}
 
 BASE_TIME = datetime(2026, 7, 24, 10, 0, tzinfo=timezone.utc)
 
@@ -320,7 +321,7 @@ def test_runtime_chain_persists_broadcasts_and_rest_retrieves(monkeypatch) -> No
 
     stored = tracking_repo.rows[1]["blast_radius"]
     assert stored is not None
-    assert broadcaster.events[0]["payload"]["blast_radius"] == stored
+    assert broadcaster.events[0]["payload"]["blast_radius"] == stored["blast_radius"]
 
     monkeypatch.setattr(
         "backend.app.main.tracking_repository",
@@ -328,7 +329,15 @@ def test_runtime_chain_persists_broadcasts_and_rest_retrieves(monkeypatch) -> No
     )
     from fastapi.testclient import TestClient
     from backend.app.main import app
-
+    from backend.app.security.auth import get_current_user
+    from unittest.mock import MagicMock
+    
+    def _make_fake_user():
+        user = MagicMock()
+        user.id = 1
+        return user
+        
+    app.dependency_overrides[get_current_user] = _make_fake_user
     monkeypatch.setenv("INGEST_API_KEY", "test-graph-key")
 
     response = TestClient(app).get(

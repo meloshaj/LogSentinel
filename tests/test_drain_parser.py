@@ -1,5 +1,14 @@
 from backend.app.services.drain_parser import DrainParser
+import pytest
+from unittest.mock import patch, MagicMock
 
+@pytest.fixture(autouse=True)
+def mock_redis():
+    with patch("backend.app.services.drain_parser.redis.Redis") as mock:
+        mock.return_value = MagicMock()
+        # Ensure it raises an exception when attempting to use RedisPersistence to force FilePersistence fallback
+        mock.side_effect = Exception("Mocked Redis unavailable")
+        yield mock
 
 def make_parser(tmp_path):
     return DrainParser(state_path=str(tmp_path / "drain3_state.bin"))
@@ -39,16 +48,6 @@ def test_parse_returns_expected_fields(tmp_path) -> None:
 
     result = parser.parse("user blerim logged in from 192.168.1.5", metadata=metadata)
 
-    assert set(result) == {
-        "raw_message",
-        "template_id",
-        "template_text",
-        "cluster_size",
-        "change_type",
-        "parameters",
-        "metadata",
-        "parsed_at",
-    }
-    assert result["raw_message"] == "user blerim logged in from 192.168.1.5"
-    assert result["metadata"] == metadata
-    assert isinstance(result["parameters"], list)
+    assert result.raw_message == "user blerim logged in from 192.168.1.5"
+    assert result.metadata == metadata
+    assert isinstance(result.parameters, list)

@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.models import ParsedLog
-from app.repositories.log_repository import LogRepository
+from backend.app.models import ParsedLog
+from backend.app.repositories.log_repository import LogRepository
 
 
 @pytest.fixture

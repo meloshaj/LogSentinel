@@ -44,9 +44,9 @@ class TopologyEdgeContract(BaseModel):
 class TopologyResponse(BaseModel):
     nodes: list[TopologyNodeContract] = Field(default_factory=list)
     edges: list[TopologyEdgeContract] = Field(default_factory=list)
-    snapshot_timestamp: datetime
+    snapshot_timestamp: datetime = Field(alias="generated_at")
 
-    model_config = ConfigDict(validate_assignment=True)
+    model_config = ConfigDict(validate_assignment=True, populate_by_name=True)
 
     @field_validator("snapshot_timestamp")
     @classmethod

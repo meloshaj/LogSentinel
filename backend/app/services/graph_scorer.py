@@ -227,7 +227,7 @@ class DynamicGraphPathwayScorer:
             
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(dispatch_incident_alert(payload))
+                loop.create_task(dispatch_incident_alert(payload, redis_client=None))
             except RuntimeError:
                 # No running loop, can't easily dispatch async from sync here
                 pass

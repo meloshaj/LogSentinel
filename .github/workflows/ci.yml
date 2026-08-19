@@ -16,11 +16,12 @@ jobs:
     # Provision required backend dependencies
     services:
       postgres:
-        image: timescale/timescaledb:latest-pg14
+        image: timescale/timescaledb:latest-pg16
         env:
           POSTGRES_USER: logsentinel
           POSTGRES_PASSWORD: logsentinel_secret
           POSTGRES_DB: logsentinel_db
+          TIMESCALEDB_TELEMETRY: "off"
         ports:
           - 5432:5432
         options: >-
@@ -70,7 +71,7 @@ jobs:
           POSTGRES_DB: logsentinel_db
           REDIS_URL: redis://localhost:6379/0
         run: |
-          pytest backend/tests/test_e2e_pipeline.py -v || echo "Tests need to be added"
+          pytest tests/test_e2e_pipeline.py -v || echo "Tests need to be added"
 
   frontend-checks:
     name: Frontend Build & Type Check

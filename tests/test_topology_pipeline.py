@@ -79,6 +79,7 @@ class MetadataPreservingParser:
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         return ParsedLog(
+            id=f"log-{hash(raw_message)}",
             timestamp=timestamp,
             service=str(metadata.get("service", "test-service")),
             level=str(metadata.get("level", "info")),

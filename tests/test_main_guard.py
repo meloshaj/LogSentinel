@@ -2,8 +2,8 @@
 import pytest
 from fastapi import FastAPI
 
-from app.main import lifespan
-from app.security import auth
+from backend.app.main import lifespan
+from backend.app.security import auth
 
 
 @pytest.mark.asyncio

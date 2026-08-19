@@ -132,7 +132,7 @@ def run_npm_build():
     except Exception as e:
         record_result("Frontend Build (TypeScript/Bundling)", False, str(e))
 
-async def test_e2e_roundtrip():
+async def run_e2e_roundtrip():
     print(f"\n{Colors.OKCYAN}Running E2E Live Round-Trip Verification...{Colors.ENDC}")
     probe_id = str(uuid.uuid4())
     
@@ -230,7 +230,7 @@ async def main():
     await asyncio.to_thread(run_npm_build)
     
     # E2E Round Trip
-    await test_e2e_roundtrip()
+    await run_e2e_roundtrip()
     
     # Summary
     print_summary()

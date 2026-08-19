@@ -14,34 +14,15 @@ VALID_PARENT_ID = "00f067aa0ba902b7"
 VALID_TRACEPARENT = f"00-{VALID_TRACE_ID}-{VALID_PARENT_ID}-01"
 
 
-def make_log(
-    *,
-    correlation_id: str | None = None,
-    parameters: list[dict[str, Any]] | None = None,
-    metadata: dict[str, Any] | None = None,
-) -> ParsedLog:
-    return ParsedLog(
-        timestamp=FIXED_TIMESTAMP,
-        service="orders",
-        level="info",
-        raw_message="order processed",
-        template_id="template-1",
-        template_text="order processed",
-        parameters=parameters or [],
-        source="ingest",
-        environment="test",
-        correlation_id=correlation_id,
-        metadata=metadata or {},
-        parsed_at=FIXED_TIMESTAMP,
-    )
+
 
 
 def source_paths(observation) -> set[str]:
     return {source.source_path for source in observation.extraction_sources}
 
 
-def test_extracts_direct_parsed_log_correlation_id() -> None:
-    observation = RuntimeDependencyParser().extract(make_log(correlation_id="corr-123"))
+def test_extracts_direct_parsed_log_correlation_id(make_parsed_log) -> None:
+    observation = RuntimeDependencyParser().extract(make_parsed_log(correlation_id="corr-123"))
 
     assert observation is not None
     assert observation.correlation_id == "corr-123"
@@ -49,9 +30,9 @@ def test_extracts_direct_parsed_log_correlation_id() -> None:
     assert "top_level.correlation_id" in source_paths(observation)
 
 
-def test_extracts_nested_parameter_trace_id() -> None:
+def test_extracts_nested_parameter_trace_id(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(parameters=[{"payload": {"trace_id": "trace-abc"}}])
+        make_parsed_log(parameters=[{"payload": {"trace_id": "trace-abc"}}])
     )
 
     assert observation is not None
@@ -60,18 +41,18 @@ def test_extracts_nested_parameter_trace_id() -> None:
     assert "parameters[0].payload.trace_id" in source_paths(observation)
 
 
-def test_extracts_nested_metadata_header_correlation_id() -> None:
+def test_extracts_nested_metadata_header_correlation_id(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(metadata={"headers": {"x-correlation-id": "corr-header"}})
+        make_parsed_log(metadata={"headers": {"x-correlation-id": "corr-header"}})
     )
 
     assert observation is not None
     assert observation.correlation_id == "corr-header"
 
 
-def test_failed_service_metadata_becomes_target_service_hint() -> None:
+def test_failed_service_metadata_becomes_target_service_hint(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(
+        make_parsed_log(
             correlation_id="corr-1",
             metadata={"failed_service": "inventory-db"},
         )
@@ -81,9 +62,9 @@ def test_failed_service_metadata_becomes_target_service_hint() -> None:
     assert observation.target_service_hint == "inventory-db"
 
 
-def test_recognizes_camel_snake_dotted_and_hyphenated_key_variants() -> None:
+def test_recognizes_camel_snake_dotted_and_hyphenated_key_variants(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(
+        make_parsed_log(
             parameters=[
                 {
                     "traceId": "trace-camel",
@@ -104,12 +85,12 @@ def test_recognizes_camel_snake_dotted_and_hyphenated_key_variants() -> None:
     assert observation.request_id == "request-hyphen"
 
 
-def test_transaction_id_and_request_id_fallback_precedence() -> None:
+def test_transaction_id_and_request_id_fallback_precedence(make_parsed_log) -> None:
     transaction_observation = RuntimeDependencyParser().extract(
-        make_log(parameters=[{"request_id": "request-1", "transaction_id": "txn-1"}])
+        make_parsed_log(parameters=[{"request_id": "request-1", "transaction_id": "txn-1"}])
     )
     request_observation = RuntimeDependencyParser().extract(
-        make_log(parameters=[{"request_id": "request-2"}])
+        make_parsed_log(parameters=[{"request_id": "request-2"}])
     )
 
     assert transaction_observation is not None
@@ -118,9 +99,9 @@ def test_transaction_id_and_request_id_fallback_precedence() -> None:
     assert request_observation.canonical_transaction_id == "request-2"
 
 
-def test_trace_id_wins_canonical_precedence() -> None:
+def test_trace_id_wins_canonical_precedence(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(
+        make_parsed_log(
             correlation_id="corr-1",
             parameters=[{"trace_id": "trace-1", "transaction_id": "txn-1"}],
             metadata={"request_id": "request-1"},
@@ -131,17 +112,17 @@ def test_trace_id_wins_canonical_precedence() -> None:
     assert observation.canonical_transaction_id == "trace-1"
 
 
-def test_span_id_is_not_used_as_canonical_transaction_id() -> None:
-    observation = RuntimeDependencyParser().extract(make_log(parameters=[{"span_id": "span-only"}]))
+def test_span_id_is_not_used_as_canonical_transaction_id(make_parsed_log) -> None:
+    observation = RuntimeDependencyParser().extract(make_parsed_log(parameters=[{"span_id": "span-only"}]))
 
     assert observation is not None
     assert observation.span_id == "span-only"
     assert observation.canonical_transaction_id is None
 
 
-def test_valid_w3c_traceparent_extraction() -> None:
+def test_valid_w3c_traceparent_extraction(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(metadata={"headers": {"traceparent": VALID_TRACEPARENT}})
+        make_parsed_log(metadata={"headers": {"traceparent": VALID_TRACEPARENT}})
     )
 
     assert observation is not None
@@ -152,25 +133,25 @@ def test_valid_w3c_traceparent_extraction() -> None:
     assert "metadata.headers.traceparent.parent_span_id" in source_paths(observation)
 
 
-def test_malformed_traceparent_is_rejected_without_throwing() -> None:
+def test_malformed_traceparent_is_rejected_without_throwing(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(metadata={"traceparent": "00-short-parent-01"})
+        make_parsed_log(metadata={"traceparent": "00-short-parent-01"})
     )
 
     assert observation is None
 
 
-def test_all_zero_traceparent_is_rejected() -> None:
+def test_all_zero_traceparent_is_rejected(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(metadata={"traceparent": f"00-{'0' * 32}-{'0' * 16}-01"})
+        make_parsed_log(metadata={"traceparent": f"00-{'0' * 32}-{'0' * 16}-01"})
     )
 
     assert observation is None
 
 
-def test_json_string_extraction() -> None:
+def test_json_string_extraction(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(parameters=[{"payload": '{"traceId": "json-trace", "spanId": "json-span"}'}])
+        make_parsed_log(parameters=[{"payload": '{"traceId": "json-trace", "spanId": "json-span"}'}])
     )
 
     assert observation is not None
@@ -179,9 +160,9 @@ def test_json_string_extraction() -> None:
     assert "parameters[0].payload.traceId" in source_paths(observation)
 
 
-def test_conservative_key_value_extraction() -> None:
+def test_conservative_key_value_extraction(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(metadata={"line": "trace_id=trace-kv span_id=span-kv correlation-id: corr-kv"})
+        make_parsed_log(metadata={"line": "trace_id=trace-kv span_id=span-kv correlation-id: corr-kv"})
     )
 
     assert observation is not None
@@ -190,9 +171,9 @@ def test_conservative_key_value_extraction() -> None:
     assert observation.correlation_id == "corr-kv"
 
 
-def test_conflicting_identifier_precedence_is_recorded() -> None:
+def test_conflicting_identifier_precedence_is_recorded(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(correlation_id="top-corr", parameters=[{"correlation_id": "param-corr"}])
+        make_parsed_log(correlation_id="top-corr", parameters=[{"correlation_id": "param-corr"}])
     )
 
     assert observation is not None
@@ -200,26 +181,26 @@ def test_conflicting_identifier_precedence_is_recorded() -> None:
     assert observation.conflicts == {"correlation_id": 1}
 
 
-def test_source_path_recording_for_selected_identifier() -> None:
-    observation = RuntimeDependencyParser().extract(make_log(parameters=[{"trace_id": "trace-src"}]))
+def test_source_path_recording_for_selected_identifier(make_parsed_log) -> None:
+    observation = RuntimeDependencyParser().extract(make_parsed_log(parameters=[{"trace_id": "trace-src"}]))
 
     assert observation is not None
     assert observation.extraction_sources[0].identifier == "trace_id"
     assert observation.extraction_sources[0].source_path == "parameters[0].trace_id"
 
 
-def test_deeply_nested_input_stops_at_configured_bound() -> None:
+def test_deeply_nested_input_stops_at_configured_bound(make_parsed_log) -> None:
     parser = RuntimeDependencyParser(max_depth=2)
 
     observation = parser.extract(
-        make_log(parameters=[{"a": {"b": {"trace_id": "too-deep"}}}])
+        make_parsed_log(parameters=[{"a": {"b": {"trace_id": "too-deep"}}}])
     )
 
     assert observation is None
 
 
-def test_cyclic_input_does_not_recurse_forever() -> None:
-    log = make_log()
+def test_cyclic_input_does_not_recurse_forever(make_parsed_log) -> None:
+    log = make_parsed_log()
     cyclic: dict[str, Any] = {"trace_id": "cyclic-trace"}
     cyclic["self"] = cyclic
     log.parameters.append(cyclic)
@@ -230,16 +211,16 @@ def test_cyclic_input_does_not_recurse_forever() -> None:
     assert observation.trace_id == "cyclic-trace"
 
 
-def test_oversized_string_is_ignored() -> None:
+def test_oversized_string_is_ignored(make_parsed_log) -> None:
     parser = RuntimeDependencyParser(max_string_length=32)
 
-    observation = parser.extract(make_log(metadata={"line": "trace_id=too-large " + ("x" * 64)}))
+    observation = parser.extract(make_parsed_log(metadata={"line": "trace_id=too-large " + ("x" * 64)}))
 
     assert observation is None
 
 
-def test_input_parsed_log_is_not_mutated() -> None:
-    log = make_log(
+def test_input_parsed_log_is_not_mutated(make_parsed_log) -> None:
+    log = make_parsed_log(
         parameters=[{"payload": {"trace_id": "trace-immutable"}}],
         metadata={"headers": {"request_id": "request-immutable"}},
     )
@@ -252,9 +233,9 @@ def test_input_parsed_log_is_not_mutated() -> None:
     assert log.metadata == original_metadata
 
 
-def test_no_trace_log_returns_none() -> None:
+def test_no_trace_log_returns_none(make_parsed_log) -> None:
     observation = RuntimeDependencyParser().extract(
-        make_log(parameters=[{"user_id": "not-a-trace-id"}], metadata={"status": "ok"})
+        make_parsed_log(parameters=[{"user_id": "not-a-trace-id"}], metadata={"status": "ok"})
     )
 
     assert observation is None

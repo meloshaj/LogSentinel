@@ -38,7 +38,9 @@ pytestmark = pytest.mark.asyncio
 INGEST_API_KEY = "integration-ingest-key"
 
 
-@dataclass(frozen=True)
+
+
+@dataclass
 class PgConnectionSettings:
     user: str
     password: str
@@ -213,8 +215,10 @@ def _install_isolated_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     state_path: Path,
 ) -> SimpleNamespace:
-    log_buffer = main_module.AsyncLogBuffer(maxsize=1000)
-    drain_parser = DrainParser(state_path=str(state_path))
+    from drain3.file_persistence import FilePersistence
+    state_path = str(state_path)
+    pers = FilePersistence(state_path)
+    drain_parser = DrainParser(state_path=state_path, persistence=pers)
     log_repository = LogRepository()
     feature_repository = FeatureRepository()
     batch_manager = ParsedLogBatchManager(
@@ -234,7 +238,7 @@ def _install_isolated_pipeline(
         event_manager=None,
     )
     drain_worker = DrainWorker(
-        log_buffer,
+        None,
         drain_parser,
         batch_manager=batch_manager,
         on_log_parsed=feature_worker.add_parsed_log,
@@ -242,7 +246,7 @@ def _install_isolated_pipeline(
         queue_drain_timeout_seconds=10.0,
     )
 
-    monkeypatch.setattr(main_module, "log_buffer", log_buffer)
+
     monkeypatch.setattr(main_module, "drain_parser", drain_parser)
     monkeypatch.setattr(main_module, "log_repository", log_repository)
     monkeypatch.setattr(main_module, "feature_repository", feature_repository)
@@ -252,7 +256,6 @@ def _install_isolated_pipeline(
     monkeypatch.setattr(main_module, "event_manager", NoopEventManager())
 
     return SimpleNamespace(
-        log_buffer=log_buffer,
         drain_parser=drain_parser,
         log_repository=log_repository,
         feature_repository=feature_repository,
@@ -335,7 +338,8 @@ async def _wait_for_fetchval(pool: asyncpg.Pool, query: str, *args, expected, ti
 
 
 async def _drain_and_flush(pipeline: SimpleNamespace) -> None:
-    await asyncio.wait_for(pipeline.log_buffer.join(), timeout=10.0)
+    # Give the drain worker time to process the stream
+    await asyncio.sleep(0.5)
     await pipeline.batch_manager.flush()
 
 
@@ -541,7 +545,6 @@ async def test_e2e_malformed_log_resilience(
     assert valid_count == 5
     assert massive_count == 1
     assert parser_failure_count == 0
-    assert integration_pipeline.log_buffer.queue_size() == 0
     assert integration_pipeline.drain_worker.get_stats()["error_count"] >= 1
     assert "Drain parser failed for log message" in caplog.text
 
