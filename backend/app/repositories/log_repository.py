@@ -25,26 +25,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from ..core.database import get_engine
 from ..models import ParsedLog
 
-metadata = MetaData()
+from ..core.orm import LogRecord
 
-logs_table = Table(
-    "logs",
-    metadata,
-    Column("id", VARCHAR(26), primary_key=True),
-    Column("timestamp", DateTime(timezone=True), nullable=False),
-    Column("service", VARCHAR(255), nullable=False),
-    Column("raw_message", Text, nullable=False),
-    Column("template_id", VARCHAR(64), nullable=False),
-    Column("template_text", Text, nullable=True),
-    Column("parameters", JSONB, nullable=False),
-    Column("level", VARCHAR(32), nullable=True),
-    Column("source", VARCHAR(255), nullable=True),
-    Column("environment", VARCHAR(255), nullable=True),
-    Column("correlation_id", VARCHAR(128), nullable=True),
-    Column("metadata", JSONB, nullable=False),
-    Column("parsed_at", DateTime(timezone=True), nullable=True),
-    Column("created_at", DateTime(timezone=True), primary_key=True, nullable=False),
-)
+logs_table = LogRecord.__table__
 
 
 class LogRepository:
@@ -82,6 +65,45 @@ class LogRepository:
                 late_logs.append(row)
         return live_logs, late_logs
 
+    @staticmethod
+    def _serialize_for_copy(row: dict[str, Any]) -> tuple:
+        """Normalize a row dict into a tuple strictly typed for ``asyncpg.copy_records_to_table``.
+
+        Each field is coerced to its binary COPY-compatible type:
+        - ``parameters`` / ``metadata``: ``json.dumps()`` (str), with safe defaults.
+        - ``source``, ``environment``: fallback to ``"unknown"``/``"production"`` if ``None``.
+        - ``parsed_at``: defaults to ``datetime.now(UTC)`` if ``None``.
+        - All other fields: passed through as-is (str / datetime).
+        """
+        parameters = row.get("parameters")
+        if isinstance(parameters, (dict, list)):
+            parameters = json.dumps(parameters)
+        elif parameters is None:
+            parameters = "[]"
+
+        metadata = row.get("metadata")
+        if isinstance(metadata, dict):
+            metadata = json.dumps(metadata)
+        elif metadata is None:
+            metadata = "{}"
+
+        return (
+            row["id"],
+            row["timestamp"],
+            row["service"],
+            row["raw_message"],
+            row["template_id"],
+            row.get("template_text"),
+            parameters,
+            row.get("level"),
+            row.get("source") or "unknown",
+            row.get("environment") or "production",
+            row.get("correlation_id"),
+            metadata,
+            row.get("parsed_at") or datetime.now(timezone.utc),
+            row["created_at"],
+        )
+
     async def bulk_insert_parsed_logs(self, parsed_logs: Sequence[ParsedLog]) -> int:
         """Insert parsed logs in a single transaction and return row count."""
         if not parsed_logs:
@@ -96,15 +118,7 @@ class LogRepository:
                 raw_conn = await connection.get_raw_connection()
                 asyncpg_conn = raw_conn.driver_connection
                 
-                tuples = [
-                    (
-                        row["id"], row["timestamp"], row["service"], row["raw_message"],
-                        row["template_id"], row["template_text"], json.dumps(row["parameters"]),
-                        row["level"], row["source"], row["environment"], row["correlation_id"],
-                        json.dumps(row["metadata"]), row["parsed_at"], row["created_at"]
-                    )
-                    for row in live_logs
-                ]
+                tuples = [self._serialize_for_copy(row) for row in live_logs]
                 
                 await asyncpg_conn.copy_records_to_table(
                     "logs",
@@ -124,8 +138,8 @@ class LogRepository:
                 SUB_BATCH_SIZE = 500
                 for i in range(0, len(late_logs), SUB_BATCH_SIZE):
                     sub_batch = late_logs[i : i + SUB_BATCH_SIZE]
-                    stmt = insert(logs_table).values(sub_batch)
-                    await connection.execute(stmt)
+                    stmt = insert(logs_table)
+                    await connection.execute(stmt, sub_batch)
             
             await connection.commit()
 
@@ -166,7 +180,7 @@ class LogRepository:
                 logs_table.c.service,
                 logs_table.c.level,
                 logs_table.c.correlation_id,
-                logs_table.c.metadata,
+                logs_table.c.metadata_,
             )
             .where(and_(*conditions))
             .order_by(logs_table.c.timestamp.desc(), logs_table.c.service.asc())
@@ -227,7 +241,7 @@ class LogRepository:
                 logs_table.c.level,
                 logs_table.c.template_id,
                 logs_table.c.template_text,
-                logs_table.c.metadata,
+                logs_table.c.metadata_,
             )
             .order_by(logs_table.c.created_at.desc())
             .limit(limit)

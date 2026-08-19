@@ -1,11 +1,13 @@
 import asyncio
 import logging
 import time
+from typing import Optional
 
 import httpx
+from redis.asyncio import Redis
 
 from ..config import get_webhook_settings
-from ..core.redis import init_redis_pool
+from ..core.redis import _redis_pool as _global_redis_pool
 from ..schemas.alerting import IncidentAlertPayload
 
 logger = logging.getLogger("logsentinel.alerting")
@@ -13,18 +15,44 @@ logger = logging.getLogger("logsentinel.alerting")
 # Configuration
 WINDOW_SECONDS = 15.0
 
-async def dispatch_incident_alert(incident_data: IncidentAlertPayload) -> None:
+def _get_fallback_redis() -> Optional[Redis]:
+    """Return a Redis client from the global pool when no client was injected.
+
+    This is used exclusively by the graph scorer path which dispatches alerts
+    from a synchronous context and cannot easily inject a client.
+    """
+    from ..core.redis import _redis_pool  # noqa: WPS433 — late import to avoid circular deps
+
+    if _redis_pool is not None:
+        return Redis(connection_pool=_redis_pool)
+    return None
+
+
+async def dispatch_incident_alert(
+    incident_data: IncidentAlertPayload,
+    *,
+    redis_client: Optional[Redis] = None,
+) -> None:
     """
     Non-blocking, intelligent alert dispatcher with Valkey-backed sliding window deduplication.
-    
+
     Buffers events related to the same root_cause_service for a configurable window.
     Only the first event in the window triggers the background timer task. After the
     window elapses, all buffered events are coalesced into a single consolidated
     notification sent to configured webhooks.
+
+    Args:
+        incident_data: The incident payload to buffer and eventually dispatch.
+        redis_client: A shared Redis/Valkey client.  When ``None`` the function
+            falls back to the global connection pool (for callers that cannot
+            inject a client, e.g. the graph scorer).
     """
     try:
-        redis_client = await init_redis_pool()
-        
+        client = redis_client or _get_fallback_redis()
+        if client is None:
+            logger.error("No Redis client available for alerting — alert dropped")
+            return
+
         # Use root_cause_service as the aggregation key
         tracking_id = incident_data.root_cause_service
         buffer_key = f"alert_buffer:{tracking_id}"
@@ -34,30 +62,33 @@ async def dispatch_incident_alert(incident_data: IncidentAlertPayload) -> None:
         current_time = time.time()
         payload_json = incident_data.model_dump_json()
         
-        await redis_client.zadd(buffer_key, {payload_json: current_time})
+        await client.zadd(buffer_key, {payload_json: current_time})
         
         # Attempt to acquire a lock to trigger the dispatch task
         # nx=True means set only if it does not exist (atomic lock)
         # ex=WINDOW_SECONDS + a small buffer to ensure the lock holds during sleep
-        lock_acquired = await redis_client.set(lock_key, "1", nx=True, ex=int(WINDOW_SECONDS + 5))
+        lock_acquired = await client.set(lock_key, "1", nx=True, ex=int(WINDOW_SECONDS + 5))
         
         if lock_acquired:
             # We are the first anomaly in this window, spawn the background task
             logger.info("Acquired lock for %s, spawning coalescing task for %s seconds", tracking_id, WINDOW_SECONDS)
-            asyncio.create_task(_coalesce_and_dispatch(tracking_id, buffer_key, lock_key))
+            asyncio.create_task(_coalesce_and_dispatch(tracking_id, buffer_key, lock_key, client))
         else:
             logger.debug("Alert for %s buffered (lock already held)", tracking_id)
             
     except Exception as e:
         logger.exception("Failed to buffer incident alert: %s", str(e))
 
-async def _coalesce_and_dispatch(tracking_id: str, buffer_key: str, lock_key: str) -> None:
+async def _coalesce_and_dispatch(
+    tracking_id: str,
+    buffer_key: str,
+    lock_key: str,
+    redis_client: Redis,
+) -> None:
     """Wait for the sliding window, aggregate buffered anomalies, and fire webhooks."""
     try:
         # Sleep for the deduplication window
         await asyncio.sleep(WINDOW_SECONDS)
-        
-        redis_client = await init_redis_pool()
         
         # Retrieve all buffered payloads from the sorted set
         raw_items = await redis_client.zrange(buffer_key, 0, -1)
@@ -79,7 +110,6 @@ async def _coalesce_and_dispatch(tracking_id: str, buffer_key: str, lock_key: st
         logger.exception("Error during alert coalescing and dispatch for %s: %s", tracking_id, str(e))
     finally:
         try:
-            redis_client = await init_redis_pool()
             # Clear the buffer
             await redis_client.delete(buffer_key)
             # The lock will expire on its own, but we can proactively delete it if desired.

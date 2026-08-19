@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
@@ -6,8 +8,10 @@ from backend.app.main import app
 client = TestClient(app)
 
 
-def test_websocket_connects_and_receives_system_status() -> None:
-    with client.websocket_connect("/ws/telemetry") as websocket:
+@patch("jwt.decode")
+def test_websocket_connects_and_receives_system_status(mock_decode) -> None:
+    mock_decode.return_value = {"sub": "test"}
+    with client.websocket_connect("/ws/telemetry?token=test_token") as websocket:
         event = websocket.receive_json()
 
     assert event["type"] == "system.status"

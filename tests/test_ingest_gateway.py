@@ -7,6 +7,9 @@ from fastapi.testclient import TestClient
 import backend.app.main as main_module
 from backend.app.main import app
 
+
+
+
 client = TestClient(app)
 
 VALID_KEY = "test-ingest-key"
@@ -32,24 +35,7 @@ def valid_payload() -> dict:
     }
 
 
-def test_async_log_buffer_join_waits_for_exactly_one_task_done() -> None:
-    async def run() -> None:
-        log_buffer = main_module.AsyncLogBuffer(maxsize=1)
-        payload = {"logs": [{"message": "queued"}]}
-        assert log_buffer.enqueue(payload)
-        assert await log_buffer.dequeue() == payload
 
-        join_task = asyncio.create_task(log_buffer.join())
-        await asyncio.sleep(0)
-        assert join_task.done() is False
-
-        log_buffer.task_done()
-        await asyncio.wait_for(join_task, timeout=0.1)
-
-        with pytest.raises(ValueError):
-            log_buffer.task_done()
-
-    asyncio.run(run())
 
 
 def test_lifespan_stops_drain_before_features_and_database(monkeypatch) -> None:
@@ -70,33 +56,70 @@ def test_lifespan_stops_drain_before_features_and_database(monkeypatch) -> None:
         def begin(self) -> FakeBeginContext:
             return FakeBeginContext()
 
+    class FakeBatchManager:
+        async def flush_all(self) -> None:
+            events.append("batch.shutdown_flush")
+
     class FakeDrainWorker:
+        def set_redis_client(self, *args, **kwargs) -> None: pass
         def start(self) -> None:
             events.append("drain.start")
-
         async def stop(self) -> None:
             events.append("drain.stop")
-            events.append("batch.shutdown_flush")
 
     class FakeFeatureWorker:
         def start(self) -> None:
             events.append("feature.start")
-
         async def stop(self) -> None:
             events.append("feature.stop")
+            
+    class FakeEventManager:
+        def start(self) -> None: pass
+        async def stop(self) -> None: pass
+        
+    class FakeStreamCleaner:
+        def set_redis_client(self, *args, **kwargs) -> None: pass
+        def start(self) -> None: pass
+        async def stop(self) -> None: pass
+
+    class FakeTelemetryManager:
+        def set_redis_client(self, *args, **kwargs) -> None: pass
+        def start(self) -> None: pass
+        async def stop(self) -> None: pass
 
     def fake_init_engine(_settings) -> None:
         events.append("database.init")
 
     async def fake_dispose_engine() -> None:
         events.append("database.dispose")
+        
+    async def fake_init_redis_pool() -> object:
+        events.append("redis.init")
+        return object()
+        
+    async def fake_close_redis_pool() -> None:
+        events.append("redis.dispose")
+
+    async def fake_verify_connectivity() -> None:
+        pass
+
+    async def fake_ensure_stream_and_group(redis_client, stream_name, group_name) -> None:
+        pass
 
     monkeypatch.setattr(main_module, "get_database_settings", lambda: object())
     monkeypatch.setattr(main_module, "init_engine", fake_init_engine)
     monkeypatch.setattr(main_module, "get_engine", lambda: FakeEngine())
     monkeypatch.setattr(main_module, "dispose_engine", fake_dispose_engine)
+    monkeypatch.setattr(main_module, "verify_connectivity", fake_verify_connectivity)
+    monkeypatch.setattr(main_module, "ensure_stream_and_group", fake_ensure_stream_and_group)
     monkeypatch.setattr(main_module, "drain_worker", FakeDrainWorker())
     monkeypatch.setattr(main_module, "feature_worker", FakeFeatureWorker())
+    monkeypatch.setattr(main_module, "event_manager", FakeEventManager())
+    monkeypatch.setattr(main_module, "stream_cleaner", FakeStreamCleaner())
+    monkeypatch.setattr(main_module, "telemetry_manager", FakeTelemetryManager())
+    monkeypatch.setattr(main_module, "batch_manager", FakeBatchManager())
+    monkeypatch.setattr(main_module, "init_redis_pool", fake_init_redis_pool)
+    monkeypatch.setattr(main_module, "close_redis_pool", fake_close_redis_pool)
 
     async def run_lifespan() -> None:
         async with main_module.lifespan(main_module.app):
@@ -105,11 +128,26 @@ def test_lifespan_stops_drain_before_features_and_database(monkeypatch) -> None:
     asyncio.run(run_lifespan())
 
     assert events[-4:] == [
-        "drain.stop",
-        "batch.shutdown_flush",
         "feature.stop",
+        "batch.shutdown_flush",
         "database.dispose",
+        "redis.dispose",
     ]
+
+
+class MockRedisPipeline:
+    def xadd(self, *args, **kwargs): pass
+    def xlen(self, *args, **kwargs): return 0
+    async def execute(self): return [None, 0]
+
+class MockRedis:
+    def pipeline(self, transaction=False):
+        return MockRedisPipeline()
+
+@pytest.fixture(autouse=True)
+def mock_redis_state(monkeypatch):
+    monkeypatch.setattr(main_module.app.state, "redis", MockRedis(), raising=False)
+    yield
 
 
 def test_ingest_log_returns_202_for_valid_payload() -> None:
@@ -118,12 +156,13 @@ def test_ingest_log_returns_202_for_valid_payload() -> None:
 
     assert response.status_code == 202
     body = response.json()
-    assert body["message"] == "Log payload accepted for asynchronous processing"
+    assert body["message"] == "Payload accepted"
     assert body["accepted"] is True
     assert body["queue_size"] >= 0
 
 
-def test_ingest_log_rejects_missing_logs() -> None:
+def test_ingest_log_rejects_missing_logs(monkeypatch) -> None:
+    monkeypatch.setattr(main_module.app.state, "redis", MockRedis(), raising=False)
     with patch.dict("os.environ", {"INGEST_API_KEY": VALID_KEY}, clear=False):
         response = client.post(
             "/ingest-log",
@@ -137,7 +176,8 @@ def test_ingest_log_rejects_missing_logs() -> None:
     assert response.status_code == 422
 
 
-def test_ingest_log_rejects_missing_api_key() -> None:
+def test_ingest_log_rejects_missing_api_key(monkeypatch) -> None:
+    monkeypatch.setattr(main_module.app.state, "redis", MockRedis(), raising=False)
     with patch.dict("os.environ", {"INGEST_API_KEY": VALID_KEY}, clear=False):
         response = client.post("/ingest-log", json=valid_payload())
 
@@ -146,7 +186,8 @@ def test_ingest_log_rejects_missing_api_key() -> None:
     assert VALID_KEY not in response.text
 
 
-def test_ingest_log_rejects_invalid_api_key() -> None:
+def test_ingest_log_rejects_invalid_api_key(monkeypatch) -> None:
+    monkeypatch.setattr(main_module.app.state, "redis", MockRedis(), raising=False)
     with patch.dict("os.environ", {"INGEST_API_KEY": VALID_KEY}, clear=False):
         response = client.post("/ingest-log", json=valid_payload(), headers=auth_headers("wrong-key"))
 
@@ -172,26 +213,43 @@ def test_ingest_log_rejects_when_guard_is_not_configured() -> None:
     assert response.json() == {"detail": "ingestion_guard_not_configured"}
 
 
-def test_unauthorized_ingest_does_not_enqueue_logs() -> None:
-    before = main_module.get_log_buffer().queue_size()
+def test_unauthorized_ingest_does_not_enqueue_logs(monkeypatch) -> None:
+    calls = []
+    class MockRedisPipeline:
+        def xadd(self, *args, **kwargs):
+            calls.append("xadd")
+        def xlen(self, *args, **kwargs):
+            return 0
+        async def execute(self):
+            return [None, 0]
+
+    class MockRedis:
+        def pipeline(self, transaction=False):
+            return MockRedisPipeline()
+
+    monkeypatch.setattr(main_module.app.state, "redis", MockRedis(), raising=False)
 
     with patch.dict("os.environ", {"INGEST_API_KEY": VALID_KEY}, clear=False):
         response = client.post("/ingest-log", json=valid_payload(), headers=auth_headers("wrong-key"))
 
-    after = main_module.get_log_buffer().queue_size()
     assert response.status_code == 403
-    assert after == before
+    assert len(calls) == 0
 
 
 def test_ingest_log_preserves_queue_full_response(monkeypatch) -> None:
-    class FullBuffer:
-        def enqueue(self, payload: dict) -> bool:
-            return False
+    class MockRedisPipeline:
+        def xadd(self, *args, **kwargs):
+            pass
+        def xlen(self, *args, **kwargs):
+            pass
+        async def execute(self):
+            raise Exception("Simulated Redis failure")
 
-        def queue_size(self) -> int:
-            return 10000
+    class MockRedis:
+        def pipeline(self, transaction=False):
+            return MockRedisPipeline()
 
-    monkeypatch.setattr(main_module, "get_log_buffer", lambda: FullBuffer())
+    monkeypatch.setattr(main_module.app.state, "redis", MockRedis(), raising=False)
 
     with patch.dict("os.environ", {"INGEST_API_KEY": VALID_KEY}, clear=False):
         response = client.post("/ingest-log", json=valid_payload(), headers=auth_headers())
@@ -199,56 +257,7 @@ def test_ingest_log_preserves_queue_full_response(monkeypatch) -> None:
     assert response.status_code == 503
     body = response.json()
     assert body["accepted"] is False
-    assert body["queue_size"] == 10000
+    assert body["queue_size"] == 0
 
 
-def test_drain3_stats_returns_parser_and_worker_stats() -> None:
-    response = client.get("/drain3/stats")
 
-    assert response.status_code == 200
-    body = response.json()
-    assert "parser" in body
-    assert "worker" in body
-    assert "batch" in body
-    assert "cluster_count" in body["parser"]
-    assert "processed_count" in body["worker"]
-    assert "queue_size" in body["worker"]
-    assert "current_buffer_size" in body["batch"]
-    assert "periodic_flush_enabled" in body["batch"]
-    assert "flush_interval_seconds" in body["batch"]
-    assert "periodic_flush_count" in body["batch"]
-    assert "shutdown_flush_count" in body["batch"]
-    assert "failed_batch_count" in body["batch"]
-
-
-def test_drain3_flush_returns_batch_stats() -> None:
-    response = client.post("/drain3/flush")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert "batch" in body
-    assert "batch_size" in body["batch"]
-    assert "current_buffer_size" in body["batch"]
-    assert "last_sink_result" in body["batch"]
-    assert "last_sink_error" in body["batch"]
-
-
-def test_drain3_db_health_returns_status_payload(monkeypatch) -> None:
-    async def fake_check_database_health() -> dict:
-        return {
-            "connected": False,
-            "table_exists": False,
-            "missing_columns": [],
-            "error": None,
-        }
-
-    monkeypatch.setattr(main_module, "check_database_health", fake_check_database_health)
-
-    response = client.get("/drain3/db-health")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert "connected" in body
-    assert "table_exists" in body
-    assert "missing_columns" in body
-    assert "error" in body

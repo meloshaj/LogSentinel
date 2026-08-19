@@ -11,7 +11,7 @@ import logging
 import os
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 
@@ -40,6 +40,8 @@ from ..security.microsoft_auth import (
 )
 
 logger = logging.getLogger("logsentinel.auth_router")
+
+from ..services.email import send_password_reset_email
 
 # Google OAuth configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -303,21 +305,30 @@ async def google_login(
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
 async def forgot_password(
     payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSessionDep,
 ) -> dict:
     """Accept a password-reset request without exposing account existence.
 
     Always returns a success-shaped response regardless of whether the email
-    exists to prevent email enumeration attacks. Email delivery is not yet
-    configured, so this endpoint must not generate or log a bearer token.
+    exists to prevent email enumeration attacks.
     """
+    import jwt as pyjwt
+    from datetime import datetime, timedelta, timezone
+    
     user = await UserRepository.get_user_by_email(db, payload.email)
 
     if user is not None:
         logger.info(
-            "Password reset requested for user_id=%s; email delivery is not configured",
+            "Password reset requested for user_id=%s",
             user.id,
         )
+        
+        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
+        to_encode = {"sub": user.email, "type": "password_reset", "exp": expire}
+        token = pyjwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+        
+        background_tasks.add_task(send_password_reset_email, user.email, token)
 
     # Generic response to prevent email enumeration
     return {"message": "If an account with that email exists, a password reset link has been sent."}

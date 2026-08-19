@@ -132,10 +132,10 @@ def test_event_manager_success_persists_and_broadcasts_blast_radius() -> None:
     assert payload["severity"] == "high"
     assert payload["model_version"] == "test-model"
     assert payload["status"] == "triggered"
-    assert payload["blast_radius"]["suspected_root_service"] == "db"
     assert payload["suspected_root_service"] == "db"
     assert payload["root_cause_confidence"] == 0.7
     assert payload["graph_analysis_version"] == "test-graph-v1"
+    assert payload["blast_radius"] == []
 
 
 @pytest.mark.parametrize(

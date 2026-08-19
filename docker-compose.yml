@@ -1,5 +1,5 @@
 services:
-  postgres:
+  timescaledb:
     image: timescale/timescaledb:latest-pg16
     container_name: logsentinel_postgres
     environment:
@@ -43,10 +43,10 @@ services:
       - "max_parallel_workers_per_gather=2"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logsentinel} -d ${POSTGRES_DB:-logsentinel_db}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     restart: unless-stopped
 
   valkey:
@@ -59,10 +59,10 @@ services:
       - valkey_data:/data
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 2s
     restart: unless-stopped
 
   logsentinel:
@@ -85,7 +85,7 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      postgres:
+      timescaledb:
         condition: service_healthy
       backend:
         condition: service_started
@@ -100,11 +100,15 @@ services:
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
-      - POSTGRES_HOST=postgres
+      - POSTGRES_HOST=timescaledb
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD:-logsentinel_secret}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
       - REDIS_HOST=valkey
-      - INGEST_API_KEY=dev-local-key
+      - REDIS_URL=redis://valkey:6379/0
+      - INGEST_API_KEY=${INGEST_API_KEY:-dev-local-key}
+      - LOG_STREAM_NAME=logs:stream
+      - LOG_WORKERS_GROUP=log_workers
       - GRAPH_SCORING_LOOKBACK_SECONDS=${GRAPH_SCORING_LOOKBACK_SECONDS:-180}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
@@ -118,9 +122,8 @@ services:
       - AZURE_JWKS_TIMEOUT=${AZURE_JWKS_TIMEOUT:-5.0}
       - AZURE_JWKS_CACHE_TTL=${AZURE_JWKS_CACHE_TTL:-3600}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
-      - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
     depends_on:
-      postgres:
+      timescaledb:
         condition: service_healthy
       valkey:
         condition: service_healthy
@@ -134,7 +137,9 @@ services:
       - "8443:443"
     volumes:
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl
+      - ./docker/nginx/entrypoint.sh:/docker-entrypoint-custom.sh:ro
+    entrypoint: ["/bin/sh", "/docker-entrypoint-custom.sh"]
     depends_on:
       backend:
         condition: service_started

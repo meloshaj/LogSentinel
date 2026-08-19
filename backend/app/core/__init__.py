@@ -8,6 +8,7 @@ from .database import (
     get_engine,
     get_session_factory,
     init_engine,
+    verify_connectivity,
 )
 from .orm import AnomalyEventRecord, Base, FeatureWindowRecord, LogRecord
 from .settings import (
@@ -22,6 +23,7 @@ __all__: list[str] = [
     # Lifecycle
     "init_engine",
     "dispose_engine",
+    "verify_connectivity",
     "get_engine",
     "get_session_factory",
     "get_async_session",

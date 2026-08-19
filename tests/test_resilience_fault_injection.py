@@ -36,7 +36,9 @@ pytestmark = pytest.mark.asyncio
 INGEST_API_KEY = "resilience-ingest-key"
 
 
-@dataclass(frozen=True)
+
+
+@dataclass
 class PgConnectionSettings:
     user: str
     password: str
@@ -228,12 +230,13 @@ def _trained_detector() -> IsolationForestAnomalyDetector:
 def _install_pipeline(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    queue_maxsize: int,
     batch_size: int,
     state_path: Path,
 ) -> SimpleNamespace:
-    log_buffer = main_module.AsyncLogBuffer(maxsize=queue_maxsize)
-    drain_parser = DrainParser(state_path=str(state_path))
+    from drain3.file_persistence import FilePersistence
+    state_path_str = str(state_path)
+    pers = FilePersistence(state_path_str)
+    drain_parser = DrainParser(state_path=state_path_str, persistence=pers)
     log_repository = LogRepository()
     feature_repository = FeatureRepository()
     batch_manager = ParsedLogBatchManager(
@@ -253,7 +256,7 @@ def _install_pipeline(
         event_manager=None,
     )
     drain_worker = DrainWorker(
-        log_buffer,
+        None,
         drain_parser,
         batch_manager=batch_manager,
         on_log_parsed=feature_worker.add_parsed_log,
@@ -261,7 +264,7 @@ def _install_pipeline(
         queue_drain_timeout_seconds=120.0,
     )
 
-    monkeypatch.setattr(main_module, "log_buffer", log_buffer)
+
     monkeypatch.setattr(main_module, "drain_parser", drain_parser)
     monkeypatch.setattr(main_module, "log_repository", log_repository)
     monkeypatch.setattr(main_module, "feature_repository", feature_repository)
@@ -271,7 +274,6 @@ def _install_pipeline(
     monkeypatch.setattr(main_module, "event_manager", NoopEventManager())
 
     return SimpleNamespace(
-        log_buffer=log_buffer,
         drain_parser=drain_parser,
         log_repository=log_repository,
         feature_repository=feature_repository,
@@ -298,7 +300,6 @@ async def resilience_pipeline(monkeypatch: pytest.MonkeyPatch):
         )
         pipeline = _install_pipeline(
             monkeypatch,
-            queue_maxsize=10_000,
             batch_size=10_000,
             state_path=state_path,
         )
@@ -379,16 +380,24 @@ async def _wait_for_fetchval(
 
 
 async def _drain_and_flush(pipeline: SimpleNamespace, *, timeout: float = 120.0) -> None:
-    await asyncio.wait_for(pipeline.log_buffer.join(), timeout=timeout)
+    await asyncio.sleep(0.5)
     assert await pipeline.batch_manager.flush() is True
 
 
 async def test_queue_backpressure_saturation(monkeypatch: pytest.MonkeyPatch) -> None:
-    saturated_buffer = main_module.AsyncLogBuffer(maxsize=3)
-    for index in range(3):
-        assert saturated_buffer.enqueue({"logs": [{"message": f"pre-filled-{index}"}]})
+    class MockRedisPipeline:
+        def xadd(self, *args, **kwargs):
+            pass
+        def xlen(self, *args, **kwargs):
+            pass
+        async def execute(self):
+            raise Exception("Simulated Redis failure")
 
-    monkeypatch.setattr(main_module, "log_buffer", saturated_buffer)
+    class MockRedis:
+        def pipeline(self, transaction=False):
+            return MockRedisPipeline()
+
+    monkeypatch.setattr(main_module.app.state, "redis", MockRedis(), raising=False)
     monkeypatch.setenv("INGEST_API_KEY", INGEST_API_KEY)
     monkeypatch.setenv("INGEST_API_KEYS", "")
 
@@ -406,7 +415,6 @@ async def test_queue_backpressure_saturation(monkeypatch: pytest.MonkeyPatch) ->
 
     assert response.status_code in {429, 503}
     assert response.json()["accepted"] is False
-    assert saturated_buffer.queue_size() == 3
 
 
 async def test_database_disconnection_resilience(resilience_pipeline) -> None:
@@ -429,7 +437,7 @@ async def test_database_disconnection_resilience(resilience_pipeline) -> None:
     )
 
     assert all(response.status_code == 202 for response in responses)
-    await asyncio.wait_for(resilience_pipeline.log_buffer.join(), timeout=30.0)
+    await asyncio.sleep(0.5)
 
     flush_result = await resilience_pipeline.batch_manager.flush()
     stats_after_failure = resilience_pipeline.batch_manager.get_stats()
@@ -498,7 +506,6 @@ async def test_high_concurrency_burst(resilience_pipeline) -> None:
     assert persisted == request_count
     assert worker_stats["processed_count"] >= request_count
     assert worker_stats["error_count"] == 0
-    assert worker_stats["queue_size"] == 0
     assert batch_stats["current_buffer_size"] == 0
     assert batch_stats["failed_flush_attempt_count"] == 0
     assert resilience_pipeline.drain_worker._task is not None

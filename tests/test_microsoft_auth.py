@@ -963,9 +963,13 @@ class TestExistingAuthUnchanged:
         app.dependency_overrides.clear()
 
     def test_email_login_still_works(
-        self, client: TestClient, mock_db: AsyncMock,
+        self, client: TestClient, mock_db: AsyncMock, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Email/password login continues to function."""
+        # Disable rate limiting for this test to avoid 429 errors from previous tests
+        from backend.app.main import limiter
+        monkeypatch.setattr(limiter, "enabled", False)
+        
         from backend.app.security.auth import hash_password
 
         hashed_pw = hash_password("validpassword")

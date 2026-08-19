@@ -11,6 +11,7 @@ Call ``init_engine(settings)`` during application startup and
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from typing import Annotated, Any
@@ -26,6 +27,9 @@ from sqlalchemy.ext.asyncio import (
 from .settings import DatabaseSettings
 
 logger = logging.getLogger("logsentinel.database")
+
+_CONNECTIVITY_MAX_RETRIES = 5
+_CONNECTIVITY_BASE_DELAY = 1.0
 
 # ---------------------------------------------------------------------------
 # Module-level state — populated by init_engine(), cleared by dispose_engine()
@@ -88,6 +92,50 @@ def init_engine(settings: DatabaseSettings) -> AsyncEngine:
     )
 
     return _engine
+
+
+async def verify_connectivity() -> None:
+    """Probe the database with exponential backoff to confirm it accepts connections.
+
+    Should be called once during application startup **after** ``init_engine()``.
+    Tolerates container orchestration delays where TimescaleDB may not yet be
+    ready despite the Docker healthcheck passing (race window).
+
+    Raises ``RuntimeError`` after exhausting all retry attempts.
+    """
+    from sqlalchemy import text
+
+    engine = get_engine()
+    last_error: Exception | None = None
+
+    for attempt in range(1, _CONNECTIVITY_MAX_RETRIES + 1):
+        try:
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            logger.info(
+                "Database connectivity verified on attempt %d/%d.",
+                attempt,
+                _CONNECTIVITY_MAX_RETRIES,
+            )
+            return
+        except Exception as exc:
+            last_error = exc
+            delay = _CONNECTIVITY_BASE_DELAY * (2 ** (attempt - 1))
+            logger.warning(
+                "Database connectivity probe %d/%d failed (%s: %s). "
+                "Retrying in %.1fs...",
+                attempt,
+                _CONNECTIVITY_MAX_RETRIES,
+                type(exc).__name__,
+                exc,
+                delay,
+            )
+            await asyncio.sleep(delay)
+
+    raise RuntimeError(
+        f"FATAL: Could not connect to the database after "
+        f"{_CONNECTIVITY_MAX_RETRIES} attempts. Last error: {last_error}"
+    )
 
 
 async def dispose_engine() -> None:

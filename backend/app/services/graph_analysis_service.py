@@ -126,8 +126,10 @@ class GraphAnalysisService:
         if not evidence:
             logger.debug("Graph analysis skipped: no anomaly evidence")
             return None
-
-        result = self.scorer.score(graph, evidence, calculated_at=calculated)
+        import asyncio
+        result = await asyncio.to_thread(
+            self.scorer.score, graph, evidence, calculated_at=calculated
+        )
         if result.suspected_root_service is None:
             logger.debug("Graph analysis skipped: scorer returned no suspected root")
             return None

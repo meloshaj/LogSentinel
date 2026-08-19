@@ -11,31 +11,27 @@ METADATA_TIMESTAMP = datetime(2020, 1, 2, 3, 4, tzinfo=timezone.utc)
 PARSED_AT = datetime(2026, 7, 22, 18, 31, tzinfo=timezone.utc)
 
 
-def parsed_log(index: int = 7) -> ParsedLog:
-    return ParsedLog(
+def test_log_repository_maps_canonical_parsed_log_fields(make_parsed_log) -> None:
+    log = make_parsed_log(
         timestamp=EVENT_TIMESTAMP,
         service="service-a",
         level="error",
-        raw_message=f"service-a failed to connect to 10.0.0.{index} on port 5432",
-        template_id=str(index),
+        raw_message="service-a failed to connect to 10.0.0.7 on port 5432",
+        template_id="7",
         template_text="service-a failed to connect to <IP> on <PORT>",
-        parameters=[{"value": f"10.0.0.{index}", "mask_name": "IP"}],
+        parameters=[{"value": "10.0.0.7", "mask_name": "IP"}],
         cluster_size=12,
         change_type="none",
         source="unit-test",
         environment="test",
-        correlation_id=f"corr-{index}",
+        correlation_id="corr-7",
         metadata={
             "timestamp": METADATA_TIMESTAMP.isoformat(),
             "observed_at": METADATA_TIMESTAMP,
-            "custom": {"attempt": index},
+            "custom": {"attempt": 7},
         },
         parsed_at=PARSED_AT,
     )
-
-
-def test_log_repository_maps_canonical_parsed_log_fields() -> None:
-    log = parsed_log()
     row = LogRepository.map_parsed_log(log)
 
     assert row["service"] == "service-a"
@@ -51,16 +47,21 @@ def test_log_repository_maps_canonical_parsed_log_fields() -> None:
     assert row["created_at"].tzinfo is not None
 
 
-def test_top_level_timestamp_is_canonical_over_metadata_timestamp() -> None:
-    log = parsed_log()
+def test_top_level_timestamp_is_canonical_over_metadata_timestamp(make_parsed_log) -> None:
+    log = make_parsed_log(
+        timestamp=EVENT_TIMESTAMP,
+        metadata={"timestamp": METADATA_TIMESTAMP.isoformat()}
+    )
     row = LogRepository.map_parsed_log(log)
 
     assert row["timestamp"] is EVENT_TIMESTAMP
     assert row["timestamp"] != datetime.fromisoformat(log.metadata["timestamp"])
 
 
-def test_json_fields_are_serialized_without_mutating_parsed_log() -> None:
-    log = parsed_log()
+def test_json_fields_are_serialized_without_mutating_parsed_log(make_parsed_log) -> None:
+    log = make_parsed_log(
+        metadata={"observed_at": METADATA_TIMESTAMP}
+    )
     original = log.model_copy(deep=True)
     row = LogRepository.map_parsed_log(log)
 
@@ -72,23 +73,41 @@ def test_json_fields_are_serialized_without_mutating_parsed_log() -> None:
     assert log.metadata["observed_at"] is METADATA_TIMESTAMP
 
 
-def test_runtime_only_fields_are_not_in_insert_row() -> None:
-    row = LogRepository.map_parsed_log(parsed_log())
+def test_runtime_only_fields_are_not_in_insert_row(make_parsed_log) -> None:
+    row = LogRepository.map_parsed_log(make_parsed_log(cluster_size=12, change_type="none"))
 
     assert "cluster_size" not in row
     assert "change_type" not in row
 
 
+class FakeAsyncpgConnection:
+    def __init__(self):
+        pass
+    async def copy_records_to_table(self, *args, **kwargs):
+        pass
+
+class FakeRawConnection:
+    def __init__(self):
+        self.driver_connection = FakeAsyncpgConnection()
+
 class FakeInsertConnection:
     def __init__(self) -> None:
-        self.execute_calls: list[tuple[object, list[dict[str, object]]]] = []
+        self.execute_calls: list[tuple[object, list[dict[str, object]] | None]] = []
+
+    async def get_raw_connection(self):
+        return FakeRawConnection()
 
     async def execute(
         self,
         statement: object,
-        rows: list[dict[str, object]],
+        *args,
+        **kwargs,
     ) -> None:
+        rows = args[0] if args else kwargs.get("parameters")
         self.execute_calls.append((statement, rows))
+        
+    async def commit(self) -> None:
+        pass
 
 
 class FakeBeginContext:
@@ -107,15 +126,18 @@ class FakeInsertEngine:
         self.begin_count = 0
         self.connection = FakeInsertConnection()
 
-    def begin(self) -> FakeBeginContext:
+    def connect(self) -> FakeBeginContext:
         self.begin_count += 1
         return FakeBeginContext(self.connection)
 
 
-def test_bulk_insert_uses_one_transaction_for_typed_batch() -> None:
+def test_bulk_insert_uses_one_transaction_for_typed_batch(make_parsed_log) -> None:
     engine = FakeInsertEngine()
     repository = LogRepository(engine=engine)  # type: ignore[arg-type]
-    logs = [parsed_log(1), parsed_log(2)]
+    logs = [
+        make_parsed_log(template_id="1", timestamp=EVENT_TIMESTAMP),
+        make_parsed_log(template_id="2", timestamp=EVENT_TIMESTAMP)
+    ]
 
     inserted = asyncio.run(repository.bulk_insert_parsed_logs(logs))
 

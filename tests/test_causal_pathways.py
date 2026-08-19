@@ -3,8 +3,8 @@ from datetime import datetime, timedelta, timezone
 import networkx as nx
 import pytest
 
-from app.schemas.blast_radius import ServiceAnomalyEvidence
-from app.services.graph_scorer import (
+from backend.app.schemas.blast_radius import ServiceAnomalyEvidence
+from backend.app.services.graph_scorer import (
     DynamicGraphPathwayScorer,
     DynamicGraphScorerConfig,
 )

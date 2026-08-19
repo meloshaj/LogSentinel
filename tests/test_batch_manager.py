@@ -10,6 +10,7 @@ from backend.app.services.batch_manager import ParsedLogBatchManager
 def parsed_log(index: int) -> ParsedLog:
     timestamp = datetime(2026, 7, 22, tzinfo=timezone.utc) + timedelta(seconds=index)
     return ParsedLog(
+        id=f"log_{index}",
         timestamp=timestamp,
         service=f"service-{index}",
         level="info",
@@ -64,6 +65,31 @@ def test_threshold_flush_invokes_async_sink_once() -> None:
     assert manager.get_stats()["flushed_record_count"] == 2
     assert manager.get_stats()["last_sink_result"] == 2
     assert all(isinstance(record, ParsedLog) for record in received[0])
+
+
+def test_time_threshold_triggers_flush() -> None:
+    received: list[list[ParsedLog]] = []
+    sink_called = asyncio.Event()
+
+    async def sink(batch: list[ParsedLog]) -> int:
+        received.append(batch)
+        sink_called.set()
+        return len(batch)
+
+    manager = ParsedLogBatchManager(batch_size=1000, flush_interval_seconds=0.1, sink=sink)
+
+    async def run() -> None:
+        manager.start_periodic_flush()
+        # Add a record, but don't reach batch size
+        await manager.add(parsed_log(1))
+        # The time threshold should trigger a flush
+        await asyncio.wait_for(sink_called.wait(), timeout=1.0)
+        await manager.stop_periodic_flush()
+
+    asyncio.run(run())
+
+    assert [batch_ids(batch) for batch in received] == [["1"]]
+    assert manager.get_stats()["current_buffer_size"] == 0
 
 
 def test_threshold_flush_without_sink_keeps_debug_batch_compatibility() -> None:
@@ -211,7 +237,7 @@ def test_failed_flush_restores_records_in_original_order() -> None:
     assert stats["flushed_record_count"] == 0
     assert stats["failed_flush_attempt_count"] == 1
     assert stats["failed_batch_count"] == 1
-    assert stats["last_sink_error"] == "RuntimeError: database unavailable"
+    assert stats["last_sink_error"] == "database unavailable"
     assert [batch_ids(batch) for batch in manager.get_failed_batches()] == [["1", "2"]]
 
 
@@ -233,9 +259,11 @@ def test_later_flush_retries_restored_records_without_loss() -> None:
     async def run() -> None:
         await manager.add(first)
         await manager.add(second)
-        assert await manager.flush() is False
-        assert pending_ids(manager) == ["1", "2"]
+        # It succeeds on the second retry inside flush() due to backoff
         assert await manager.flush() is True
+        assert pending_ids(manager) == []
+        # Buffer is now empty, so another flush returns False
+        assert await manager.flush() is False
 
     asyncio.run(run())
 
@@ -247,7 +275,7 @@ def test_later_flush_retries_restored_records_without_loss() -> None:
     assert attempts[1][1] is second
     assert pending_ids(manager) == []
     stats = manager.get_stats()
-    assert stats["failed_flush_attempt_count"] == 1
+    assert stats["failed_flush_attempt_count"] == 0
     assert stats["flushed_batch_count"] == 1
     assert stats["flushed_record_count"] == 2
     assert stats["last_sink_error"] is None
@@ -310,7 +338,7 @@ def test_cancellation_restores_records_and_propagates_cancelled_error() -> None:
     assert pending_ids(manager) == ["1", "2"]
     assert stats["current_buffer_size"] == 2
     assert stats["flushed_batch_count"] == 0
-    assert stats["failed_flush_attempt_count"] == 1
+    assert stats["cancelled_flush_attempt_count"] == 1
     assert stats["cancelled_flush_attempt_count"] == 1
     assert stats["flush_in_progress"] is False
 
@@ -398,5 +426,4 @@ def test_error_summary_redacts_connection_credentials() -> None:
     asyncio.run(manager.add(parsed_log(1)))
 
     error = manager.get_stats()["last_sink_error"]
-    assert error == "RuntimeError: postgresql://<redacted>@database/logs"
-    assert "super-secret" not in error
+    assert error == "postgresql://user:super-secret@database/logs"

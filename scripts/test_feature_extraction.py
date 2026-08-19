@@ -32,6 +32,7 @@ def test_parsed_log_model() -> None:
     
     # Create a sample parsed log
     log = ParsedLog(
+        id="test-123",
         timestamp=datetime.now(timezone.utc),
         service="auth-service",
         level="info",
@@ -60,6 +61,7 @@ def test_parsed_log_model() -> None:
     # Test validation
     try:
         invalid_log = ParsedLog(
+            id="test-456",
             timestamp=datetime.now(timezone.utc),
             service="",  # Invalid: empty string
             level="info",
@@ -112,6 +114,7 @@ def test_sliding_window_extractor() -> None:
     for i in range(30):
         log_time = base_time + timedelta(seconds=i * 6)  # One log every 6 seconds
         log = ParsedLog(
+            id=f"log-{i}",
             timestamp=log_time,
             service=f"service-{i % 3}",
             level="info" if i % 5 != 0 else "error",
@@ -162,6 +165,7 @@ def test_feature_extraction() -> None:
     
     for i in range(20):
         log = ParsedLog(
+            id=f"log-{i}",
             timestamp=base_time + timedelta(seconds=i * 2),
             service=f"service-{i % 2}",
             level=["info", "warning", "error"][i % 3],
@@ -206,6 +210,7 @@ def test_statistics() -> None:
     base_time = datetime.now(timezone.utc)
     for i in range(10):
         log = ParsedLog(
+            id=f"log-{i}",
             timestamp=base_time + timedelta(seconds=i),
             service="test-service",
             level="info",

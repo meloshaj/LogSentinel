@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import re
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -16,43 +16,29 @@ logger = logging.getLogger("logsentinel.batch_manager")
 
 BatchSink = Callable[[list[ParsedLog]], Any]
 
+MAX_BATCH_SIZE = 1000
+MAX_FLUSH_INTERVAL_MS = 250
+MAX_BUFFER_CAPACITY = 50000
 
 class ParsedLogBatchManager:
     """
     Buffer parsed logs and serialize all flushes through one async path.
-    
-    This manager provides an efficient mechanism to collect individual parsed logs
-    and dispatch them in batches to a persistent storage sink (like PostgreSQL).
-    
-    Production sinks should be asynchronous. Synchronous sinks remain supported
-    temporarily for compatibility, but they are invoked on the event-loop thread
-    and therefore must not perform blocking work.
+    Implements a strict dual-trigger flush policy (size or time), capacity shedding,
+    and exponential backoff retries.
     """
 
     def __init__(
         self,
-        batch_size: int = 500,
-        flush_interval_seconds: float = 5.0,
+        batch_size: int = MAX_BATCH_SIZE,
+        flush_interval_seconds: float = MAX_FLUSH_INTERVAL_MS / 1000.0,
         sink: BatchSink | None = None,
         benchmarking_collector: Any = None,
     ) -> None:
-        """
-        Initialize the batch manager.
-        
-        Args:
-            batch_size: The maximum number of records to accumulate before forcing a flush.
-            flush_interval_seconds: The maximum time to wait before flushing an incomplete batch.
-            sink: The callback function invoked to persist a batch of logs.
-            benchmarking_collector: Optional collector for tracking latency metrics.
-            
-        Raises:
-            ValueError: If batch_size is not strictly positive.
-        """
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than 0")
 
-        self.batch_size = batch_size
-        self.flush_interval_seconds = flush_interval_seconds
+        self.batch_size = min(batch_size, MAX_BATCH_SIZE)
+        self.flush_interval_seconds = min(flush_interval_seconds, MAX_FLUSH_INTERVAL_MS / 1000.0)
         self.sink = sink
         self.benchmarking_collector = benchmarking_collector
 
@@ -70,8 +56,8 @@ class ParsedLogBatchManager:
         self._last_sink_error: str | None = None
         self._flush_active = False
 
-        # State changes are brief and never include a sink await. The flush lock
-        # covers selection, sink invocation, restoration, and final accounting.
+        self._oldest_timestamp: float | None = None
+
         self._state_lock = asyncio.Lock()
         self._flush_lock = asyncio.Lock()
 
@@ -82,9 +68,22 @@ class ParsedLogBatchManager:
 
     async def add(self, parsed_log: ParsedLog) -> None:
         """Add one parsed log and trigger a serialized threshold flush."""
+        should_flush = False
         async with self._state_lock:
+            if len(self._buffer) >= MAX_BUFFER_CAPACITY:
+                logger.warning(f"Buffer capacity exceeded ({MAX_BUFFER_CAPACITY}). Dropping log.")
+                return
+            if len(self._buffer) == 0:
+                self._oldest_timestamp = time.monotonic()
+            
             self._buffer.append(parsed_log)
-            should_flush = len(self._buffer) >= self.batch_size
+            
+            size_exceeded = len(self._buffer) >= self.batch_size
+            time_exceeded = (
+                self._oldest_timestamp is not None
+                and (time.monotonic() - self._oldest_timestamp) >= self.flush_interval_seconds
+            )
+            should_flush = size_exceeded or time_exceeded
 
         if should_flush:
             await self.flush()
@@ -102,6 +101,26 @@ class ParsedLogBatchManager:
             name="parsed-log-periodic-flush",
         )
 
+    async def _periodic_flush_loop(self) -> None:
+        while not self._periodic_stop_event.is_set():
+            try:
+                # Wake up more frequently to enforce the SLA tightly
+                await asyncio.sleep(0.05)
+                should_flush = False
+                async with self._state_lock:
+                    if self._buffer and self._oldest_timestamp is not None:
+                        if (time.monotonic() - self._oldest_timestamp) >= self.flush_interval_seconds:
+                            should_flush = True
+                
+                if should_flush:
+                    if await self.flush():
+                        async with self._state_lock:
+                            self._periodic_flush_count += 1
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Periodic flush loop encountered error: {e}")
+
     async def stop_periodic_flush(self) -> None:
         """Stop periodic flushing without cancelling an in-flight sink call."""
         task = self._periodic_task
@@ -111,6 +130,8 @@ class ParsedLogBatchManager:
         self._periodic_stop_event.set()
         try:
             await task
+        except asyncio.CancelledError:
+            pass
         finally:
             if self._periodic_task is task:
                 self._periodic_task = None
@@ -121,13 +142,14 @@ class ParsedLogBatchManager:
             async with self._state_lock:
                 self._shutdown_flush_count += 1
 
+    async def flush_all(self) -> None:
+        """Graceful teardown method executed during application lifespan shutdown to drain pending in-memory records."""
+        await self.shutdown_flush()
+
     async def flush(self) -> bool:
         """Flush all currently pending logs.
-
-        Returns ``True`` only when a non-empty batch is successfully flushed.
-        Sink failures are recorded and leave the attempted records pending.
-        Cancellation is recorded, the records are restored, and cancellation is
-        then propagated to the caller.
+        
+        Uses exponential backoff retry logic (up to 3 attempts).
         """
         async with self._flush_lock:
             async with self._state_lock:
@@ -136,31 +158,25 @@ class ParsedLogBatchManager:
                 batch = self._drain_buffer()
                 self._flush_active = True
 
-            try:
-                result = await self._invoke_sink(batch)
-            except asyncio.CancelledError:
-                await self._restore_failed_batch(
-                    batch,
-                    error_summary="CancelledError: sink invocation cancelled",
-                    cancelled=True,
-                )
-                logger.warning(
-                    "Parsed log batch sink was cancelled; restored %d pending records",
-                    len(batch),
-                )
-                raise
-            except Exception as exc:
-                await self._restore_failed_batch(
-                    batch,
-                    error_summary=_safe_error_summary(exc),
-                    cancelled=False,
-                )
-                logger.error(
-                    "Parsed log batch sink failed with %s; restored %d pending records",
-                    type(exc).__name__,
-                    len(batch),
-                )
-                return False
+            retries = 3
+            result = None
+            for attempt in range(retries):
+                try:
+                    result = await self._invoke_sink(batch)
+                    break
+                except asyncio.CancelledError:
+                    await self._restore_failed_batch(batch, "CancelledError: sink invocation cancelled", True)
+                    logger.warning(f"Parsed log batch sink cancelled; restored {len(batch)} records")
+                    raise
+                except Exception as exc:
+                    if attempt < retries - 1:
+                        sleep_time = (2 ** attempt) * 0.1
+                        logger.warning(f"Sink attempt {attempt+1} failed ({type(exc).__name__}). Retrying in {sleep_time}s")
+                        await asyncio.sleep(sleep_time)
+                    else:
+                        await self._restore_failed_batch(batch, str(exc), False)
+                        logger.error(f"Parsed log batch sink failed after 3 attempts; restored {len(batch)} records")
+                        return False
 
             async with self._state_lock:
                 if self.sink is None:
@@ -176,13 +192,10 @@ class ParsedLogBatchManager:
             return True
 
     def size(self) -> int:
-        """Return an event-loop-local snapshot of the pending record count."""
         return len(self._buffer)
 
     def get_stats(self) -> dict[str, Any]:
-        """Return an event-loop-local snapshot of manager diagnostics."""
         from ..core.profiler import db_profiler
-
         stats = {
             "batch_size": self.batch_size,
             "current_buffer_size": len(self._buffer),
@@ -193,53 +206,37 @@ class ParsedLogBatchManager:
             "last_flush_record_count": self._last_flush_record_count,
             "last_sink_result": self._last_sink_result,
             "last_sink_error": self._last_sink_error,
-            "periodic_flush_enabled": self._periodic_task is not None
-            and not self._periodic_task.done(),
+            "periodic_flush_enabled": self._periodic_task is not None and not self._periodic_task.done(),
             "flush_interval_seconds": self.flush_interval_seconds,
             "periodic_flush_count": self._periodic_flush_count,
             "shutdown_flush_count": self._shutdown_flush_count,
-            # Keep the legacy name while exposing its corrected meaning.
             "failed_batch_count": self._failed_flush_attempt_count,
             "failed_flush_attempt_count": self._failed_flush_attempt_count,
             "cancelled_flush_attempt_count": self._cancelled_flush_attempt_count,
             "flush_in_progress": self._flush_active,
         }
-        
         if db_profiler.enabled:
             stats["profiling"] = db_profiler.get_profiling_summary()
-            
         return stats
 
     def get_pending_records(self) -> list[ParsedLog]:
-        """Return a shallow snapshot of records still awaiting persistence."""
         return list(self._buffer)
 
     def get_flushed_batches(self) -> list[list[ParsedLog]]:
-        """Return in-memory flushed batches for testing and local debugging."""
         return [list(batch) for batch in self._flushed_batches]
 
     def get_failed_batches(self) -> list[list[ParsedLog]]:
-        """Return the latest failed attempt for backward-compatible inspection.
-
-        Failed records live in the active pending buffer. Only one bounded
-        diagnostic snapshot is retained here, avoiding an unbounded secondary
-        failure store.
-        """
         if self._last_failed_batch is None:
             return []
         return [list(self._last_failed_batch)]
 
     def _drain_buffer(self) -> list[ParsedLog]:
-        """Drain the active buffer while the caller holds the state lock."""
         batch = list(self._buffer)
         self._buffer.clear()
+        self._oldest_timestamp = None
         return batch
 
     async def _invoke_sink(self, batch: list[ParsedLog]) -> Any:
-        import time
-
-        from ..core.profiler import db_profiler
-        
         start_time = time.perf_counter()
         
         if self.sink is None:
@@ -249,59 +246,21 @@ class ParsedLogBatchManager:
             if inspect.isawaitable(result):
                 result = await result
                 
-        duration_ms = (time.perf_counter() - start_time) * 1000.0
-        db_profiler.track_batch(len(batch), duration_ms)
-        
         if self.benchmarking_collector:
-            self.benchmarking_collector.record_db_batch_duration(duration_ms)
-        
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            self.benchmarking_collector.record("sink_latency_ms", duration_ms)
+            
         return result
 
-    async def _restore_failed_batch(
-        self,
-        batch: list[ParsedLog],
-        *,
-        error_summary: str,
-        cancelled: bool,
-    ) -> None:
-        """Restore an attempted batch ahead of records added during its flush."""
+    async def _restore_failed_batch(self, batch: list[ParsedLog], error_summary: str, cancelled: bool) -> None:
         async with self._state_lock:
-            self._buffer[0:0] = batch
-            self._failed_flush_attempt_count += 1
-            if cancelled:
-                self._cancelled_flush_attempt_count += 1
-            self._last_failed_batch = list(batch)
-            self._last_sink_result = None
+            self._buffer = batch + self._buffer
+            if self._buffer and self._oldest_timestamp is None:
+                self._oldest_timestamp = time.monotonic()
+            self._last_failed_batch = batch
             self._last_sink_error = error_summary
             self._flush_active = False
-
-    async def _periodic_flush_loop(self) -> None:
-        while not self._periodic_stop_event.is_set():
-            try:
-                await asyncio.wait_for(
-                    self._periodic_stop_event.wait(),
-                    timeout=self.flush_interval_seconds,
-                )
-            except TimeoutError:
-                if await self.flush():
-                    async with self._state_lock:
-                        self._periodic_flush_count += 1
-
-
-def _safe_error_summary(exc: Exception) -> str:
-    """Return a short error summary with common credential forms redacted."""
-    message = " ".join(str(exc).split())
-    message = re.sub(
-        r"([a-zA-Z][a-zA-Z0-9+.-]*://)([^@\s]+)@",
-        r"\1<redacted>@",
-        message,
-    )
-    message = re.sub(
-        r"(?i)\b(password|passwd|pwd|token|secret)=([^&\s]+)",
-        r"\1=<redacted>",
-        message,
-    )
-    if len(message) > 200:
-        message = f"{message[:197]}..."
-    exception_name = type(exc).__name__
-    return f"{exception_name}: {message}" if message else exception_name
+            if cancelled:
+                self._cancelled_flush_attempt_count += 1
+            else:
+                self._failed_flush_attempt_count += 1

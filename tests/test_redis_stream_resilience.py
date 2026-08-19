@@ -7,7 +7,9 @@ from backend.app.workers.drain_worker import DrainWorker
 from backend.app.services.drain_parser import DrainParser
 from backend.app.services.batch_manager import ParsedLogBatchManager
 
-@pytest.fixture
+import pytest_asyncio
+
+@pytest_asyncio.fixture
 async def redis_client():
     client = Redis.from_url("redis://localhost:6379/0", decode_responses=True)
     try:
@@ -64,7 +66,9 @@ async def test_pel_auto_recovery_and_processing(redis_client: Redis):
     assert pending["pending"] == 1
     
     # 4. Initialize DrainWorker with short recovery idle time
-    parser = DrainParser()
+    from drain3.file_persistence import FilePersistence
+    pers = FilePersistence(str(tmp_path / "redis_drain_state.bin"))
+    parser = DrainParser(persistence=pers)
     batch_manager = ParsedLogBatchManager()
     
     worker = DrainWorker(

@@ -13,6 +13,23 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 
+class SMTPSettings(BaseModel):
+    """SMTP configuration for transactional emails."""
+    host: str = Field(default="localhost", description="SMTP server host (env: SMTP_HOST)")
+    port: int = Field(default=1025, description="SMTP server port (env: SMTP_PORT)")
+    user: str = Field(default="", description="SMTP user (env: SMTP_USER)")
+    password: str = Field(default="", description="SMTP password (env: SMTP_PASSWORD)")
+    emails_from_email: str = Field(default="noreply@logsentinel.local", description="Sender email address (env: EMAILS_FROM_EMAIL)")
+
+def get_smtp_settings() -> SMTPSettings:
+    return SMTPSettings(
+        host=os.getenv("SMTP_HOST", "localhost"),
+        port=int(os.getenv("SMTP_PORT", "1025")),
+        user=os.getenv("SMTP_USER", ""),
+        password=os.getenv("SMTP_PASSWORD", ""),
+        emails_from_email=os.getenv("EMAILS_FROM_EMAIL", "noreply@logsentinel.local"),
+    )
+
 class DatabaseSettings(BaseModel):
     """Validated PostgreSQL connection and pool configuration.
 

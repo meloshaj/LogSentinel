@@ -303,7 +303,7 @@ class DrainWorker:
                     confidence_score=0.5,
                     is_critical=False
                 )
-                asyncio.create_task(dispatch_incident_alert(payload))
+                asyncio.create_task(dispatch_incident_alert(payload, redis_client=self.redis_client))
             
             # Notify subscribers (e.g., feature extraction worker)
             if self._on_log_parsed:
