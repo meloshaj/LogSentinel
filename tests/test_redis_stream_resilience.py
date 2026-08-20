@@ -21,10 +21,10 @@ async def redis_client():
     
     # Cleanup after test
     await client.delete("logs:test_stream")
-    await client.disconnect()
+    await client.aclose()
 
 @pytest.mark.asyncio
-async def test_pel_auto_recovery_and_processing(redis_client: Redis):
+async def test_pel_auto_recovery_and_processing(redis_client: Redis, tmp_path):
     stream_name = "logs:test_stream"
     group_name = "log_workers"
     

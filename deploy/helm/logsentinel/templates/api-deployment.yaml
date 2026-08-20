@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "logsentinel.fullname" . }}-api
+spec:
+  replicas: {{ .Values.replicaCount.api | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "logsentinel.name" . }}-api
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "logsentinel.name" . }}-api
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.api.liveness.path | default "/health" }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.api.liveness.initialDelaySeconds | default 15 }}
+            periodSeconds: {{ .Values.probes.api.liveness.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .Values.probes.api.liveness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.probes.api.liveness.failureThreshold | default 3 }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.api.readiness.path | default "/health" }}
+              port: http
+            initialDelaySeconds: {{ .Values.probes.api.readiness.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ .Values.probes.api.readiness.periodSeconds | default 5 }}
+            timeoutSeconds: {{ .Values.probes.api.readiness.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .Values.probes.api.readiness.failureThreshold | default 2 }}
+          {{- if .Values.resources.api }}
+          resources:
+            {{- toYaml .Values.resources.api | nindent 12 }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "logsentinel.fullname" . }}-config
+            - secretRef:
+                name: {{ include "logsentinel.fullname" . }}-secret

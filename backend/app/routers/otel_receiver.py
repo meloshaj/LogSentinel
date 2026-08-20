@@ -137,7 +137,7 @@ async def ingest_logs(
                 pipe.xadd(
                     "logs:stream", 
                     {"payload": json.dumps(canonical_log)}, 
-                    maxlen=50000, 
+                    maxlen=500000, 
                     approximate=True
                 )
                 ingested_count += 1

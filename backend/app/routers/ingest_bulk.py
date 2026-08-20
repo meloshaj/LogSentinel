@@ -107,7 +107,7 @@ async def ingest_bulk(
             pipe.xadd(
                 "logs:stream",
                 {"payload": log.model_dump_json(exclude_none=True)},
-                maxlen=50000,
+                maxlen=500000,
                 approximate=True
             )
             
@@ -115,13 +115,20 @@ async def ingest_bulk(
         stream_id_last = results[-1] if results else None
         
         try:
-            from ..main import benchmarking_collector
+            from ..main import benchmarking_collector, ingest_request_rate, batch_ingestion_size
             benchmarking_collector.record_ingestion(len(logs))
+            ingest_request_rate.labels(endpoint="/api/v1/ingest/bulk", status="202").inc()
+            batch_ingestion_size.labels(endpoint="/api/v1/ingest/bulk").inc(len(logs))
         except ImportError:
             pass
             
     except Exception as e:
         logger.error("Failed to enqueue payload to Redis: %s", str(e))
+        try:
+            from ..main import ingest_request_rate
+            ingest_request_rate.labels(endpoint="/api/v1/ingest/bulk", status="503").inc()
+        except ImportError:
+            pass
         raise HTTPException(status_code=503, detail="Ingestion queue is full or unreachable; retry later")
         
     return BulkIngestResponse(

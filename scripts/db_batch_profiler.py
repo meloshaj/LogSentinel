@@ -6,6 +6,7 @@ import sys
 import time
 import random
 import uuid
+import ulid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -28,6 +29,7 @@ def generate_mock_logs(count: int) -> list[ParsedLog]:
     for _ in range(count):
         logs.append(
             ParsedLog(
+                id=str(ulid.new()),
                 timestamp=datetime.now(timezone.utc),
                 service=random.choice(["auth-service", "payment-service", "api-gateway"]),
                 level=random.choice(["INFO", "WARNING", "ERROR"]),

@@ -415,18 +415,18 @@ class IncidentTrafficGenerator:
 
     def print_summary(self) -> None:
         """Print a structured summary of the simulation run."""
-        print("\n" + "═" * 64)
+        print("\n" + "=" * 64)
         print("  LogSentinel Simulation Run Summary")
-        print("═" * 64)
-        print(f"  │ Total Duration          : {self.stats.duration:.2f}s")
-        print(f"  │ Total Log Events Sent   : {self.stats.total_logs_sent}")
-        print(f"  │ Steady-State Logs       : {self.stats.steady_state_logs}")
-        print(f"  │ Cascading Incident Logs : {self.stats.incident_logs}")
-        print(f"  │ Total HTTP Requests     : {self.stats.total_requests}")
-        print(f"  │ Successful Deliveries   : {self.stats.successful_deliveries}")
-        print(f"  │ Failed Deliveries       : {self.stats.failed_deliveries}")
-        print(f"  │ Effective Throughput    : {self.stats.throughput_logs_per_sec:.1f} logs/sec")
-        print("═" * 64 + "\n")
+        print("=" * 64)
+        print(f"  | Total Duration          : {self.stats.duration:.2f}s")
+        print(f"  | Total Log Events Sent   : {self.stats.total_logs_sent}")
+        print(f"  | Steady-State Logs       : {self.stats.steady_state_logs}")
+        print(f"  | Cascading Incident Logs : {self.stats.incident_logs}")
+        print(f"  | Total HTTP Requests     : {self.stats.total_requests}")
+        print(f"  | Successful Deliveries   : {self.stats.successful_deliveries}")
+        print(f"  | Failed Deliveries       : {self.stats.failed_deliveries}")
+        print(f"  | Effective Throughput    : {self.stats.throughput_logs_per_sec:.1f} logs/sec")
+        print("=" * 64 + "\n")
 
 
 # ---------------------------------------------------------------------------

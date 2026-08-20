@@ -59,7 +59,9 @@ def mock_redis_globally():
             return MockRedisPipeline()
         async def close(self): pass
         def get(self, *args, **kwargs): return None
-        def set(self, *args, **kwargs): pass
+        async def xgroup_create(self, *args, **kwargs): pass
+        def pubsub(self): return MagicMock()
+        async def xreadgroup(self, *args, **kwargs): return []
 
     with patch("backend.app.main.init_redis_pool", new_callable=AsyncMock) as mock_init:
         mock_init.return_value = MockRedis()

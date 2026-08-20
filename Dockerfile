@@ -36,8 +36,21 @@ RUN pnpm build
 
 FROM nginx:1.27-alpine AS production
 
+WORKDIR /app
+
+# Create non-root group and user appuser (UID 10001)
+RUN addgroup -g 10001 -S appuser && \
+    adduser -u 10001 -S appuser -G appuser
+
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=build /app/dist /app/dist
+
+# Set appropriate ownership on /app and nginx runtime paths
+RUN touch /var/run/nginx.pid && \
+    chown -R appuser:appuser /app /usr/share/nginx/html /var/run/nginx.pid /var/cache/nginx /var/log/nginx /etc/nginx/conf.d
+
+USER appuser
 
 EXPOSE 80
 

@@ -7,10 +7,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root group and user appuser (UID 10001)
+RUN groupadd -g 10001 appuser && \
+    useradd -u 10001 -g appuser -s /bin/sh -m appuser
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
+
+# Set appropriate ownership on /app
+RUN chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8000
 

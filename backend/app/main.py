@@ -24,6 +24,12 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from prometheus_fastapi_instrumentator import Instrumentator
+from prometheus_client import Counter, Gauge
+
+ingest_request_rate = Counter("logsentinel_ingest_requests_total", "Total ingestion requests", ["endpoint", "status"])
+batch_ingestion_size = Counter("logsentinel_batch_ingestion_size_total", "Total logs ingested", ["endpoint"])
+active_websocket_connections = Gauge("logsentinel_active_websocket_connections", "Number of active WebSocket connections")
 
 from .core import (
     Base,
@@ -82,6 +88,7 @@ from .repositories.log_repository import LogRepository
 from .repositories.tracking_repository import TrackingRepository
 from .routers.auth_router import router as auth_router
 from .routers.benchmark_router import router as benchmark_router
+from .routers.ingest import router as ingest_router
 from .routers.ingest_bulk import router as ingest_bulk_router
 from .routers.otel_receiver import router as otel_router
 from .schemas.blast_radius import BlastRadiusResult
@@ -161,7 +168,7 @@ batch_manager = ParsedLogBatchManager(
     benchmarking_collector=benchmarking_collector,
 )
 
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "isolation_forest.pkl"
+DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "isolation_forest.joblib"
 
 anomaly_detector: IsolationForestAnomalyDetector | None = None
 if DEFAULT_MODEL_PATH.exists():
@@ -333,6 +340,8 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+Instrumentator().instrument(app).expose(app)
+
 
 # ---------------------------------------------------------------------------
 # Security headers middleware
@@ -365,6 +374,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(auth_router)
+app.include_router(ingest_router)
 app.include_router(ingest_bulk_router)
 app.include_router(otel_router)
 
@@ -544,6 +554,7 @@ async def telemetry_websocket(websocket: WebSocket, token: str | None = None) ->
         return
 
     await telemetry_manager.connect(websocket)
+    active_websocket_connections.inc()
     try:
         await websocket.send_json(
             telemetry_event(
@@ -560,6 +571,7 @@ async def telemetry_websocket(websocket: WebSocket, token: str | None = None) ->
     except WebSocketDisconnect:
         pass
     finally:
+        active_websocket_connections.dec()
         await telemetry_manager.disconnect(websocket)
 
 
@@ -612,7 +624,7 @@ async def ingest_log(
     try:
         redis = request.app.state.redis
         pipe = redis.pipeline(transaction=False)
-        pipe.xadd("logs:stream", {"payload": json.dumps(normalized_payload)})
+        pipe.xadd("logs:stream", {"payload": json.dumps(normalized_payload)}, maxlen=500000, approximate=True)
         pipe.xlen("logs:stream")
         results = await pipe.execute()
         

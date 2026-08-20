@@ -4,6 +4,45 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 
+class LogEntry(BaseModel):
+    """A single service log event emitted by a microservice."""
+
+    timestamp: datetime | None = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Timestamp when the log event was emitted",
+    )
+    service_name: str | None = Field(default=None, description="Name of the emitting service")
+    service: str | None = Field(default=None, description="Name of the emitting service (alias)")
+    level: str = Field(default="info", description="Log severity")
+    message: str = Field(..., min_length=1, description="The log message payload")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Optional structured metadata")
+    raw: str | None = Field(default=None, description="Raw log line if available")
+    created_at: datetime | None = Field(default=None, description="Creation timestamp")
+
+    def model_post_init(self, context: Any) -> None:
+        if not self.service_name and self.service:
+            self.service_name = self.service
+        elif not self.service and self.service_name:
+            self.service = self.service_name
+        if self.created_at and not self.timestamp:
+            self.timestamp = self.created_at
+
+
+class IngestPayload(BaseModel):
+    """Generic payload accepted by the ingestion gateway."""
+
+    source: str = Field(default="unknown", min_length=1, description="Origin of the payload")
+    environment: str = Field(default="development", min_length=1, description="Runtime environment")
+    logs: list[LogEntry] = Field(..., min_length=1, description="A batch of log events")
+    correlation_id: str | None = Field(default=None, description="Optional request correlation identifier")
+
+
+class IngestResponse(BaseModel):
+    message: str = Field(..., description="Status message")
+    accepted: bool = Field(..., description="Whether the payload was accepted")
+    queue_size: int = Field(..., description="Current ingestion queue depth")
+
+
 class BulkLogEntry(BaseModel):
     """A single log entry within a bulk ingestion payload."""
 
@@ -49,8 +88,6 @@ class BulkLogEntry(BaseModel):
     @classmethod
     def normalize_timestamp(cls, v: Any) -> Any:
         if isinstance(v, (int, float)):
-            # Handle unix timestamps
-            # If the timestamp is very large, it might be milliseconds
             if v > 1e11:
                 return datetime.fromtimestamp(v / 1000.0, tz=timezone.utc)
             return datetime.fromtimestamp(v, tz=timezone.utc)

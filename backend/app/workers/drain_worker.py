@@ -5,7 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import time
+import traceback
 import uuid
+from drain3.redis_persistence import RedisPersistence
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -25,6 +29,9 @@ from ..services.runtime_dependency_parser import (
 from ..services.telemetry import telemetry_event, telemetry_manager
 
 logger = logging.getLogger("logsentinel.drain_worker")
+
+DLQ_STREAM_NAME = "logs:dlq"
+MAX_PARSE_RETRIES = 3
 
 
 class DrainWorker:
@@ -48,6 +55,8 @@ class DrainWorker:
         recent_trace_observation_limit: int = 1000,
         queue_drain_timeout_seconds: float = 30.0,
         benchmarking_collector: Any = None,
+        dlq_stream_name: str = DLQ_STREAM_NAME,
+        max_retries: int = MAX_PARSE_RETRIES,
     ) -> None:
         """
         Initialize the Drain worker with dependencies and configuration.
@@ -63,6 +72,8 @@ class DrainWorker:
             recent_trace_observation_limit: Number of recent traces to keep in memory.
             queue_drain_timeout_seconds: Maximum time to wait for the queue to drain during shutdown.
             benchmarking_collector: Optional collector for performance metrics.
+            dlq_stream_name: Redis stream name for dead-letter queue.
+            max_retries: Consecutive failure threshold before routing to DLQ.
             
         Raises:
             ValueError: If queue_drain_timeout_seconds is not positive.
@@ -84,6 +95,10 @@ class DrainWorker:
         self.benchmarking_collector: Any = benchmarking_collector
         self.stream_name: str = "logs:stream"
         self.group_name: str = "log_workers"
+        self.dlq_stream_name: str = dlq_stream_name
+        self.max_retries: int = max_retries
+        self._retry_counts: dict[str, int] = {}
+        self.dlq_count: int = 0
         self._task: asyncio.Task[None] | None = None
         self._running: bool = False
         self.processed_count: int = 0
@@ -95,6 +110,28 @@ class DrainWorker:
         self.consumer_name: str = f"worker-{uuid.uuid4().hex[:8]}"
         self._recovery_task: asyncio.Task[None] | None = None
         self.recovery_idle_time_ms: int = 60000
+        
+        redis_host = os.getenv("REDIS_HOST", "localhost")
+        redis_port = int(os.getenv("REDIS_PORT", "6379"))
+        self.redis_pers = RedisPersistence(
+            redis_host=redis_host, 
+            redis_port=redis_port, 
+            redis_db=0, 
+            redis_pass=None, 
+            is_ssl=False, 
+            redis_key="drain3:state:snapshot"
+        )
+        
+        # Load during cold start
+        self.parser._miner.persistence_handler = self.redis_pers
+        try:
+            self.parser._miner.load_state()
+        except Exception as e:
+            logger.warning("Failed to load Drain3 state snapshot: %s", e)
+        self.parser._miner.persistence_handler = None
+        
+        self._logs_since_snapshot = 0
+        self._last_snapshot_time = time.monotonic()
 
     def set_redis_client(self, redis_client: Redis) -> None:
         """Set the Redis client for stream consumption."""
@@ -157,6 +194,205 @@ class DrainWorker:
             pending_records,
         )
 
+    async def _increment_retry_count(
+        self, key: str, metadata: dict[str, Any] | None = None
+    ) -> int:
+        """Increment and return retry count for a log entry / message."""
+        if metadata is not None and "_retry_count" in metadata:
+            metadata["_retry_count"] = int(metadata["_retry_count"]) + 1
+            return int(metadata["_retry_count"])
+
+        if self.redis_client:
+            redis_key = f"retry:drain:{key}"
+            try:
+                count = await self.redis_client.incr(redis_key)
+                await self.redis_client.expire(redis_key, 86400)
+                return int(count)
+            except Exception:
+                pass
+
+        count = self._retry_counts.get(key, 0) + 1
+        self._retry_counts[key] = count
+        return count
+
+    async def _clear_retry_count(
+        self, key: str, metadata: dict[str, Any] | None = None
+    ) -> None:
+        """Reset retry counter on success or terminal handling."""
+        if metadata is not None and "_retry_count" in metadata:
+            metadata.pop("_retry_count", None)
+
+        if self.redis_client:
+            redis_key = f"retry:drain:{key}"
+            try:
+                await self.redis_client.delete(redis_key)
+            except Exception:
+                pass
+
+        self._retry_counts.pop(key, None)
+
+    async def _forward_to_dlq(
+        self,
+        raw_payload: str,
+        error_traceback: str,
+        log_id: str,
+        metadata: dict[str, Any] | None = None,
+        message_id: str | None = None,
+    ) -> str | None:
+        """Forward a poisoned payload and error traceback to the dead-letter queue (logs:dlq)."""
+        self.dlq_count += 1
+        dlq_entry: dict[str, str] = {
+            "payload": raw_payload,
+            "error": error_traceback,
+            "log_id": str(log_id),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        if metadata:
+            try:
+                dlq_entry["metadata"] = json.dumps(metadata)
+            except Exception:
+                dlq_entry["metadata"] = str(metadata)
+        if message_id:
+            dlq_entry["stream_message_id"] = str(message_id)
+
+        if self.redis_client:
+            try:
+                return await self.redis_client.xadd(self.dlq_stream_name, dlq_entry)
+            except Exception:
+                logger.exception("Failed to write poison pill to DLQ stream '%s'", self.dlq_stream_name)
+        return None
+
+    async def _process_stream_message(self, message_id: str, entry: dict[Any, Any]) -> None:
+        """Process a single Redis stream entry with poison-pill isolation and DLQ support."""
+        payload_raw = entry.get(b"payload") or entry.get("payload")
+        if not payload_raw:
+            if self.redis_client:
+                try:
+                    await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+                except Exception:
+                    pass
+            return
+
+        if isinstance(payload_raw, bytes):
+            payload_str = payload_raw.decode("utf-8", errors="replace")
+        else:
+            payload_str = str(payload_raw)
+
+        snippet = payload_str[:200]
+        retry_key = f"msg:{message_id}"
+
+        try:
+            payload = json.loads(payload_str)
+        except Exception as exc:
+            self.error_count += 1
+            tb_str = traceback.format_exc()
+            retry_count = await self._increment_retry_count(retry_key)
+            if retry_count >= self.max_retries:
+                await self._forward_to_dlq(
+                    raw_payload=payload_str,
+                    error_traceback=tb_str,
+                    log_id=f"msg-{message_id}",
+                    message_id=message_id,
+                )
+                await self._clear_retry_count(retry_key)
+                if self.redis_client:
+                    try:
+                        await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+                    except Exception:
+                        logger.exception("Failed to XACK poisoned message %s from %s", message_id, self.stream_name)
+                logger.error(
+                    "Poison pill detected: JSON decode failed for message %s (failed %d consecutive times). Routed to DLQ '%s'. Payload snippet: %s",
+                    message_id,
+                    retry_count,
+                    self.dlq_stream_name,
+                    snippet,
+                    extra={
+                        "log_id": f"msg-{message_id}",
+                        "message_id": message_id,
+                        "payload_snippet": snippet,
+                        "error": str(exc),
+                        "traceback": tb_str,
+                        "retry_count": retry_count,
+                        "dlq_stream": self.dlq_stream_name,
+                    },
+                )
+            else:
+                logger.error(
+                    "JSON decode failed for message %s (attempt %d/%d). Payload snippet: %s",
+                    message_id,
+                    retry_count,
+                    self.max_retries,
+                    snippet,
+                    extra={
+                        "log_id": f"msg-{message_id}",
+                        "message_id": message_id,
+                        "payload_snippet": snippet,
+                        "error": str(exc),
+                        "traceback": tb_str,
+                        "retry_count": retry_count,
+                    },
+                    exc_info=True,
+                )
+            return
+
+        try:
+            await self.process_one(payload, message_id=message_id)
+            await self._clear_retry_count(retry_key)
+            if self.redis_client:
+                await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.error_count += 1
+            tb_str = traceback.format_exc()
+            retry_count = await self._increment_retry_count(retry_key)
+            if retry_count >= self.max_retries:
+                await self._forward_to_dlq(
+                    raw_payload=payload_str,
+                    error_traceback=tb_str,
+                    log_id=f"msg-{message_id}",
+                    message_id=message_id,
+                )
+                await self._clear_retry_count(retry_key)
+                if self.redis_client:
+                    try:
+                        await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+                    except Exception:
+                        logger.exception("Failed to XACK poisoned message %s from %s", message_id, self.stream_name)
+                logger.error(
+                    "Poison pill detected for message %s (failed %d consecutive times). Routed to DLQ '%s'. Payload snippet: %s",
+                    message_id,
+                    retry_count,
+                    self.dlq_stream_name,
+                    snippet,
+                    extra={
+                        "log_id": f"msg-{message_id}",
+                        "message_id": message_id,
+                        "payload_snippet": snippet,
+                        "error": str(exc),
+                        "traceback": tb_str,
+                        "retry_count": retry_count,
+                        "dlq_stream": self.dlq_stream_name,
+                    },
+                )
+            else:
+                logger.error(
+                    "Drain worker failed processing message %s (attempt %d/%d). Payload snippet: %s",
+                    message_id,
+                    retry_count,
+                    self.max_retries,
+                    snippet,
+                    extra={
+                        "log_id": f"msg-{message_id}",
+                        "message_id": message_id,
+                        "payload_snippet": snippet,
+                        "error": str(exc),
+                        "traceback": tb_str,
+                        "retry_count": retry_count,
+                    },
+                    exc_info=True,
+                )
+
     async def run(self) -> None:
         """Continuously consume queued ingest payloads from Redis Streams."""
         if not self.redis_client:
@@ -180,39 +416,28 @@ class DrainWorker:
                     consumername=self.consumer_name,
                     streams={self.stream_name: ">"},
                     count=500,
-                    block=2000
+                    block=2000,
                 )
-                
+
                 if not messages:
                     continue
 
                 for stream_name, stream_messages in messages:
                     for message_id, entry in stream_messages:
                         try:
-                            # Extract payload
-                            payload_json = entry.get(b"payload") or entry.get("payload")
-                            if payload_json:
-                                if isinstance(payload_json, bytes):
-                                    payload_json = payload_json.decode("utf-8")
-                                payload = json.loads(payload_json)
-                                
-                                # Process sequentially through Drain3, ML, DB, WebSockets
-                                await self.process_one(payload)
-                            
-                            # Acknowledge on success
-                            await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+                            await self._process_stream_message(message_id, entry)
                         except asyncio.CancelledError:
                             raise
                         except Exception:
                             self.error_count += 1
-                            logger.exception("Drain worker failed processing message %s", message_id)
-                            
+                            logger.exception("Unexpected error processing stream message %s", message_id)
+
                 # Trim the stream periodically to prevent unbounded growth
                 try:
-                    await self.redis_client.xtrim(self.stream_name, maxlen=100000, approximate=True)
+                    await self.redis_client.xtrim(self.stream_name, maxlen=500000, approximate=True)
                 except Exception as e:
                     logger.warning("Failed to trim %s: %s", self.stream_name, str(e))
-                            
+
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -238,23 +463,16 @@ class DrainWorker:
                     consumername=self.consumer_name,
                     min_idle_time=min_idle_ms,
                     start_id="0-0",
-                    count=100
+                    count=100,
                 )
-                
+
                 if isinstance(result, tuple) or isinstance(result, list):
                     claimed_messages = result[1]
                     if claimed_messages:
                         logger.info("Auto-claimed %d pending messages from %s", len(claimed_messages), self.stream_name)
                         for message_id, entry in claimed_messages:
                             try:
-                                payload_json = entry.get(b"payload") or entry.get("payload")
-                                if payload_json:
-                                    if isinstance(payload_json, bytes):
-                                        payload_json = payload_json.decode("utf-8")
-                                    payload = json.loads(payload_json)
-                                    await self.process_one(payload)
-                                
-                                await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+                                await self._process_stream_message(message_id, entry)
                             except asyncio.CancelledError:
                                 raise
                             except Exception:
@@ -265,21 +483,84 @@ class DrainWorker:
             except Exception as e:
                 logger.error("Error in recover_pending_messages: %s", str(e))
 
-    async def process_one(self, item: Any) -> list[ParsedLog]:
+    async def process_one(
+        self,
+        item: Any,
+        message_id: str | None = None,
+    ) -> list[ParsedLog]:
         """Process one queued payload or log entry."""
         import time
         start_time = time.perf_counter()
-        
+
         parsed_logs: list[ParsedLog] = []
         errors_before_extract = self.error_count
 
         extracted_messages = self._extract_log_messages(item)
         for raw_message, metadata in extracted_messages:
+            log_id = (
+                metadata.get("id")
+                or metadata.get("correlation_id")
+                or (f"msg-{message_id}" if message_id else None)
+                or f"raw-{hash(raw_message)}"
+            )
+            retry_key = str(log_id)
+            snippet = raw_message[:200] if isinstance(raw_message, str) else str(raw_message)[:200]
+
             try:
                 parsed = self.parser.parse(raw_message, metadata=metadata)
-            except Exception:
+                await self._clear_retry_count(retry_key, metadata)
+            except Exception as exc:
                 self.error_count += 1
-                logger.exception("Drain parser failed for log message")
+                tb_str = traceback.format_exc()
+                retry_count = await self._increment_retry_count(retry_key, metadata)
+
+                if retry_count >= self.max_retries:
+                    await self._forward_to_dlq(
+                        raw_payload=raw_message if isinstance(raw_message, str) else json.dumps(raw_message),
+                        error_traceback=tb_str,
+                        log_id=str(log_id),
+                        metadata=metadata,
+                        message_id=message_id,
+                    )
+                    await self._clear_retry_count(retry_key, metadata)
+
+                    if message_id and self.redis_client:
+                        try:
+                            await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+                        except Exception:
+                            logger.exception("Failed to XACK poisoned message %s from %s", message_id, self.stream_name)
+
+                    logger.error(
+                        "Poison pill detected for log ID %s (failed %d consecutive times). Routed to DLQ '%s'. Payload snippet: %s",
+                        log_id,
+                        retry_count,
+                        self.dlq_stream_name,
+                        snippet,
+                        extra={
+                            "log_id": str(log_id),
+                            "payload_snippet": snippet,
+                            "error": str(exc),
+                            "traceback": tb_str,
+                            "retry_count": retry_count,
+                            "dlq_stream": self.dlq_stream_name,
+                        },
+                    )
+                else:
+                    logger.error(
+                        "Drain parser failed for log ID %s (attempt %d/%d). Payload snippet: %s",
+                        log_id,
+                        retry_count,
+                        self.max_retries,
+                        snippet,
+                        extra={
+                            "log_id": str(log_id),
+                            "payload_snippet": snippet,
+                            "error": str(exc),
+                            "traceback": tb_str,
+                            "retry_count": retry_count,
+                        },
+                        exc_info=True,
+                    )
                 continue
 
             trace_observation = self._extract_trace_observation(parsed)
@@ -291,7 +572,7 @@ class DrainWorker:
             self._schedule_log_parsed_event(parsed)
             if trace_observation is not None:
                 self._record_trace_observation(trace_observation)
-                
+
             # Trigger base alert for errors (which will be deduplicated)
             if parsed.level.lower() == "error":
                 payload = IncidentAlertPayload(
@@ -301,10 +582,10 @@ class DrainWorker:
                     affected_services=[],
                     propagation_chain=[parsed.service],
                     confidence_score=0.5,
-                    is_critical=False
+                    is_critical=False,
                 )
                 asyncio.create_task(dispatch_incident_alert(payload, redis_client=self.redis_client))
-            
+
             # Notify subscribers (e.g., feature extraction worker)
             if self._on_log_parsed:
                 try:
@@ -315,7 +596,7 @@ class DrainWorker:
         if parsed_logs:
             event = telemetry_event("batch_processed", {
                 "count": len(parsed_logs),
-                "worker": self.consumer_name
+                "worker": self.consumer_name,
             })
             asyncio.create_task(telemetry_manager.broadcast(event))
 
@@ -327,6 +608,20 @@ class DrainWorker:
             duration_ms = (time.perf_counter() - start_time) * 1000.0
             self.benchmarking_collector.record_latency(duration_ms)
 
+        self._logs_since_snapshot += len(parsed_logs)
+        now = time.monotonic()
+        if self._logs_since_snapshot >= 500 or (now - self._last_snapshot_time) >= 60.0:
+            if self._logs_since_snapshot > 0:
+                try:
+                    self.parser._miner.persistence_handler = self.redis_pers
+                    self.parser._miner.save_state()
+                except Exception as e:
+                    logger.error("Failed to save Drain3 snapshot: %s", e)
+                finally:
+                    self.parser._miner.persistence_handler = None
+            self._logs_since_snapshot = 0
+            self._last_snapshot_time = now
+
         return parsed_logs
 
     def get_stats(self) -> dict[str, Any]:
@@ -335,6 +630,7 @@ class DrainWorker:
             "running": self._running,
             "processed_count": self.processed_count,
             "error_count": self.error_count,
+            "dlq_count": self.dlq_count,
             "last_processed_at": self.last_processed_at,
             "queue_size": self._queue_size(),
             "last_queue_drain_timed_out": self.last_queue_drain_timed_out,

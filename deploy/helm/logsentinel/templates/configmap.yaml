@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "logsentinel.fullname" . }}-config
+data:
+  REDIS_HOST: {{ .Values.env.redisHost | quote }}
+  REDIS_PORT: {{ .Values.env.redisPort | default 6379 | quote }}
+  POSTGRES_HOST: {{ .Values.env.postgresHost | quote }}
+  POSTGRES_PORT: {{ .Values.env.postgresPort | default 5432 | quote }}
+  POSTGRES_USER: {{ .Values.env.dbUser | quote }}
+  POSTGRES_DB: {{ .Values.env.dbName | quote }}
+  POSTGRES_POOL_SIZE: {{ .Values.env.postgresPoolSize | default 20 | quote }}
+  POSTGRES_MAX_OVERFLOW: {{ .Values.env.postgresMaxOverflow | default 10 | quote }}
+  DRAIN3_BATCH_SIZE: {{ .Values.env.drain3BatchSize | default 500 | quote }}
+  DRAIN3_FLUSH_INTERVAL_SECONDS: {{ .Values.env.drain3FlushIntervalSeconds | default "2.0" | quote }}
+  DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS: {{ .Values.env.drain3QueueDrainTimeoutSeconds | default "30.0" | quote }}

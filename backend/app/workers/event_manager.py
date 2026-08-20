@@ -13,8 +13,12 @@ from typing import Any
 from ..core.settings import GraphScoringSettings, get_graph_scoring_settings
 from ..ml.anomaly_scoring import normalize_prediction_anomaly_score
 from ..models import FeatureVector, PerformanceEvent
+from redis.asyncio import Redis
+from ..core.redis import _redis_pool
 from ..repositories.tracking_repository import TrackingRepository
+from ..schemas.alerting import IncidentAlertPayload
 from ..schemas.blast_radius import BlastRadiusResult
+from ..services.alerting import dispatch_incident_alert
 from ..services.benchmarking import BenchmarkingCollector
 from ..services.graph_analysis_service import GraphAnalysisService
 from ..services.telemetry import telemetry_event, telemetry_manager
@@ -208,6 +212,32 @@ class EventManager:
             )
         except Exception:
             logger.exception("Failed to broadcast tracking loop event")
+
+        # Suppress and deduplicate repeated webhook alerts using Redis cooldown
+        try:
+            if _redis_pool is not None:
+                redis = Redis(connection_pool=_redis_pool)
+                service_dist = feature_vector.features.get("service_distribution", {})
+                dominant_service = max(service_dist.items(), key=lambda x: x[1])[0] if service_dist else "unknown"
+                anomaly_type = "anomaly_spike"
+                
+                cooldown_key = f"alert_cooldown:{dominant_service}:{anomaly_type}"
+                lock_acquired = await redis.set(cooldown_key, "1", nx=True, ex=900)
+                
+                if lock_acquired:
+                    logger.info("Triggering webhook alert for %s (cooldown active for 15m)", dominant_service)
+                    alert_payload = IncidentAlertPayload(
+                        incident_id=feature_vector.window_id,
+                        root_cause_service=dominant_service,
+                        affected_services=[dominant_service],
+                        confidence_score=anomaly_score,
+                        is_critical=(anomaly_score >= 0.7)
+                    )
+                    asyncio.create_task(dispatch_incident_alert(alert_payload, redis_client=redis))
+                else:
+                    logger.debug("Webhook alert for %s suppressed by 15-minute cooldown", dominant_service)
+        except Exception:
+            logger.exception("Failed to process webhook alert deduplication")
 
     async def _run_graph_analysis(
         self,

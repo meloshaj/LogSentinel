@@ -70,56 +70,45 @@ SELECT create_hypertable('logs', 'created_at', chunk_time_interval => INTERVAL '
 -- Configure Columnar Compression
 ALTER TABLE logs SET (
     timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'service, level',
-    timescaledb.compress_orderby = 'created_at DESC, id DESC'
+    timescaledb.compress_segmentby = 'service',
+    timescaledb.compress_orderby = 'timestamp DESC'
 );
 
--- Add Automated Policies (Compression > 2 days)
-SELECT add_compression_policy('logs', INTERVAL '2 days', if_not_exists => TRUE);
+-- Add Automated Policies (Compression > 7 days)
+SELECT add_compression_policy('logs', INTERVAL '7 days', if_not_exists => TRUE);
 
--- Lock-safe retention policy (Replaces add_retention_policy)
-CREATE OR REPLACE PROCEDURE safe_drop_chunks(retention_interval INTERVAL, max_retries INT DEFAULT 5)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    retry_count INT := 0;
-BEGIN
-    WHILE retry_count < max_retries LOOP
-        BEGIN
-            SET LOCAL lock_timeout = '1000ms';
-            PERFORM drop_chunks('logs', retention_interval);
-            RAISE NOTICE 'Successfully dropped chunks older than %', retention_interval;
-            RETURN;
-        EXCEPTION WHEN lock_not_available THEN
-            RAISE WARNING 'Could not acquire lock for drop_chunks (Attempt %/%). Retrying in 5 seconds...', retry_count + 1, max_retries;
-            retry_count := retry_count + 1;
-            PERFORM pg_sleep(5);
-        END;
-    END LOOP;
-    RAISE WARNING 'Failed to drop chunks after % attempts due to lock contention. Deferring to next run.', max_retries;
-END;
-$$;
+-- ---------------------------------------------------------------------------
+-- Continuous Aggregates (1-Minute Rollup)
+-- ---------------------------------------------------------------------------
+CREATE MATERIALIZED VIEW IF NOT EXISTS logs_rollup_1m
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('1 minute', created_at) AS bucket,
+    service AS service_name,
+    level AS log_level,
+    COUNT(*) AS log_count,
+    COUNT(*) FILTER (WHERE level IN ('ERROR', 'CRITICAL', 'FATAL'))::FLOAT / NULLIF(COUNT(*), 0) AS error_ratio
+FROM logs
+GROUP BY bucket, service, level
+WITH NO DATA;
 
-CREATE OR REPLACE PROCEDURE safe_drop_chunks_job(job_id INT, config JSONB)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    retention_interval INTERVAL;
-    max_retries INT;
-BEGIN
-    retention_interval := COALESCE((config->>'retention_interval')::INTERVAL, INTERVAL '30 days');
-    max_retries := COALESCE((config->>'max_retries')::INT, 5);
-    CALL safe_drop_chunks(retention_interval, max_retries);
-END;
-$$;
+SELECT add_continuous_aggregate_policy('logs_rollup_1m',
+    start_offset => INTERVAL '2 hours',
+    end_offset => INTERVAL '1 minute',
+    schedule_interval => INTERVAL '1 minute',
+    if_not_exists => true
+);
 
+-- ---------------------------------------------------------------------------
+-- Data Retention Policy
+-- ---------------------------------------------------------------------------
 DO $$
 BEGIN
     PERFORM remove_retention_policy('logs', if_exists => true);
 EXCEPTION WHEN OTHERS THEN
 END $$;
 
-SELECT add_job('safe_drop_chunks_job', '1 day', config => '{"retention_interval": "30 days", "max_retries": 5}');
+SELECT add_retention_policy('logs', INTERVAL '30 days', if_not_exists => TRUE);
 
 -- NOTE: Columns template_text, parameters, level, source, environment,
 -- metadata, parsed_at, created_at are already defined in the CREATE TABLE

@@ -233,3 +233,9 @@ __marimo__/
 # SSL certificates (generated locally for dev)
 docker/nginx/ssl/*.crt
 docker/nginx/ssl/*.key
+
+# Binaries and test artifacts
+windows-amd64/
+helm.zip
+helm_test.yaml
+bash.exe.stackdump

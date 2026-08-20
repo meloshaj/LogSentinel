@@ -520,6 +520,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   // ---- Socket refs ----
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptsRef = useRef<number>(0);
   const connectionStateRef = useRef<ConnectionState>("connecting");
   const activeCandidateRef = useRef(0);
 
@@ -799,10 +800,18 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
 
     const scheduleReconnect = (nextIndex: number) => {
       clearReconnectTimer();
+
+      const attempt = reconnectAttemptsRef.current;
+      const backoffMs = Math.min(30000, RECONNECT_DELAY_MS * Math.pow(1.5, attempt));
+      const jitter = Math.random() * 1000;
+      const delay = backoffMs + jitter;
+
+      reconnectAttemptsRef.current += 1;
+
       reconnectTimerRef.current = window.setTimeout(() => {
         reconnectTimerRef.current = null;
         connect(nextIndex);
-      }, RECONNECT_DELAY_MS);
+      }, delay);
     };
 
     const connect = (index: number) => {
@@ -825,6 +834,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
 
       socket.onopen = () => {
         if (cancelled || socketRef.current !== socket) return;
+        reconnectAttemptsRef.current = 0;
         updateConnectionState("connected");
         setConnectionUrl(candidate);
       };

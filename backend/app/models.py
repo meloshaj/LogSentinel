@@ -291,3 +291,21 @@ class PerformanceEvent(BaseModel):
     )
     
     model_config = ConfigDict()
+
+
+from .schemas.ingest import BulkIngestPayload, BulkIngestResponse, BulkLogEntry, IngestPayload, IngestResponse, LogEntry
+
+__all__ = [
+    "ParsedLog",
+    "FeatureVector",
+    "TopologyNode",
+    "TopologyEdge",
+    "TopologyGraph",
+    "PerformanceBreachEvent",
+    "LogEntry",
+    "IngestPayload",
+    "IngestResponse",
+    "BulkLogEntry",
+    "BulkIngestPayload",
+    "BulkIngestResponse",
+]
