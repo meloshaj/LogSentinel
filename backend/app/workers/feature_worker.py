@@ -57,7 +57,9 @@ class FeatureExtractionWorker:
         self.extraction_interval_seconds = extraction_interval_seconds
         
         self.extractor = SlidingWindowExtractor(self.window_config)
-        self.anomaly_detector = self._resolve_anomaly_detector(anomaly_detector, anomaly_model_path)
+        self.anomaly_model_path = Path(anomaly_model_path) if anomaly_model_path is not None else None
+        self.model_load_error: str | None = None
+        self.anomaly_detector = self._resolve_anomaly_detector(anomaly_detector, self.anomaly_model_path)
         self._feature_repository = feature_repository
         self.event_manager = event_manager
         
@@ -197,7 +199,27 @@ class FeatureExtractionWorker:
             "extraction_errors": self._extraction_errors,
             "last_extraction_at": self._last_extraction_at,
             "feature_buffer_size": len(self._feature_buffer),
+            "model": self.get_model_health(),
             "extractor": self.extractor.get_stats(),
+        }
+
+    def get_model_health(self) -> dict[str, Any]:
+        """Return bounded model lifecycle state for health/metrics adapters."""
+        if self.anomaly_detector is not None:
+            health = self.anomaly_detector.get_health(self.anomaly_model_path)
+            if self.model_load_error:
+                health["model_load_error"] = self.model_load_error
+            return health
+
+        return {
+            "model_loaded": False,
+            "model_version": None,
+            "model_age_seconds": None,
+            "artifact_path": str(self.anomaly_model_path) if self.anomaly_model_path else None,
+            "inference_total": 0,
+            "inference_errors_total": 0,
+            "anomalies_total": 0,
+            "model_load_error": self.model_load_error,
         }
     
     def clear_buffers(self) -> dict[str, int]:
@@ -211,8 +233,8 @@ class FeatureExtractionWorker:
             "features_removed": features_removed,
         }
 
-    @staticmethod
     def _resolve_anomaly_detector(
+        self,
         anomaly_detector: IsolationForestAnomalyDetector | None,
         anomaly_model_path: str | Path | None,
     ) -> IsolationForestAnomalyDetector | None:
@@ -224,9 +246,15 @@ class FeatureExtractionWorker:
 
         model_path = Path(anomaly_model_path)
         if not model_path.exists():
+            logger.warning("Isolation Forest artifact is absent at %s", model_path)
             return None
 
-        return IsolationForestAnomalyDetector.load_model(model_path)
+        try:
+            return IsolationForestAnomalyDetector.load_model(model_path)
+        except Exception as exc:
+            self.model_load_error = f"{type(exc).__name__}: {exc}"
+            logger.exception("Failed to load Isolation Forest artifact from %s", model_path)
+            return None
 
     def _schedule_feature_events(self, feature_vector: FeatureVector) -> None:
         self._schedule_telemetry_event(

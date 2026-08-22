@@ -5,6 +5,7 @@ import type {
   NodeType,
   NodeStatus,
 } from "../types/topology";
+import { fetchAuthenticated } from "../utils/auth";
 
 // Default interconnected topology baseline
 const DEFAULT_TOPOLOGY_NODES: TopologyNode[] = [
@@ -128,7 +129,7 @@ export function useTopology(pollIntervalMs = POLL_INTERVAL_MS): UseTopologyResul
         const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
         if (apiKey) headers["X-API-Key"] = apiKey;
 
-        const res = await fetch(url, { signal: controller.signal, headers });
+        const res = await fetchAuthenticated(url, { signal: controller.signal, headers });
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
 
         const data = (await res.json()) as TopologyPayload;

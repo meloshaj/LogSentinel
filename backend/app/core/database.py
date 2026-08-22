@@ -138,6 +138,84 @@ async def verify_connectivity() -> None:
     )
 
 
+async def verify_schema_ready() -> None:
+    """Verify the repository-owned Timescale schema before serving traffic.
+
+    This is intentionally read-only.  Schema creation and ordered forward
+    migrations are owned by ``scripts/database_lifecycle.py`` and must run as
+    a bootstrap/migration-owner step before the restricted application user
+    starts.  Failing closed here prevents a partially initialized database
+    from being mistaken for a healthy application.
+    """
+    from sqlalchemy import text
+
+    engine = get_engine()
+    try:
+        async with engine.connect() as connection:
+            row = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT
+                            EXISTS (
+                                SELECT 1
+                                FROM pg_tables
+                                WHERE schemaname = 'public' AND tablename = 'logs'
+                            ) AS logs_table,
+                            EXISTS (
+                                SELECT 1
+                                FROM pg_tables
+                                WHERE schemaname = 'public' AND tablename = 'schema_migrations'
+                            ) AS migration_table,
+                            EXISTS (
+                                SELECT 1
+                                FROM schema_migrations
+                                WHERE version = '0000_canonical_init'
+                            ) AS canonical_bootstrap,
+                            EXISTS (
+                                SELECT 1
+                                FROM schema_migrations
+                                WHERE version = '20260822_0001_schema_reconciliation'
+                            ) AS current_migration,
+                            EXISTS (
+                                SELECT 1
+                                FROM pg_extension
+                                WHERE extname = 'timescaledb'
+                            ) AS timescale_extension,
+                            EXISTS (
+                                SELECT 1
+                                FROM timescaledb_information.hypertables
+                                WHERE hypertable_schema = 'public'
+                                  AND hypertable_name = 'logs'
+                            ) AS logs_hypertable
+                        """
+                    )
+                )
+            ).mappings().one()
+    except Exception as exc:
+        raise RuntimeError(
+            "FATAL: canonical LogSentinel schema is not ready; run "
+            "scripts/database_lifecycle.py --bootstrap/--apply with a schema "
+            "owner before starting the application"
+        ) from exc
+
+    required_flags = (
+        "logs_table",
+        "migration_table",
+        "canonical_bootstrap",
+        "current_migration",
+        "timescale_extension",
+        "logs_hypertable",
+    )
+    missing = [flag for flag in required_flags if not bool(row[flag])]
+    if missing:
+        raise RuntimeError(
+            "FATAL: canonical LogSentinel schema is incomplete; missing checks: "
+            + ", ".join(missing)
+            + ". Run scripts/database_lifecycle.py --apply."
+        )
+
+
 async def dispose_engine() -> None:
     """Dispose the async engine, draining all pooled connections.
 

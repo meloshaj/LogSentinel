@@ -8,6 +8,7 @@ logic to the feature extraction pipeline.
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,13 @@ FEATURE_COLUMNS = [
     "burst_indicator",
 ]
 
+CANONICAL_MODEL_FILENAME = "isolation_forest.joblib"
+
+
+def get_canonical_model_path() -> Path:
+    """Return the one model artifact path used by training and runtime."""
+    return Path(__file__).resolve().parents[2] / "models" / CANONICAL_MODEL_FILENAME
+
 
 class IsolationForestAnomalyDetector:
     """
@@ -57,6 +65,10 @@ class IsolationForestAnomalyDetector:
         self.model: IsolationForest | None = None
         self.model_version: str = "isolation_forest_v1"
         self.training_samples: int = 0
+        self.model_path: Path | None = None
+        self.inference_total: int = 0
+        self.inference_errors_total: int = 0
+        self.anomalies_total: int = 0
 
     def train(self, feature_vectors: list[FeatureVector]) -> IsolationForest:
         """
@@ -87,49 +99,63 @@ class IsolationForestAnomalyDetector:
 
     def predict(self, feature_vector: FeatureVector) -> dict[str, Any]:
         """Return a structured anomaly prediction for a single feature vector."""
-        if self.model is None:
-            raise ValueError("Model must be trained before prediction")
+        self.inference_total += 1
+        try:
+            if self.model is None:
+                raise ValueError("Model must be trained before prediction")
 
-        row = self._to_feature_matrix([feature_vector])
-        raw_score = float(self.model.decision_function(row)[0])
-        is_anomaly = bool(self.model.predict(row)[0] == -1)
-            
-        severity = self._severity_from_score(raw_score, is_anomaly)
+            row = self._to_feature_matrix([feature_vector])
+            raw_score = float(self.model.decision_function(row)[0])
+            is_anomaly = bool(self.model.predict(row)[0] == -1)
 
-        return {
-            "window_id": feature_vector.window_id,
-            "raw_score": round(raw_score, 6),
-            "anomaly_score": round(normalize_isolation_forest_score(raw_score), 6),
-            "is_anomaly": is_anomaly,
-            "severity": severity,
-            "model_version": self.model_version,
-        }
+            severity = self._severity_from_score(raw_score, is_anomaly)
+            if is_anomaly:
+                self.anomalies_total += 1
+
+            return {
+                "window_id": feature_vector.window_id,
+                "raw_score": round(raw_score, 6),
+                "anomaly_score": round(normalize_isolation_forest_score(raw_score), 6),
+                "is_anomaly": is_anomaly,
+                "severity": severity,
+                "model_version": self.model_version,
+            }
+        except Exception:
+            self.inference_errors_total += 1
+            raise
 
     def predict_batch(self, feature_vectors: list[FeatureVector]) -> list[dict[str, Any]]:
         """Return structured predictions for a batch of feature vectors."""
-        if self.model is None:
-            raise ValueError("Model must be trained before prediction")
+        self.inference_total += len(feature_vectors)
+        try:
+            if self.model is None:
+                raise ValueError("Model must be trained before prediction")
 
-        matrix = self._to_feature_matrix(feature_vectors)
-        scores = self.model.decision_function(matrix)
-        predictions = self.model.predict(matrix)
-        results: list[dict[str, Any]] = []
+            matrix = self._to_feature_matrix(feature_vectors)
+            scores = self.model.decision_function(matrix)
+            predictions = self.model.predict(matrix)
+            results: list[dict[str, Any]] = []
 
-        for feature_vector, score, prediction in zip(feature_vectors, scores, predictions):
-            raw_score = float(score)
-            is_anomaly = bool(prediction == -1)
-            results.append(
-                {
-                    "window_id": feature_vector.window_id,
-                    "raw_score": round(raw_score, 6),
-                    "anomaly_score": round(normalize_isolation_forest_score(raw_score), 6),
-                    "is_anomaly": is_anomaly,
-                    "severity": self._severity_from_score(raw_score, is_anomaly),
-                    "model_version": self.model_version,
-                }
-            )
+            for feature_vector, score, prediction in zip(feature_vectors, scores, predictions):
+                raw_score = float(score)
+                is_anomaly = bool(prediction == -1)
+                if is_anomaly:
+                    self.anomalies_total += 1
+                results.append(
+                    {
+                        "window_id": feature_vector.window_id,
+                        "raw_score": round(raw_score, 6),
+                        "anomaly_score": round(normalize_isolation_forest_score(raw_score), 6),
+                        "is_anomaly": is_anomaly,
+                        "severity": self._severity_from_score(raw_score, is_anomaly),
+                        "model_version": self.model_version,
+                    }
+                )
 
-        return results
+            return results
+        except Exception:
+            self.inference_errors_total += len(feature_vectors) or 1
+            raise
 
     def save_model(self, path: str | Path) -> None:
         """Persist the trained model and metadata to disk."""
@@ -139,6 +165,7 @@ class IsolationForestAnomalyDetector:
         model_path = Path(path)
         model_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump({"model": self.model, "model_version": self.model_version, "feature_columns": FEATURE_COLUMNS, "training_samples": self.training_samples}, model_path)
+        self.model_path = model_path
 
     @classmethod
     def load_model(cls, path: str | Path) -> IsolationForestAnomalyDetector:
@@ -148,11 +175,34 @@ class IsolationForestAnomalyDetector:
             raise FileNotFoundError(f"Model file not found: {model_path}")
 
         payload = joblib.load(model_path)
+        if not isinstance(payload, dict) or payload.get("model") is None:
+            raise ValueError(f"Invalid Isolation Forest artifact: {model_path}")
         detector = cls()
         detector.model = payload.get("model")
         detector.model_version = payload.get("model_version", detector.model_version)
         detector.training_samples = payload.get("training_samples", 0)
+        detector.model_path = model_path
         return detector
+
+    def get_health(self, model_path: str | Path | None = None) -> dict[str, Any]:
+        """Return bounded operator-visible model lifecycle state."""
+        artifact_path = Path(model_path) if model_path is not None else self.model_path
+        model_age_seconds: float | None = None
+        if artifact_path is not None and artifact_path.exists():
+            try:
+                model_age_seconds = max(0.0, time.time() - artifact_path.stat().st_mtime)
+            except OSError:
+                model_age_seconds = None
+
+        return {
+            "model_loaded": self.model is not None,
+            "model_version": self.model_version if self.model is not None else None,
+            "model_age_seconds": model_age_seconds,
+            "artifact_path": str(artifact_path) if artifact_path is not None else None,
+            "inference_total": self.inference_total,
+            "inference_errors_total": self.inference_errors_total,
+            "anomalies_total": self.anomalies_total,
+        }
 
     def _to_feature_matrix(self, feature_vectors: list[FeatureVector]) -> list[list[float]]:
         """Convert feature vectors into a numerical matrix for the sklearn model."""

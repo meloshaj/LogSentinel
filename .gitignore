@@ -239,3 +239,6 @@ windows-amd64/
 helm.zip
 helm_test.yaml
 bash.exe.stackdump
+
+# Local audit and validation artifacts
+temporary-report/

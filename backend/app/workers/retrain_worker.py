@@ -17,6 +17,7 @@ _backend_dir = _worker_dir.parents[1]
 if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
+from app.core.settings import get_database_settings
 from app.ml.anomaly_detector import IsolationForestAnomalyDetector
 from app.models import FeatureVector
 
@@ -37,16 +38,10 @@ async def retrain_model() -> None:
     """Query recent feature vectors and retrain the anomaly detection model."""
     logger.info("Starting periodic retraining of IsolationForest model")
     
-    db_host = os.getenv("DB_HOST", "localhost")
-    db_port = os.getenv("DB_PORT", "5432")
-    db_user = os.getenv("DB_USER", "postgres")
-    db_pass = os.getenv("DB_PASS", "postgres")
-    db_name = os.getenv("DB_NAME", "logsentinel")
+    db_settings = get_database_settings()
     
     try:
-        conn = await asyncpg.connect(
-            user=db_user, password=db_pass, database=db_name, host=db_host, port=db_port
-        )
+        conn = await asyncpg.connect(**db_settings.asyncpg_connect_kwargs())
     except Exception as e:
         logger.error("Failed to connect to database: %s", e)
         sys.exit(1)
@@ -102,7 +97,10 @@ async def retrain_model() -> None:
         models_dir.mkdir(parents=True, exist_ok=True)
         
         final_model_path = models_dir / "isolation_forest.joblib"
-        tmp_model_path = models_dir / f"isolation_forest_tmp_{datetime.now().strftime('%Y%m%d%H%M%S')}.joblib"
+        tmp_model_path = models_dir / (
+            "isolation_forest_tmp_"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.joblib"
+        )
         
         logger.info("Exporting trained model to temporary file %s", tmp_model_path)
         detector.save_model(tmp_model_path)

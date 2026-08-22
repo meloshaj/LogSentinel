@@ -93,6 +93,12 @@ async def ingest_logs(
             payload = ExportLogsServiceRequest.model_validate(body)
     except Exception as e:
         logger.error(f"Failed to parse OTLP payload: {e}")
+        try:
+            from ..main import ingest_request_rate
+
+            ingest_request_rate.labels(endpoint="/v1/logs", status="400").inc()
+        except Exception:
+            logger.debug("Unable to record OTLP parse metric", exc_info=True)
         raise HTTPException(status_code=400, detail="Invalid OTLP payload")
 
     pipe = redis_client.pipeline(transaction=False)
@@ -147,7 +153,27 @@ async def ingest_logs(
             await pipe.execute()
         except Exception as e:
             logger.error(f"Failed to execute Valkey pipeline for OTLP logs: {e}")
+            try:
+                from ..main import ingest_request_rate
+
+                ingest_request_rate.labels(endpoint="/v1/logs", status="500").inc()
+            except Exception:
+                logger.debug("Unable to record OTLP enqueue metric", exc_info=True)
             raise HTTPException(status_code=500, detail="Failed to enqueue logs")
+
+    try:
+        from ..main import (
+            batch_ingestion_size,
+            benchmarking_collector,
+            ingest_request_rate,
+        )
+
+        benchmarking_collector.record_ingestion(ingested_count)
+        ingest_request_rate.labels(endpoint="/v1/logs", status="200").inc()
+        batch_ingestion_size.labels(endpoint="/v1/logs").inc(ingested_count)
+    except Exception:
+        # Metrics are best-effort and must not change the OTLP response.
+        logger.debug("Unable to record OTLP ingestion metrics", exc_info=True)
 
     # Standard OTLP Response
     resp = ExportLogsServiceResponse(partial_success=ExportLogsPartialSuccess())

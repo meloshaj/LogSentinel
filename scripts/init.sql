@@ -10,34 +10,52 @@
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- ---------------------------------------------------------------------------
--- WAL Configuration Tuning for High Throughput
+-- Database tuning is supplied by the local/demo container command or the
+-- operator's PostgreSQL configuration.  Keeping ALTER SYSTEM out of the
+-- schema bootstrap means a schema owner does not also need instance-level
+-- configuration privileges, and a failed schema transaction cannot leave
+-- unrelated postgresql.auto.conf changes behind.
 -- ---------------------------------------------------------------------------
-ALTER SYSTEM SET max_wal_size = '16GB';
-ALTER SYSTEM SET min_wal_size = '4GB';
-ALTER SYSTEM SET checkpoint_timeout = '20min';
-ALTER SYSTEM SET checkpoint_completion_target = '0.9';
-ALTER SYSTEM SET wal_buffers = '64MB';
-SELECT pg_reload_conf();
 
 BEGIN;
 
 -- ---------------------------------------------------------------------------
 -- ENUM Types
 -- ---------------------------------------------------------------------------
-CREATE TYPE severity_level AS ENUM (
-    'INFO',
-    'LOW',
-    'MEDIUM',
-    'HIGH',
-    'CRITICAL'
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_type AS t
+        JOIN pg_namespace AS n ON n.oid = t.typnamespace
+        WHERE n.nspname = 'public' AND t.typname = 'severity_level'
+    ) THEN
+        CREATE TYPE severity_level AS ENUM (
+            'INFO',
+            'LOW',
+            'MEDIUM',
+            'HIGH',
+            'CRITICAL'
+        );
+    END IF;
+END $$;
 
-CREATE TYPE incident_status AS ENUM (
-    'OPEN',
-    'INVESTIGATING',
-    'MITIGATED',
-    'RESOLVED'
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_type AS t
+        JOIN pg_namespace AS n ON n.oid = t.typnamespace
+        WHERE n.nspname = 'public' AND t.typname = 'incident_status'
+    ) THEN
+        CREATE TYPE incident_status AS ENUM (
+            'OPEN',
+            'INVESTIGATING',
+            'MITIGATED',
+            'RESOLVED'
+        );
+    END IF;
+END $$;
 
 -- ---------------------------------------------------------------------------
 -- Logs Table
@@ -266,6 +284,53 @@ CREATE INDEX IF NOT EXISTS idx_users_email
     ON users (email);
 
 -- ---------------------------------------------------------------------------
+-- Accounts and External Identities Tables
+-- These tables are part of the active ORM/authentication contract.  They are
+-- included in the canonical clean bootstrap so the application no longer
+-- needs metadata.create_all to discover them at runtime.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS accounts (
+    id                  BIGSERIAL       PRIMARY KEY,
+    user_id             BIGINT          NOT NULL
+                            REFERENCES users(id) ON DELETE CASCADE,
+    provider            VARCHAR(32)     NOT NULL,
+    provider_account_id VARCHAR(512)    NOT NULL,
+    access_token        TEXT            NULL,
+    refresh_token       TEXT            NULL,
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_accounts_provider_provider_account_id
+        UNIQUE (provider, provider_account_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_user_id
+    ON accounts (user_id);
+
+CREATE TABLE IF NOT EXISTS external_identities (
+    id                  BIGSERIAL       PRIMARY KEY,
+    user_id             BIGINT          NOT NULL
+                            REFERENCES users(id) ON DELETE CASCADE,
+    provider            VARCHAR(32)     NOT NULL,
+    issuer              VARCHAR(512)    NOT NULL,
+    subject             VARCHAR(512)    NOT NULL,
+    tenant_id           VARCHAR(128)    NULL,
+    provider_object_id  VARCHAR(128)    NULL,
+    email               VARCHAR(255)    NULL,
+    display_name        VARCHAR(255)    NULL,
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_external_identities_provider_issuer_subject
+        UNIQUE (provider, issuer, subject)
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_identities_user_id
+    ON external_identities (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_external_identities_lookup
+    ON external_identities (provider, issuer, subject);
+
+-- ---------------------------------------------------------------------------
 -- Compound Indexes for High-Frequency Queries
 -- ---------------------------------------------------------------------------
 
@@ -280,5 +345,33 @@ CREATE INDEX IF NOT EXISTS idx_tracking_loops_severity
 -- Accelerates feature-window time-range scans used by the anomaly pipeline
 CREATE INDEX IF NOT EXISTS idx_features_window
     ON feature_windows (created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- Schema lifecycle ledger
+-- The bootstrap is version zero; forward migrations are recorded by
+-- scripts/database_lifecycle.py.  This is metadata only and is not a
+-- substitute for the application data model.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version     VARCHAR(128) PRIMARY KEY,
+    applied_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    checksum    VARCHAR(64)  NULL,
+    description TEXT         NOT NULL DEFAULT ''
+);
+
+INSERT INTO schema_migrations (version, checksum, description)
+VALUES ('0000_canonical_init', NULL, 'Canonical TimescaleDB bootstrap')
+ON CONFLICT (version) DO NOTHING;
+
+-- The additive reconciliation is included in this clean bootstrap. Existing
+-- canonical volumes without this marker are advanced by the lifecycle runner.
+INSERT INTO schema_migrations (version, checksum, description)
+VALUES (
+    '20260822_0001_schema_reconciliation',
+    NULL,
+    'Included in the canonical bootstrap; retained as the forward step for older canonical volumes.'
+)
+ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

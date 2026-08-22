@@ -40,6 +40,30 @@ class BenchmarkingCollector:
         # Rate limiting alerts to avoid flooding
         self._last_alert_time: dict[str, float] = {}
         self._alert_cooldown_seconds = 10.0
+
+    def record(self, metric_name: str, value: float) -> None:
+        """Record a named batch-manager measurement through the right metric API.
+
+        ``ParsedLogBatchManager`` reports the completed sink duration as
+        ``sink_latency_ms`` after the sink returns.  That measurement is a DB
+        batch-duration signal, so route it through
+        :meth:`record_db_batch_duration` rather than maintaining a second,
+        disconnected metric contract.  The explicit dispatch keeps future
+        callers from silently recording a value under the wrong meaning.
+        """
+        if metric_name == "sink_latency_ms":
+            self.record_db_batch_duration(float(value))
+            return
+        if metric_name == "pipeline_latency_ms":
+            self.record_latency(float(value))
+            return
+        if metric_name == "queue_depth":
+            self.set_queue_depth(int(value))
+            return
+        if metric_name in {"ingestion_count", "logs_ingested"}:
+            self.record_ingestion(int(value))
+            return
+        raise ValueError(f"Unsupported benchmarking metric: {metric_name}")
         
     def bind_event_manager(self, event_manager: Any):
         """Bind the event manager after initialization."""
@@ -62,6 +86,7 @@ class BenchmarkingCollector:
         """Record ingested logs for throughput calculation."""
         self._update_throughput_window()
         self._current_second_count += count
+        self._publish_observability()
 
     def record_latency(self, latency_ms: float):
         """Record pipeline processing latency with EMA."""
@@ -72,6 +97,7 @@ class BenchmarkingCollector:
         
         if self._ema_latency_ms > self.latency_threshold_ms:
             self._trigger_event("pipeline_latency", self._ema_latency_ms, self.latency_threshold_ms)
+        self._publish_observability()
 
     def set_queue_depth(self, depth: int, max_depth: int = 10000):
         """Record current queue depth and check backpressure."""
@@ -81,6 +107,7 @@ class BenchmarkingCollector:
         ratio = depth / max(1, max_depth)
         if ratio > self.queue_depth_threshold_ratio:
             self._trigger_event("queue_backpressure", ratio, self.queue_depth_threshold_ratio)
+        self._publish_observability()
 
     def record_db_batch_duration(self, duration_ms: float):
         """Record DB batch write duration with EMA."""
@@ -91,6 +118,7 @@ class BenchmarkingCollector:
             
         if self._ema_db_batch_ms > self.db_batch_threshold_ms:
             self._trigger_event("db_batch_delay", self._ema_db_batch_ms, self.db_batch_threshold_ms)
+        self._publish_observability()
 
     def get_health_metrics(self) -> dict[str, Any]:
         """Return a snapshot of current performance metrics."""
@@ -104,6 +132,18 @@ class BenchmarkingCollector:
             "queue_capacity_percent": round((self._queue_depth / max(1, self._max_queue_depth)) * 100, 2),
             "db_batch_duration_ms": round(self._ema_db_batch_ms, 2)
         }
+
+    def _publish_observability(self) -> None:
+        """Publish the bounded health snapshot without affecting ingestion."""
+        try:
+            from ..observability.metrics import observe_benchmarking_snapshot
+
+            observe_benchmarking_snapshot(self.get_health_metrics())
+        except Exception:
+            # Observability must never turn a completed sink into a failed
+            # sink.  The in-memory collector remains authoritative if the
+            # optional Prometheus integration is unavailable.
+            logger.debug("Benchmarking Prometheus update unavailable", exc_info=True)
 
     def _trigger_event(self, metric_name: str, current_value: float, threshold: float):
         """Create and enqueue a PerformanceEvent to the event manager."""

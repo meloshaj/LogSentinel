@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
+from redis.asyncio import Redis
+
+from ..core import redis as redis_state
 from ..core.settings import GraphScoringSettings, get_graph_scoring_settings
 from ..ml.anomaly_scoring import normalize_prediction_anomaly_score
 from ..models import FeatureVector, PerformanceEvent
-from redis.asyncio import Redis
-from ..core.redis import _redis_pool
 from ..repositories.tracking_repository import TrackingRepository
 from ..schemas.alerting import IncidentAlertPayload
 from ..schemas.blast_radius import BlastRadiusResult
@@ -56,8 +58,16 @@ class EventManager:
         
         self._task: asyncio.Task[None] | None = None
         self._running = False
+        self.redis_client: Redis | None = None
+        self._processed_count = 0
+        self._error_count = 0
+        self._last_processed_at: str | None = None
         
         logger.info("EventManager initialized")
+
+    def set_redis_client(self, redis_client: Redis) -> None:
+        """Inject the initialized application Redis client for cooldowns."""
+        self.redis_client = redis_client
 
     def start(self) -> None:
         """Start the background event manager loop."""
@@ -111,11 +121,25 @@ class EventManager:
                     await self._process_event(event)
                 elif isinstance(event, PerformanceEvent):
                     await self._process_performance_event(event)
+                self._processed_count += 1
+                self._last_processed_at = datetime.now(timezone.utc).isoformat()
                 self.queue.task_done()
             except asyncio.CancelledError:
                 raise
             except Exception:
+                self._error_count += 1
                 logger.exception("EventManager encountered an error processing an event")
+
+    def get_stats(self) -> dict[str, Any]:
+        """Return bounded worker state for readiness and Prometheus sampling."""
+        return {
+            "running": self._running,
+            "processed_count": self._processed_count,
+            "error_count": self._error_count,
+            "dlq_count": 0,
+            "queue_size": self.queue.qsize(),
+            "last_processed_at": self._last_processed_at,
+        }
 
     async def _process_performance_event(self, event: PerformanceEvent) -> None:
         """Process and broadcast a performance threshold breach alert."""
@@ -215,8 +239,14 @@ class EventManager:
 
         # Suppress and deduplicate repeated webhook alerts using Redis cooldown
         try:
-            if _redis_pool is not None:
-                redis = Redis(connection_pool=_redis_pool)
+            # Resolve the module-level pool at execution time as a fallback.
+            # Importing ``_redis_pool`` by value would leave this worker with
+            # None because startup replaces the pool during lifespan.
+            redis = self.redis_client
+            if redis is None and redis_state._redis_pool is not None:
+                redis = Redis(connection_pool=redis_state._redis_pool)
+
+            if redis is not None:
                 service_dist = feature_vector.features.get("service_distribution", {})
                 dominant_service = max(service_dist.items(), key=lambda x: x[1])[0] if service_dist else "unknown"
                 anomaly_type = "anomaly_spike"

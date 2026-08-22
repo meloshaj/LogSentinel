@@ -5,23 +5,27 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 import traceback
 import uuid
-from drain3.redis_persistence import RedisPersistence
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any
 
+from drain3.redis_persistence import RedisPersistence
 from redis.asyncio import Redis
 
 from ..models import ParsedLog
 from ..schemas.alerting import IncidentAlertPayload
 from ..services.alerting import dispatch_incident_alert
 from ..services.batch_manager import ParsedLogBatchManager
-from ..services.drain_parser import DrainParser
+from ..services.drain_parser import (
+    DrainParser,
+    build_drain3_redis_persistence,
+    get_drain3_state_backend,
+)
 from ..services.runtime_dependency_parser import (
     RuntimeDependencyParser,
     TraceObservation,
@@ -32,6 +36,19 @@ logger = logging.getLogger("logsentinel.drain_worker")
 
 DLQ_STREAM_NAME = "logs:dlq"
 MAX_PARSE_RETRIES = 3
+
+
+class StreamMessageOutcome(str, Enum):
+    """Explicit terminal state for one Redis Stream delivery.
+
+    ``XACK`` is permitted only for ``SUCCESSFULLY_PROCESSED`` or
+    ``TERMINALLY_ROUTED_TO_DLQ``.  A retryable outcome deliberately leaves the
+    delivery in the consumer group's pending entries list.
+    """
+
+    SUCCESSFULLY_PROCESSED = "successfully_processed"
+    RETRYABLE_FAILURE = "retryable_failure"
+    TERMINALLY_ROUTED_TO_DLQ = "terminally_routed_to_dlq"
 
 
 class DrainWorker:
@@ -111,24 +128,13 @@ class DrainWorker:
         self._recovery_task: asyncio.Task[None] | None = None
         self.recovery_idle_time_ms: int = 60000
         
-        redis_host = os.getenv("REDIS_HOST", "localhost")
-        redis_port = int(os.getenv("REDIS_PORT", "6379"))
-        self.redis_pers = RedisPersistence(
-            redis_host=redis_host, 
-            redis_port=redis_port, 
-            redis_db=0, 
-            redis_pass=None, 
-            is_ssl=False, 
-            redis_key="drain3:state:snapshot"
+        parser_miner = getattr(self.parser, "_miner", None)
+        current_persistence = getattr(parser_miner, "persistence_handler", None)
+        self.redis_pers = (
+            current_persistence
+            if isinstance(current_persistence, RedisPersistence)
+            else None
         )
-        
-        # Load during cold start
-        self.parser._miner.persistence_handler = self.redis_pers
-        try:
-            self.parser._miner.load_state()
-        except Exception as e:
-            logger.warning("Failed to load Drain3 state snapshot: %s", e)
-        self.parser._miner.persistence_handler = None
         
         self._logs_since_snapshot = 0
         self._last_snapshot_time = time.monotonic()
@@ -136,6 +142,27 @@ class DrainWorker:
     def set_redis_client(self, redis_client: Redis) -> None:
         """Set the Redis client for stream consumption."""
         self.redis_client = redis_client
+
+        # If import-time Redis state loading fell back to the local file, try
+        # one bounded hand-off after the application pool has proven Redis is
+        # reachable. Custom parser test doubles keep their own handler.
+        if (
+            self.redis_pers is None
+            and get_drain3_state_backend() == "redis"
+            and isinstance(self.parser, DrainParser)
+        ):
+            previous = self.parser._miner.persistence_handler
+            try:
+                candidate = build_drain3_redis_persistence()
+                self.parser._miner.persistence_handler = candidate
+                self.parser._miner.load_state()
+                self.redis_pers = candidate
+            except Exception as exc:
+                self.parser._miner.persistence_handler = previous
+                logger.warning(
+                    "Drain3 Redis state hand-off failed; retaining local state: %s",
+                    exc,
+                )
 
     def start(self) -> None:
         """Start the background worker without blocking application startup."""
@@ -209,7 +236,11 @@ class DrainWorker:
                 await self.redis_client.expire(redis_key, 86400)
                 return int(count)
             except Exception:
-                pass
+                logger.debug(
+                    "Redis retry counter unavailable for %s; using local fallback",
+                    key,
+                    exc_info=True,
+                )
 
         count = self._retry_counts.get(key, 0) + 1
         self._retry_counts[key] = count
@@ -227,7 +258,11 @@ class DrainWorker:
             try:
                 await self.redis_client.delete(redis_key)
             except Exception:
-                pass
+                logger.debug(
+                    "Unable to clear Redis retry counter for %s",
+                    key,
+                    exc_info=True,
+                )
 
         self._retry_counts.pop(key, None)
 
@@ -262,16 +297,108 @@ class DrainWorker:
                 logger.exception("Failed to write poison pill to DLQ stream '%s'", self.dlq_stream_name)
         return None
 
-    async def _process_stream_message(self, message_id: str, entry: dict[Any, Any]) -> None:
-        """Process a single Redis stream entry with poison-pill isolation and DLQ support."""
+    async def _ack_stream_message(self, message_id: str) -> bool:
+        """ACK one delivery and report whether Redis accepted the operation."""
+        if not self.redis_client:
+            return False
+        try:
+            await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+            return True
+        except Exception:
+            logger.exception("Failed to XACK stream message %s", message_id)
+            return False
+
+    async def _retry_or_route_stream_failure(
+        self,
+        *,
+        message_id: str,
+        raw_payload: str,
+        error_traceback: str,
+        error_message: str,
+        snippet: str,
+    ) -> StreamMessageOutcome:
+        """Keep a failed delivery pending or atomically route it to the DLQ.
+
+        A failed DLQ write is itself retryable.  This prevents the worker from
+        ACKing a message merely because it reached the retry threshold while
+        the terminal sink was unavailable.
+        """
+        retry_key = f"msg:{message_id}"
+        retry_count = await self._increment_retry_count(retry_key)
+        if retry_count < self.max_retries:
+            logger.error(
+                "%s for message %s (attempt %d/%d). Payload snippet: %s",
+                error_message,
+                message_id,
+                retry_count,
+                self.max_retries,
+                snippet,
+                extra={
+                    "message_id": message_id,
+                    "payload_snippet": snippet,
+                    "error": error_message,
+                    "retry_count": retry_count,
+                },
+            )
+            return StreamMessageOutcome.RETRYABLE_FAILURE
+
+        dlq_id = await self._forward_to_dlq(
+            raw_payload=raw_payload,
+            error_traceback=error_traceback,
+            log_id=f"msg-{message_id}",
+            message_id=message_id,
+        )
+        if dlq_id is None:
+            logger.error(
+                "Failed to route message %s to DLQ after %d attempts; leaving it pending",
+                message_id,
+                retry_count,
+            )
+            return StreamMessageOutcome.RETRYABLE_FAILURE
+
+        if not await self._ack_stream_message(message_id):
+            # The DLQ copy is durable, but the original PEL entry remains
+            # recoverable until XACK succeeds.  Do not claim terminal success.
+            logger.error(
+                "Message %s was written to DLQ %s but could not be ACKed; leaving it pending",
+                message_id,
+                dlq_id,
+            )
+            return StreamMessageOutcome.RETRYABLE_FAILURE
+
+        await self._clear_retry_count(retry_key)
+        logger.error(
+            "Poison message %s (attempt %d) was terminally routed to DLQ '%s'. Payload snippet: %s",
+            message_id,
+            retry_count,
+            self.dlq_stream_name,
+            snippet,
+            extra={
+                "message_id": message_id,
+                "payload_snippet": snippet,
+                "error": error_message,
+                "retry_count": retry_count,
+                "dlq_stream": self.dlq_stream_name,
+            },
+        )
+        return StreamMessageOutcome.TERMINALLY_ROUTED_TO_DLQ
+
+    async def _process_stream_message(
+        self,
+        message_id: str,
+        entry: dict[Any, Any],
+    ) -> StreamMessageOutcome:
+        """Process one Stream entry without ACKing retryable failures."""
         payload_raw = entry.get(b"payload") or entry.get("payload")
         if not payload_raw:
-            if self.redis_client:
-                try:
-                    await self.redis_client.xack(self.stream_name, self.group_name, message_id)
-                except Exception:
-                    pass
-            return
+            self.error_count += 1
+            return await self._retry_or_route_stream_failure(
+                message_id=message_id,
+                raw_payload="",
+                error_traceback="Stream entry did not contain a payload field",
+                error_message="Stream entry did not contain a payload",
+                snippet="",
+            )
 
         if isinstance(payload_raw, bytes):
             payload_str = payload_raw.decode("utf-8", errors="replace")
@@ -279,119 +406,51 @@ class DrainWorker:
             payload_str = str(payload_raw)
 
         snippet = payload_str[:200]
-        retry_key = f"msg:{message_id}"
 
         try:
             payload = json.loads(payload_str)
         except Exception as exc:
             self.error_count += 1
-            tb_str = traceback.format_exc()
-            retry_count = await self._increment_retry_count(retry_key)
-            if retry_count >= self.max_retries:
-                await self._forward_to_dlq(
-                    raw_payload=payload_str,
-                    error_traceback=tb_str,
-                    log_id=f"msg-{message_id}",
-                    message_id=message_id,
-                )
-                await self._clear_retry_count(retry_key)
-                if self.redis_client:
-                    try:
-                        await self.redis_client.xack(self.stream_name, self.group_name, message_id)
-                    except Exception:
-                        logger.exception("Failed to XACK poisoned message %s from %s", message_id, self.stream_name)
-                logger.error(
-                    "Poison pill detected: JSON decode failed for message %s (failed %d consecutive times). Routed to DLQ '%s'. Payload snippet: %s",
-                    message_id,
-                    retry_count,
-                    self.dlq_stream_name,
-                    snippet,
-                    extra={
-                        "log_id": f"msg-{message_id}",
-                        "message_id": message_id,
-                        "payload_snippet": snippet,
-                        "error": str(exc),
-                        "traceback": tb_str,
-                        "retry_count": retry_count,
-                        "dlq_stream": self.dlq_stream_name,
-                    },
-                )
-            else:
-                logger.error(
-                    "JSON decode failed for message %s (attempt %d/%d). Payload snippet: %s",
-                    message_id,
-                    retry_count,
-                    self.max_retries,
-                    snippet,
-                    extra={
-                        "log_id": f"msg-{message_id}",
-                        "message_id": message_id,
-                        "payload_snippet": snippet,
-                        "error": str(exc),
-                        "traceback": tb_str,
-                        "retry_count": retry_count,
-                    },
-                    exc_info=True,
-                )
-            return
+            return await self._retry_or_route_stream_failure(
+                message_id=message_id,
+                raw_payload=payload_str,
+                error_traceback=traceback.format_exc(),
+                error_message=f"JSON decode failed: {exc}",
+                snippet=snippet,
+            )
 
         try:
-            await self.process_one(payload, message_id=message_id)
-            await self._clear_retry_count(retry_key)
-            if self.redis_client:
-                await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+            parsed_logs = await self.process_one(
+                payload,
+                message_id=message_id,
+                _raise_on_parser_error=True,
+                _persist_before_ack=True,
+            )
+            if not parsed_logs:
+                self.error_count += 1
+                return await self._retry_or_route_stream_failure(
+                    message_id=message_id,
+                    raw_payload=payload_str,
+                    error_traceback="No supported log entries were extracted from the stream payload",
+                    error_message="No supported log entries were extracted",
+                    snippet=snippet,
+                )
+
+            if not await self._ack_stream_message(message_id):
+                return StreamMessageOutcome.RETRYABLE_FAILURE
+            await self._clear_retry_count(f"msg:{message_id}")
+            return StreamMessageOutcome.SUCCESSFULLY_PROCESSED
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self.error_count += 1
-            tb_str = traceback.format_exc()
-            retry_count = await self._increment_retry_count(retry_key)
-            if retry_count >= self.max_retries:
-                await self._forward_to_dlq(
-                    raw_payload=payload_str,
-                    error_traceback=tb_str,
-                    log_id=f"msg-{message_id}",
-                    message_id=message_id,
-                )
-                await self._clear_retry_count(retry_key)
-                if self.redis_client:
-                    try:
-                        await self.redis_client.xack(self.stream_name, self.group_name, message_id)
-                    except Exception:
-                        logger.exception("Failed to XACK poisoned message %s from %s", message_id, self.stream_name)
-                logger.error(
-                    "Poison pill detected for message %s (failed %d consecutive times). Routed to DLQ '%s'. Payload snippet: %s",
-                    message_id,
-                    retry_count,
-                    self.dlq_stream_name,
-                    snippet,
-                    extra={
-                        "log_id": f"msg-{message_id}",
-                        "message_id": message_id,
-                        "payload_snippet": snippet,
-                        "error": str(exc),
-                        "traceback": tb_str,
-                        "retry_count": retry_count,
-                        "dlq_stream": self.dlq_stream_name,
-                    },
-                )
-            else:
-                logger.error(
-                    "Drain worker failed processing message %s (attempt %d/%d). Payload snippet: %s",
-                    message_id,
-                    retry_count,
-                    self.max_retries,
-                    snippet,
-                    extra={
-                        "log_id": f"msg-{message_id}",
-                        "message_id": message_id,
-                        "payload_snippet": snippet,
-                        "error": str(exc),
-                        "traceback": tb_str,
-                        "retry_count": retry_count,
-                    },
-                    exc_info=True,
-                )
+            return await self._retry_or_route_stream_failure(
+                message_id=message_id,
+                raw_payload=payload_str,
+                error_traceback=traceback.format_exc(),
+                error_message=f"Drain worker failed processing: {exc}",
+                snippet=snippet,
+            )
 
     async def run(self) -> None:
         """Continuously consume queued ingest payloads from Redis Streams."""
@@ -487,10 +546,18 @@ class DrainWorker:
         self,
         item: Any,
         message_id: str | None = None,
+        *,
+        _raise_on_parser_error: bool = False,
+        _persist_before_ack: bool = False,
     ) -> list[ParsedLog]:
         """Process one queued payload or log entry."""
         import time
         start_time = time.perf_counter()
+
+        baseline_flushed_records = 0
+        if _persist_before_ack:
+            baseline_stats = self.batch_manager.get_stats()
+            baseline_flushed_records = int(baseline_stats.get("flushed_record_count", 0))
 
         parsed_logs: list[ParsedLog] = []
         errors_before_extract = self.error_count
@@ -511,6 +578,11 @@ class DrainWorker:
                 await self._clear_retry_count(retry_key, metadata)
             except Exception as exc:
                 self.error_count += 1
+                if _raise_on_parser_error:
+                    # Stream ownership handles retry counters and DLQ routing.
+                    # Raising here prevents the outer loop from ACKing a parser
+                    # failure as if the whole payload had succeeded.
+                    raise
                 tb_str = traceback.format_exc()
                 retry_count = await self._increment_retry_count(retry_key, metadata)
 
@@ -593,6 +665,15 @@ class DrainWorker:
                 except Exception:
                     logger.exception("Log parsed callback failed")
 
+        if _persist_before_ack and parsed_logs:
+            if not await self._flush_batch_before_stream_ack(
+                parsed_count=len(parsed_logs),
+                baseline_flushed_records=baseline_flushed_records,
+            ):
+                raise RuntimeError(
+                    "Parsed log persistence did not complete; stream message remains retryable"
+                )
+
         if parsed_logs:
             event = telemetry_event("batch_processed", {
                 "count": len(parsed_logs),
@@ -611,18 +692,61 @@ class DrainWorker:
         self._logs_since_snapshot += len(parsed_logs)
         now = time.monotonic()
         if self._logs_since_snapshot >= 500 or (now - self._last_snapshot_time) >= 60.0:
-            if self._logs_since_snapshot > 0:
+            parser_miner = getattr(self.parser, "_miner", None)
+            if self._logs_since_snapshot > 0 and parser_miner is not None:
+                persistence_handler = getattr(parser_miner, "persistence_handler", None)
                 try:
-                    self.parser._miner.persistence_handler = self.redis_pers
-                    self.parser._miner.save_state()
+                    if self.redis_pers is not None:
+                        parser_miner.persistence_handler = self.redis_pers
+                    if parser_miner.persistence_handler is not None:
+                        parser_miner.save_state("periodic")
                 except Exception as e:
                     logger.error("Failed to save Drain3 snapshot: %s", e)
                 finally:
-                    self.parser._miner.persistence_handler = None
+                    parser_miner.persistence_handler = persistence_handler
             self._logs_since_snapshot = 0
             self._last_snapshot_time = now
 
         return parsed_logs
+
+    async def _flush_batch_before_stream_ack(
+        self,
+        *,
+        parsed_count: int,
+        baseline_flushed_records: int,
+    ) -> bool:
+        """Ensure parsed records reached the configured batch sink.
+
+        ``ParsedLogBatchManager.add`` intentionally buffers below its normal
+        threshold. A Stream delivery cannot be ACKed while those records are
+        only in memory, so the Stream path explicitly flushes and verifies the
+        manager's durable-success counters before returning success.
+        """
+        await self.batch_manager.flush()
+        stats = self.batch_manager.get_stats()
+        pending_records = int(stats.get("current_buffer_size", 0))
+        flushed_records = int(stats.get("flushed_record_count", 0))
+        sink_error = stats.get("last_sink_error")
+
+        if pending_records > 0 or sink_error:
+            logger.error(
+                "Parsed log persistence is not durable yet; pending_records=%d error=%s",
+                pending_records,
+                sink_error,
+            )
+            return False
+
+        if flushed_records < baseline_flushed_records + parsed_count:
+            logger.error(
+                "Parsed log persistence counter did not advance for stream delivery: "
+                "before=%d after=%d expected_at_least=%d",
+                baseline_flushed_records,
+                flushed_records,
+                baseline_flushed_records + parsed_count,
+            )
+            return False
+
+        return True
 
     def get_stats(self) -> dict[str, Any]:
         """Return worker counters and queue visibility."""

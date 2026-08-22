@@ -11,6 +11,7 @@ import os
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.engine import make_url
 
 
 class SMTPSettings(BaseModel):
@@ -29,6 +30,22 @@ def get_smtp_settings() -> SMTPSettings:
         password=os.getenv("SMTP_PASSWORD", ""),
         emails_from_email=os.getenv("EMAILS_FROM_EMAIL", "noreply@logsentinel.local"),
     )
+
+
+def _database_env(primary: str, *aliases: str, default: str) -> str:
+    """Return the first configured database environment variable.
+
+    ``POSTGRES_*`` is the canonical contract.  The ``DB_*`` aliases are kept
+    only as a compatibility bridge for the standalone retraining worker and
+    older local runbooks; all callers still receive one validated settings
+    object.
+    """
+    for name in (primary, *aliases):
+        value = os.getenv(name)
+        if value is not None:
+            return value
+    return default
+
 
 class DatabaseSettings(BaseModel):
     """Validated PostgreSQL connection and pool configuration.
@@ -115,6 +132,41 @@ class DatabaseSettings(BaseModel):
             f"@{self.host}:{self.port}/{self.db_name}?ssl={self.ssl_mode}"
         )
 
+    def asyncpg_connect_kwargs(self) -> dict[str, object]:
+        """Return one consistent connection contract for direct asyncpg users.
+
+        SQLAlchemy's asyncpg dialect accepts the ``postgresql+asyncpg`` URL,
+        while ``asyncpg.connect`` requires a native ``postgresql``/``postgres``
+        DSN or keyword arguments.  Normalising that boundary here prevents
+        workers from silently diverging on host, database, or TLS settings.
+        """
+        common: dict[str, object] = {
+            "timeout": 5.0,
+            "command_timeout": 30.0,
+        }
+
+        if self.database_url_override:
+            parsed = make_url(self.database_url_override)
+            query = dict(parsed.query)
+            ssl_query_value = query.pop("ssl", None)
+            if ssl_query_value is not None and "sslmode" not in query:
+                query["sslmode"] = ssl_query_value
+            native_url = parsed.set(drivername="postgresql", query=query)
+            return {
+                "dsn": native_url.render_as_string(hide_password=False),
+                **common,
+            }
+
+        return {
+            "user": self.user,
+            "password": self.password,
+            "host": self.host,
+            "port": self.port,
+            "database": self.db_name,
+            "ssl": False if self.ssl_mode == "disable" else self.ssl_mode,
+            **common,
+        }
+
 
 def get_database_settings() -> DatabaseSettings:
     """Construct ``DatabaseSettings`` from the current environment.
@@ -124,15 +176,17 @@ def get_database_settings() -> DatabaseSettings:
     instance instead of reading environment variables directly.
     """
     return DatabaseSettings(
-        user=os.getenv("POSTGRES_USER", "logsentinel"),
-        password=os.getenv("POSTGRES_PASSWORD", "logsentinel_secret"),
-        host=os.getenv("POSTGRES_HOST", "127.0.0.1"),
-        port=int(os.getenv("POSTGRES_PORT", "5432")),
-        db_name=os.getenv("POSTGRES_DB", "logsentinel_db"),
+        user=_database_env("POSTGRES_USER", "DB_USER", default="logsentinel"),
+        password=_database_env(
+            "POSTGRES_PASSWORD", "DB_PASS", default="logsentinel_secret"
+        ),
+        host=_database_env("POSTGRES_HOST", "DB_HOST", default="127.0.0.1"),
+        port=int(_database_env("POSTGRES_PORT", "DB_PORT", default="5432")),
+        db_name=_database_env("POSTGRES_DB", "DB_NAME", default="logsentinel_db"),
         pool_size=int(os.getenv("POSTGRES_POOL_SIZE", os.getenv("POOL_SIZE", "20"))),
         max_overflow=int(os.getenv("POSTGRES_MAX_OVERFLOW", os.getenv("POOL_MAX_OVERFLOW", "10"))),
         pool_recycle_seconds=int(os.getenv("POOL_RECYCLE_SECONDS", "1800")),
-        ssl_mode=os.getenv("POSTGRES_SSL_MODE", "disable"),
+        ssl_mode=_database_env("POSTGRES_SSL_MODE", "DB_SSL_MODE", default="disable"),
         echo_sql=os.getenv("SQL_ECHO", "false").lower() == "true",
         profiling_enabled=os.getenv("PROFILING_ENABLED", "false").lower() == "true",
         database_url_override=os.getenv("DATABASE_URL"),

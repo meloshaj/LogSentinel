@@ -9,6 +9,7 @@ from .database import (
     get_session_factory,
     init_engine,
     verify_connectivity,
+    verify_schema_ready,
 )
 from .orm import AnomalyEventRecord, Base, FeatureWindowRecord, LogRecord
 from .settings import (
@@ -24,6 +25,7 @@ __all__: list[str] = [
     "init_engine",
     "dispose_engine",
     "verify_connectivity",
+    "verify_schema_ready",
     "get_engine",
     "get_session_factory",
     "get_async_session",
