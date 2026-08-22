@@ -6,11 +6,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-import pytest
-from fastapi.testclient import TestClient
-from prometheus_client import generate_latest
-
 import backend.app.main as main_module
+import pytest
 from backend.app.observability.metrics import (
     StreamMetricsSampler,
     get_ml_metrics_snapshot,
@@ -26,6 +23,8 @@ from backend.app.observability.metrics import (
 from backend.app.services.batch_manager import ParsedLogBatchManager
 from backend.app.services.benchmarking import BenchmarkingCollector
 from backend.app.websockets.broadcaster import HighLoadBroadcaster
+from fastapi.testclient import TestClient
+from prometheus_client import generate_latest
 
 
 class FakeRedis:

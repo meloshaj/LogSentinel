@@ -13,7 +13,6 @@ from pathlib import Path
 
 import asyncpg
 import pytest
-
 from backend.app.core.orm import Base
 from backend.app.core.settings import DatabaseSettings, get_database_settings
 from scripts.database_lifecycle import (
