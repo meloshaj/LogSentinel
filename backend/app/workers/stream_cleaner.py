@@ -8,7 +8,14 @@ from ..core.constants import LOG_WORKERS_GROUP
 logger = logging.getLogger("logsentinel.workers.stream_cleaner")
 
 class StreamCleanerWorker:
-    """Background worker that reclaims orphaned stream messages and trims the PEL."""
+    """Compatibility lifecycle for the retired destructive PEL cleaner.
+
+    ``DrainWorker.recover_pending_messages`` is the single owner of claiming
+    and processing stale deliveries.  A second worker must not claim and ACK
+    the same entries because that discards legitimate work.  The class remains
+    available so existing startup wiring and tests retain their public shape,
+    but it intentionally performs no recovery operation.
+    """
     
     def __init__(
         self,
@@ -35,13 +42,10 @@ class StreamCleanerWorker:
     def start(self) -> None:
         if self._task and not self._task.done():
             return
-        
-        if not self.redis_client:
-            logger.warning("StreamCleanerWorker started without Redis client")
-            return
-            
-        self._task = asyncio.create_task(self._run_loop(), name="stream-cleaner")
-        logger.info("StreamCleanerWorker started")
+
+        logger.info(
+            "StreamCleanerWorker is passive; DrainWorker owns stale pending-entry recovery"
+        )
 
     async def stop(self) -> None:
         if self._task:
@@ -65,48 +69,10 @@ class StreamCleanerWorker:
                 logger.exception("Unexpected error in StreamCleanerWorker loop")
                 
     async def _clean_orphans(self) -> None:
-        if not self.redis_client:
-            return
-            
-        start_id = "0-0"
-        total_claimed = 0
-        
-        while True:
-            try:
-                # XAUTOCLAIM key group consumer min-idle-time start [COUNT count] [JUSTID]
-                result = await self.redis_client.xautoclaim(
-                    name=self.stream_name,
-                    groupname=self.group_name,
-                    consumername=self.consumer_name,
-                    min_idle_time=self.min_idle_time_ms,
-                    start_id=start_id,
-                    count=self.batch_size,
-                    justid=True
-                )
-                
-                # Redis-py 5.0.0+ returns a tuple: (next_start_id, [message_id, ...])
-                if isinstance(result, tuple) and len(result) >= 2:
-                    next_start_id, claimed_ids = result[0], result[1]
-                else:
-                    logger.warning("Unexpected XAUTOCLAIM response format: %s", result)
-                    break
-                    
-                if not claimed_ids:
-                    break
-                    
-                # We simply acknowledge these dead messages to clear them from the PEL
-                await self.redis_client.xack(self.stream_name, self.group_name, *claimed_ids)
-                total_claimed += len(claimed_ids)
-                
-                # If next_start_id is "0-0", there are no more pending messages to check
-                if next_start_id == b"0-0" or next_start_id == "0-0":
-                    break
-                    
-                start_id = next_start_id
-                
-            except Exception:
-                logger.exception("Failed to run XAUTOCLAIM")
-                break
-                
-        if total_claimed > 0:
-            logger.info("Cleaned %d orphaned messages from %s PEL", total_claimed, self.stream_name)
+        # Deliberately do not call XAUTOCLAIM/XACK here.  Recovery and terminal
+        # handling are performed by DrainWorker._process_stream_message.
+        logger.debug(
+            "Skipping passive stream-cleaner sweep for %s/%s; DrainWorker is the recovery owner",
+            self.stream_name,
+            self.group_name,
+        )

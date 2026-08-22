@@ -7,9 +7,6 @@ from fastapi.testclient import TestClient
 import backend.app.main as main_module
 from backend.app.main import app
 
-
-
-
 client = TestClient(app)
 
 VALID_KEY = "test-ingest-key"
@@ -74,6 +71,7 @@ def test_lifespan_stops_drain_before_features_and_database(monkeypatch) -> None:
             events.append("feature.stop")
             
     class FakeEventManager:
+        def set_redis_client(self, *args, **kwargs): pass
         def start(self) -> None: pass
         async def stop(self) -> None: pass
         
@@ -103,6 +101,9 @@ def test_lifespan_stops_drain_before_features_and_database(monkeypatch) -> None:
     async def fake_verify_connectivity() -> None:
         pass
 
+    async def fake_verify_schema_ready() -> None:
+        events.append("database.schema")
+
     async def fake_ensure_stream_and_group(redis_client, stream_name, group_name) -> None:
         pass
 
@@ -111,6 +112,7 @@ def test_lifespan_stops_drain_before_features_and_database(monkeypatch) -> None:
     monkeypatch.setattr(main_module, "get_engine", lambda: FakeEngine())
     monkeypatch.setattr(main_module, "dispose_engine", fake_dispose_engine)
     monkeypatch.setattr(main_module, "verify_connectivity", fake_verify_connectivity)
+    monkeypatch.setattr(main_module, "verify_schema_ready", fake_verify_schema_ready)
     monkeypatch.setattr(main_module, "ensure_stream_and_group", fake_ensure_stream_and_group)
     monkeypatch.setattr(main_module, "drain_worker", FakeDrainWorker())
     monkeypatch.setattr(main_module, "feature_worker", FakeFeatureWorker())
@@ -243,7 +245,7 @@ def test_ingest_log_preserves_queue_full_response(monkeypatch) -> None:
         def xlen(self, *args, **kwargs):
             pass
         async def execute(self):
-            raise Exception("Simulated Redis failure")
+            raise RuntimeError("Simulated Redis failure")
 
     class MockRedis:
         def pipeline(self, transaction=False):
@@ -258,6 +260,3 @@ def test_ingest_log_preserves_queue_full_response(monkeypatch) -> None:
     body = response.json()
     assert body["accepted"] is False
     assert body["queue_size"] == 0
-
-
-

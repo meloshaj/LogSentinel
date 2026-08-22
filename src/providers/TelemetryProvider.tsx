@@ -39,6 +39,12 @@ import type { LogEntry, LogLevel } from "../types/monitoring";
 import type { TelemetryEvent } from "../types/telemetry";
 import { FEATURE_FLAGS } from "../config/features";
 import { mockTelemetry } from "../services/mockTelemetry";
+import {
+  AuthenticationError,
+  authenticatedWebSocketUrl,
+  clearAuthToken,
+  fetchAuthenticated,
+} from "../utils/auth";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -418,7 +424,7 @@ async function fetchBackfillLogs(): Promise<LogEntry[]> {
 
   for (const url of urls) {
     try {
-      const response = await fetch(url);
+      const response = await fetchAuthenticated(url);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -435,6 +441,7 @@ async function fetchBackfillLogs(): Promise<LogEntry[]> {
       }
       return entries;
     } catch (err) {
+      if (err instanceof AuthenticationError) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
@@ -452,7 +459,7 @@ async function fetchBackfillTrackingLoops(): Promise<TrackingLoopEvent[]> {
 
   for (const url of urls) {
     try {
-      const response = await fetch(url);
+      const response = await fetchAuthenticated(url);
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -467,6 +474,7 @@ async function fetchBackfillTrackingLoops(): Promise<TrackingLoopEvent[]> {
       }
       return entries;
     } catch (err) {
+      if (err instanceof AuthenticationError) throw err;
       lastError = err instanceof Error ? err : new Error(String(err));
     }
   }
@@ -829,7 +837,16 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
       setConnectionUrl(candidate);
       activeCandidateRef.current = index;
 
-      const socket = new WebSocket(candidate);
+      // Resolve the current token at every connect/reconnect attempt. The
+      // tokenized URL is used only by the WebSocket constructor; UI state keeps
+      // the token-free candidate so it cannot be rendered or logged accidentally.
+      const authenticatedCandidate = authenticatedWebSocketUrl(candidate);
+      if (!authenticatedCandidate) {
+        updateConnectionState("error");
+        return;
+      }
+
+      const socket = new WebSocket(authenticatedCandidate);
       socketRef.current = socket;
 
       socket.onopen = () => {
@@ -858,11 +875,21 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
         updateConnectionState("error");
       };
 
-      socket.onclose = () => {
+      socket.onclose = (closeEvent) => {
         if (cancelled || socketRef.current !== socket) return;
         socketRef.current = null;
 
         if (!reconnectEnabled) return;
+
+        // The backend uses 1008 for an invalid/expired JWT. Clear the stale
+        // credential and stop the reconnect loop; REST backfill follows the
+        // same clear-and-surface-auth-error contract.
+        if (closeEvent.code === 1008) {
+          clearAuthToken();
+          reconnectEnabled = false;
+          updateConnectionState("error");
+          return;
+        }
 
         if (connectionStateRef.current === "connected") {
           updateConnectionState("disconnected");

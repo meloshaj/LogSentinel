@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import random
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from ..models import FeatureVector
-from .anomaly_detector import IsolationForestAnomalyDetector
+from .anomaly_detector import IsolationForestAnomalyDetector, get_canonical_model_path
 
 
 def build_sample_feature_vectors() -> list[FeatureVector]:
@@ -85,7 +84,7 @@ def main() -> None:
     detector = IsolationForestAnomalyDetector(random_state=42, contamination=0.05)
     detector.train(vectors)
 
-    output_path = Path(__file__).resolve().parents[2] / "models" / "isolation_forest.pkl"
+    output_path = get_canonical_model_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     detector.save_model(output_path)
     print(f"Saved model to {output_path} (trained on {len(vectors)} samples)")

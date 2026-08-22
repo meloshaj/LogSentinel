@@ -16,7 +16,7 @@ jobs:
     # Provision required backend dependencies
     services:
       postgres:
-        image: timescale/timescaledb:latest-pg16
+        image: timescale/timescaledb:2.17.2-pg16
         env:
           POSTGRES_USER: logsentinel
           POSTGRES_PASSWORD: logsentinel_secret
@@ -105,7 +105,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Backend Image
-        run: docker build -t logsentinel-backend:test -f backend/Dockerfile .
+        run: docker build -t logsentinel-backend:test -f backend/Dockerfile backend
 
       - name: Run Trivy Vulnerability Scanner
         uses: aquasecurity/trivy-action@master

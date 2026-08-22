@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Lightweight local/demo scrape target.  The backend service name is shared
+  # by docker-compose.yml and docker-compose.demo.yml.  Production monitoring
+  # topology and retention remain deployment concerns for Audit 4.
+  - job_name: logsentinel-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - backend:8000

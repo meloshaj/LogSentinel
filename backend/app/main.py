@@ -1,10 +1,10 @@
+import asyncio
 import json
 import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -19,25 +19,26 @@ from fastapi import (
 )
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_client import Counter, Gauge
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field, ValidationError
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
-from prometheus_fastapi_instrumentator import Instrumentator
-from prometheus_client import Counter, Gauge
 
 ingest_request_rate = Counter("logsentinel_ingest_requests_total", "Total ingestion requests", ["endpoint", "status"])
 batch_ingestion_size = Counter("logsentinel_batch_ingestion_size_total", "Total logs ingested", ["endpoint"])
 active_websocket_connections = Gauge("logsentinel_active_websocket_connections", "Number of active WebSocket connections")
 
 from .core import (
-    Base,
     dispose_engine,
     get_database_settings,
     get_engine,
     init_engine,
     verify_connectivity,
+    verify_schema_ready,
 )
 from .core.constants import LOG_WORKERS_GROUP
 from .core.redis import close_redis_pool, init_redis_pool
@@ -81,8 +82,19 @@ async def ensure_stream_and_group(
             )
         else:
             raise
-from .ml.anomaly_detector import IsolationForestAnomalyDetector
+from .ml.anomaly_detector import (
+    IsolationForestAnomalyDetector,
+    get_canonical_model_path,
+)
 from .ml.feature_extractor import WindowConfig
+from .observability.metrics import (
+    observe_benchmarking_snapshot,
+    observe_worker_stats,
+    record_drain_worker_stats,
+    record_feature_worker_stats,
+    refresh_stream_metrics,
+    set_ml_status,
+)
 from .repositories.feature_repository import FeatureRepository
 from .repositories.log_repository import LogRepository
 from .repositories.tracking_repository import TrackingRepository
@@ -168,11 +180,14 @@ batch_manager = ParsedLogBatchManager(
     benchmarking_collector=benchmarking_collector,
 )
 
-DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[1] / "models" / "isolation_forest.joblib"
+DEFAULT_MODEL_PATH = get_canonical_model_path()
 
 anomaly_detector: IsolationForestAnomalyDetector | None = None
 if DEFAULT_MODEL_PATH.exists():
-    anomaly_detector = IsolationForestAnomalyDetector.load_model(DEFAULT_MODEL_PATH)
+    try:
+        anomaly_detector = IsolationForestAnomalyDetector.load_model(DEFAULT_MODEL_PATH)
+    except Exception:
+        logger.exception("Failed to load canonical Isolation Forest artifact from %s", DEFAULT_MODEL_PATH)
 else:
     logger.info("No pretrained isolation forest model found at %s; feature worker will run without anomaly predictions until trained", DEFAULT_MODEL_PATH)
 
@@ -226,6 +241,54 @@ stream_cleaner = StreamCleanerWorker(
 )
 
 
+async def _observability_loop(app: FastAPI) -> None:
+    """Publish bounded worker, stream, ML, and benchmark state periodically.
+
+    Redis introspection is deliberately kept off request paths and sampled at
+    a low fixed cadence.  All other updates reuse the workers' existing stats
+    snapshots, so observability cannot introduce a second queue or processing
+    loop.
+    """
+    while True:
+        try:
+            redis_client = getattr(app.state, "redis", None)
+            if redis_client is not None:
+                await refresh_stream_metrics(
+                    redis_client,
+                    stream_name=LOG_STREAM_NAME,
+                    group_name=LOG_WORKERS_GROUP,
+                    min_interval_seconds=5.0,
+                )
+
+            drain_stats = drain_worker.get_stats()
+            record_drain_worker_stats(drain_stats, parser_stats=drain_parser.get_stats())
+            record_feature_worker_stats(feature_worker.get_stats())
+
+            event_stats_getter = getattr(event_manager, "get_stats", None)
+            if callable(event_stats_getter):
+                observe_worker_stats("event_manager", event_stats_getter())
+
+            model_health = feature_worker.get_model_health()
+            set_ml_status(
+                loaded=bool(model_health.get("model_loaded", False)),
+                model_version=model_health.get("model_version"),
+                model_path=model_health.get("artifact_path"),
+                model_age_seconds=model_health.get("model_age_seconds"),
+                inference_total=model_health.get("inference_total"),
+                inference_errors_total=model_health.get("inference_errors_total"),
+                anomalies_total=model_health.get("anomalies_total"),
+            )
+            observe_benchmarking_snapshot(benchmarking_collector.get_health_metrics())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Metrics are diagnostic. A malformed worker snapshot or a
+            # transient Redis command failure must never stop ingestion.
+            logger.warning("Observability sampling failed", exc_info=True)
+
+        await asyncio.sleep(5.0)
+
+
 _JWT_DEV_DEFAULTS = frozenset({
     "logsentinel_jwt_secret_key_change_me_in_prod",
     "change_me",
@@ -266,25 +329,40 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # --- Startup: verify database connectivity (exponential backoff probe) ---
     await verify_connectivity()
 
-    # Auto-create all tables in the database (e.g. users table)
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Schema administration belongs to the explicit bootstrap/migration
+    # lifecycle (scripts/database_lifecycle.py). Runtime startup only checks
+    # that the canonical Timescale contract is already present.
+    await verify_schema_ready()
 
     # --- Startup: idempotent Valkey stream & consumer group bootstrap ---
     await ensure_stream_and_group(app.state.redis, LOG_STREAM_NAME, LOG_WORKERS_GROUP)
 
     drain_worker.set_redis_client(app.state.redis)
     stream_cleaner.set_redis_client(app.state.redis)
+    event_manager_set_redis = getattr(event_manager, "set_redis_client", None)
+    if callable(event_manager_set_redis):
+        event_manager_set_redis(app.state.redis)
     drain_worker.start()
     feature_worker.start()
     event_manager.start()
     stream_cleaner.start()
     telemetry_manager.set_redis_client(app.state.redis)
     telemetry_manager.start()
+    app.state.observability_task = asyncio.create_task(
+        _observability_loop(app),
+        name="logsentinel-observability",
+    )
     try:
         yield
     finally:
+        observability_task = getattr(app.state, "observability_task", None)
+        if observability_task is not None:
+            observability_task.cancel()
+            try:
+                await observability_task
+            except asyncio.CancelledError:
+                pass
+            app.state.observability_task = None
         # Drain parsing first so feature extraction receives every accepted log.
         await stream_cleaner.stop()
         await drain_worker.stop()
@@ -543,13 +621,16 @@ async def telemetry_websocket(websocket: WebSocket, token: str | None = None) ->
 
     from .security.auth import JWT_ALGORITHM, JWT_SECRET_KEY
 
+    telemetry_manager.record_connection_attempt()
     if not token:
+        telemetry_manager.record_authentication_failure()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
         
     try:
         pyjwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
     except pyjwt.PyJWTError:
+        telemetry_manager.record_authentication_failure()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -586,9 +667,90 @@ async def validation_exception_handler(_: object, exc: RequestValidationError) -
     summary="Service Health Check",
     response_model=dict[str, str],
 )
+@app.get("/live", include_in_schema=False)
 async def health_check() -> dict[str, str]:
     """Health check endpoint for reverse proxy, load balancers, and container monitoring."""
     return {"status": "ok", "service": "logsentinel-backend"}
+
+
+def _worker_is_running(worker: Any) -> bool:
+    """Read worker state without requiring a specific worker implementation."""
+    stats_getter = getattr(worker, "get_stats", None)
+    if callable(stats_getter):
+        try:
+            return bool(stats_getter().get("running", False))
+        except Exception:
+            return False
+    return bool(getattr(worker, "_running", False))
+
+
+@app.get(
+    "/readiness",
+    tags=["Health"],
+    summary="Dependency-aware readiness",
+    response_model=dict[str, Any],
+)
+@app.get("/ready", include_in_schema=False)
+async def readiness_check(request: Request) -> JSONResponse:
+    """Report whether the API can serve the asynchronous pipeline.
+
+    ``/health`` remains a cheap process liveness endpoint. This endpoint does
+    bounded Redis/SQL probes and includes model and worker state so an absent
+    Isolation Forest is distinguishable from a healthy zero-anomaly run.
+    """
+    redis_ok = False
+    redis_client = getattr(request.app.state, "redis", None)
+    if redis_client is not None:
+        try:
+            await redis_client.ping()
+            redis_ok = True
+        except Exception:
+            logger.warning("Readiness Redis probe failed", exc_info=True)
+
+    database_ok = False
+    try:
+        engine = get_engine()
+        async with engine.connect() as connection:
+            await connection.execute(text("SELECT 1"))
+        database_ok = True
+    except Exception:
+        logger.warning("Readiness database probe failed", exc_info=True)
+
+    worker_status = {
+        "drain": _worker_is_running(drain_worker),
+        "feature": _worker_is_running(feature_worker),
+        "event": _worker_is_running(event_manager),
+    }
+
+    model_health_getter = getattr(feature_worker, "get_model_health", None)
+    if callable(model_health_getter):
+        model_health = model_health_getter()
+    elif anomaly_detector is not None:
+        model_health = anomaly_detector.get_health(DEFAULT_MODEL_PATH)
+    else:
+        model_health = {
+            "model_loaded": False,
+            "model_version": None,
+            "model_age_seconds": None,
+            "artifact_path": str(DEFAULT_MODEL_PATH),
+            "inference_total": 0,
+            "inference_errors_total": 0,
+            "anomalies_total": 0,
+        }
+
+    ready = redis_ok and database_ok and all(worker_status.values())
+    payload = {
+        "status": "ready" if ready else "not_ready",
+        "service": "logsentinel-backend",
+        "dependencies": {
+            "redis": redis_ok,
+            "database": database_ok,
+        },
+        "workers": worker_status,
+        "model": model_health,
+        "model_loaded": bool(model_health.get("model_loaded", False)),
+    }
+    return JSONResponse(status_code=200 if ready else 503, content=payload)
 
 
 @app.post(

@@ -64,8 +64,28 @@ docker compose -f docker-compose.demo.yml up --build -d
 python scripts/trigger_demo_incident.py
 
 # 3. Open your browser
-# Navigate to http://localhost:5173 to watch the incident unfold in real-time.
+# Navigate to http://localhost:8080 to watch the incident unfold in real-time.
 ```
+
+### Runtime contracts
+
+The TimescaleDB schema is bootstrapped from `scripts/init.sql` and advanced
+only through the allowlisted lifecycle in `scripts/database_lifecycle.py`:
+
+```bash
+python scripts/database_lifecycle.py --apply
+```
+
+The backend verifies that lifecycle before serving traffic; it does not run
+SQLAlchemy `create_all()` at runtime. `/health` (also `/live`) is liveness,
+while `/readiness` (also `/ready`) checks Redis, the database, and workers.
+Prometheus-compatible diagnostics are available at `/metrics`.
+
+The active Isolation Forest artifact is
+`backend/models/isolation_forest.joblib`. Training and retraining write this
+path; the older `.pkl` file is retained as historical input and is not loaded
+implicitly. To adopt that legacy artifact, use the explicit conversion tool:
+`python scripts/convert_model_artifact.py`.
 
 ## 🔌 Supported Ingestion Methods
 

@@ -75,7 +75,7 @@ class IsolationForestAnomalyDetectorTests(unittest.TestCase):
         self.assertTrue(all(0.0 <= item["anomaly_score"] <= 1.0 for item in batch_predictions))
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_path = Path(tmpdir) / "isolation_forest.pkl"
+            model_path = Path(tmpdir) / "isolation_forest.joblib"
             detector.save_model(model_path)
             self.assertTrue(model_path.exists())
 

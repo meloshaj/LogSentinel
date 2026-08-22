@@ -2,14 +2,12 @@
 
 import json
 import logging
-from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 from ..core.constants import LOG_STREAM_NAME
-from ..core.dependencies import get_redis_client
 from ..models import LogEntry
 from ..schemas.ingest import IngestPayload, IngestResponse
 from ..security import require_ingestion_api_key
@@ -98,7 +96,7 @@ async def ingest_log_endpoint(
         status_label = "202" if accepted else "503"
         ingest_request_rate.labels(endpoint="/ingest-log", status=status_label).inc()
     except Exception:
-        pass
+        logger.debug("Unable to record ingestion metrics", exc_info=True)
 
     logger.info(
         "Accepted log payload",

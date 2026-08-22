@@ -35,6 +35,7 @@ beforeEach(() => {
   fetchMock = vi.fn();
   (globalThis as any).fetch = fetchMock;
   (globalThis as any).WebSocket = MockWebSocket;
+  localStorage.setItem("authToken", "test-token");
   vi.useFakeTimers({ shouldAdvanceTime: true });
 });
 
@@ -157,6 +158,36 @@ describe("deduplicateAndMerge (ULID-based)", () => {
 // ---------------------------------------------------------------------------
 
 describe("TelemetryProvider", () => {
+  it("attaches the current JWT to protected REST backfill and WebSocket requests", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ logs: [] }),
+    });
+
+    render(
+      <TelemetryProvider>
+        <TestConsumer />
+      </TelemetryProvider>,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(20);
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    for (const call of fetchMock.mock.calls) {
+      const headers = call[1]?.headers as Headers;
+      expect(headers.get("Authorization")).toBe("Bearer test-token");
+    }
+
+    expect(mockWsInstances).toHaveLength(1);
+    const socketUrl = new URL(mockWsInstances[0].url);
+    expect(socketUrl.searchParams.get("token")).toBe("test-token");
+    expect(mockWsInstances[0].url).not.toContain("Bearer");
+  });
+
   it("Test 1: Deduplication when REST and WebSocket push logs with the same ULID", async () => {
     const SHARED_ULID = "01J4Q3R5MXABCDEF12345678";
 
@@ -169,6 +200,10 @@ describe("TelemetryProvider", () => {
           createRestLog("01J4Q3R4LXABCDEF12345677", "rest only log", "2026-08-05T11:59:00.000Z"),
         ],
       }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
     });
 
     render(
@@ -276,6 +311,10 @@ describe("TelemetryProvider", () => {
         ),
       }),
     });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
+    });
 
     render(
       <TelemetryProvider>
@@ -373,6 +412,10 @@ describe("TelemetryProvider", () => {
           createRestLog(ULID_B, "shared message B", "2026-08-05T12:00:01.000Z"),
         ],
       }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => [],
     });
 
     render(

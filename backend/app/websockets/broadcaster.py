@@ -7,6 +7,13 @@ from typing import Any
 from fastapi import WebSocket
 from redis.asyncio import Redis
 
+from ..observability.metrics import (
+    record_websocket_authentication_failure,
+    record_websocket_connection_attempt,
+    record_websocket_frame_sent,
+    record_websocket_send_failure,
+)
+
 logger = logging.getLogger("logsentinel.broadcaster")
 
 
@@ -73,6 +80,14 @@ class HighLoadBroadcaster:
 
     def connection_count(self) -> int:
         return len(self._connections)
+
+    def record_connection_attempt(self) -> None:
+        """Route hook for one WebSocket handshake attempt."""
+        record_websocket_connection_attempt()
+
+    def record_authentication_failure(self) -> None:
+        """Route hook for one rejected WebSocket authentication attempt."""
+        record_websocket_authentication_failure()
 
     async def broadcast(self, event: dict[str, Any]) -> None:
         """Publish the event to Redis Pub/Sub."""
@@ -154,7 +169,9 @@ class HighLoadBroadcaster:
                 for websocket in connections:
                     try:
                         await websocket.send_json(consolidated_payload)
+                        record_websocket_frame_sent()
                     except Exception:
+                        record_websocket_send_failure()
                         stale_connections.append(websocket)
                         logger.exception("Failed to send consolidated telemetry frame to WebSocket client")
 

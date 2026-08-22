@@ -115,7 +115,11 @@ async def ingest_bulk(
         stream_id_last = results[-1] if results else None
         
         try:
-            from ..main import benchmarking_collector, ingest_request_rate, batch_ingestion_size
+            from ..main import (
+                batch_ingestion_size,
+                benchmarking_collector,
+                ingest_request_rate,
+            )
             benchmarking_collector.record_ingestion(len(logs))
             ingest_request_rate.labels(endpoint="/api/v1/ingest/bulk", status="202").inc()
             batch_ingestion_size.labels(endpoint="/api/v1/ingest/bulk").inc(len(logs))
