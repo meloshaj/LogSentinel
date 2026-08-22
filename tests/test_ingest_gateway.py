@@ -7,9 +7,6 @@ from fastapi.testclient import TestClient
 import backend.app.main as main_module
 from backend.app.main import app
 
-
-
-
 client = TestClient(app)
 
 VALID_KEY = "test-ingest-key"
@@ -248,7 +245,7 @@ def test_ingest_log_preserves_queue_full_response(monkeypatch) -> None:
         def xlen(self, *args, **kwargs):
             pass
         async def execute(self):
-            raise Exception("Simulated Redis failure")
+            raise RuntimeError("Simulated Redis failure")
 
     class MockRedis:
         def pipeline(self, transaction=False):
@@ -263,4 +260,3 @@ def test_ingest_log_preserves_queue_full_response(monkeypatch) -> None:
     body = response.json()
     assert body["accepted"] is False
     assert body["queue_size"] == 0
-

@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-import backend.app.workers.drain_worker as drain_worker_module
 import pytest
+from drain3.file_persistence import FilePersistence
+
+import backend.app.workers.drain_worker as drain_worker_module
 from backend.app.ml.anomaly_detector import (
     CANONICAL_MODEL_FILENAME,
     IsolationForestAnomalyDetector,
@@ -23,7 +25,6 @@ from backend.app.services.drain_parser import (
 from backend.app.workers.drain_worker import DrainWorker, StreamMessageOutcome
 from backend.app.workers.feature_worker import FeatureExtractionWorker
 from backend.app.workers.stream_cleaner import StreamCleanerWorker
-from drain3.file_persistence import FilePersistence
 
 
 class FailingParser:
