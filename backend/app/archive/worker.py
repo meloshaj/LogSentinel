@@ -5,13 +5,14 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import text
+
 from backend.app.archive.manifest import generate_sidecar_manifest
 from backend.app.archive.s3_client import get_s3_client
 from backend.app.archive.serializer import async_serialize_to_parquet
 from backend.app.archive.verifier import ArchiveVerifier
 from backend.app.core.database import get_engine
 from backend.app.core.settings import get_archive_settings
-from sqlalchemy import text
 
 logger = logging.getLogger("logsentinel.archive.worker")
 

@@ -5,8 +5,9 @@ import os
 import threading
 from typing import BinaryIO
 
-from backend.app.core.settings import get_archive_settings
 from botocore.exceptions import ClientError
+
+from backend.app.core.settings import get_archive_settings
 
 
 class S3StorageClient(abc.ABC):
