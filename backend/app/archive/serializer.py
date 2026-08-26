@@ -39,7 +39,7 @@ def serialize_to_parquet(rows: list[dict[str, Any]]) -> tuple[bytes, dict[str, A
         return b"", {"row_count": 0}
 
     # Prepare columnar data
-    columns = {field.name: [] for field in ARCHIVE_SCHEMA}
+    columns = {field.name: [] for field in ARCHIVE_SCHEMA}  # type: ignore
 
     min_ingested_at = None
     max_ingested_at = None

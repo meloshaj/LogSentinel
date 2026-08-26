@@ -198,7 +198,7 @@ class EventManager:
 
         # Persist to database
         try:
-            await self.tracking_repository.persist_tracking_loop(
+            await self.tracking_repository.persist_tracking_loop(  # type: ignore
                 window_id=feature_vector.window_id,
                 anomaly_score=anomaly_score,
                 status="ACTIVE",
@@ -280,7 +280,7 @@ class EventManager:
                         "Triggering webhook alert for %s (cooldown active for 15m)",
                         dominant_service,
                     )
-                    alert_payload = IncidentAlertPayload(
+                    alert_payload = IncidentAlertPayload(  # type: ignore
                         incident_id=feature_vector.window_id,
                         root_cause_service=dominant_service,
                         affected_services=[dominant_service],

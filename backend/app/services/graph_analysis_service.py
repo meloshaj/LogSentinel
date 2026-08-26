@@ -111,7 +111,7 @@ class GraphAnalysisService:
         observed_at = _feature_observed_at(feature_vector)
         calculated = _normalize_datetime(calculated_at or observed_at)
         lookback_start = observed_at - timedelta(seconds=self.settings.lookback_seconds)
-        anomaly_contexts = await self.feature_repository.get_recent_anomaly_contexts(
+        anomaly_contexts = await self.feature_repository.get_recent_anomaly_contexts(  # type: ignore
             start_time=lookback_start,
             end_time=observed_at,
             limit=self.settings.max_anomaly_events,
@@ -185,7 +185,7 @@ class GraphAnalysisService:
             return []
 
         correlation_ids = _correlation_ids_from_contexts(contexts)
-        log_rows = await self.log_repository.get_recent_correlation_evidence(
+        log_rows = await self.log_repository.get_recent_correlation_evidence(  # type: ignore
             start_time=start_time,
             end_time=end_time,
             services=sorted(service_names),

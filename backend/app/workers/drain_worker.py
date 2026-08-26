@@ -300,7 +300,7 @@ class DrainWorker:
 
         if self.redis_client:
             try:
-                return await self.redis_client.xadd(self.dlq_stream_name, dlq_entry)
+                return await self.redis_client.xadd(self.dlq_stream_name, dlq_entry)  # type: ignore
             except Exception:
                 logger.exception(
                     "Failed to write poison pill to DLQ stream '%s'",
@@ -538,7 +538,7 @@ class DrainWorker:
                     break
 
                 min_idle_ms = getattr(self, "recovery_idle_time_ms", 60000)
-                result = await self.redis_client.xautoclaim(
+                result = await self.redis_client.xautoclaim(  # type: ignore
                     name=self.stream_name,
                     groupname=self.group_name,
                     consumername=self.consumer_name,

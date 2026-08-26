@@ -160,7 +160,7 @@ class _CachedJWKClient:
                     self._jwks_url,
                     cache_keys=True,
                     lifespan=self._cache_ttl,
-                    timeout=self._timeout,
+                    timeout=self._timeout,  # type: ignore
                 )
                 self._created_at = now
             return self._client

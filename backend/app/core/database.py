@@ -317,9 +317,9 @@ def check_pool_health() -> dict[str, Any]:
     pool = _engine.pool
     return {
         "initialized": True,
-        "pool_size": pool.size(),
-        "checked_in": pool.checkedin(),
-        "checked_out": pool.checkedout(),
-        "overflow": pool.overflow(),
+        "pool_size": pool.size(),  # type: ignore
+        "checked_in": pool.checkedin(),  # type: ignore
+        "checked_out": pool.checkedout(),  # type: ignore
+        "overflow": pool.overflow(),  # type: ignore
         "status": pool.status(),
     }

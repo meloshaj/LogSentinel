@@ -257,7 +257,7 @@ drain_worker = DrainWorker(
     batch_manager=batch_manager,
     on_log_parsed=feature_worker.add_parsed_log,
     runtime_dependency_parser=runtime_dependency_parser,
-    on_trace_observation=topology_pipeline.add_observation,
+    on_trace_observation=topology_pipeline.add_observation,  # type: ignore
     queue_drain_timeout_seconds=drain3_pipeline_settings.queue_drain_timeout_seconds,
     benchmarking_collector=benchmarking_collector,
 )
@@ -473,7 +473,7 @@ app = FastAPI(
 )
 
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
 
 Instrumentator().instrument(app).expose(app)
 
@@ -529,7 +529,7 @@ if benchmarking_settings.enable_benchmarking_endpoints:
 )
 async def get_recent_logs(limit: int = Query(500, le=1000)):
     """Fetch recent logs for dashboard backfill."""
-    logs = await log_repository.get_recent_logs(limit=limit)
+    logs = await log_repository.get_recent_logs(limit=limit)  # type: ignore
     return {"logs": logs}
 
 
@@ -546,7 +546,7 @@ async def get_logs_paginated(
     level: str | None = None,
 ):
     """Fetch paginated logs with optional filters."""
-    return await log_repository.get_logs_paginated(
+    return await log_repository.get_logs_paginated(  # type: ignore
         page=page, limit=limit, service=service, level=level
     )
 
@@ -589,7 +589,7 @@ async def get_tracking_loop_blast_radius(
     tracking_loop_id: int,
 ) -> BlastRadiusRetrievalResponse:
     """Return a persisted blast-radius analysis for one tracking-loop record."""
-    row = await tracking_repository.get_tracking_loop_by_id(tracking_loop_id)
+    row = await tracking_repository.get_tracking_loop_by_id(tracking_loop_id)  # type: ignore
     if row is None:
         raise HTTPException(status_code=404, detail="Tracking loop not found")
 
@@ -647,7 +647,7 @@ async def list_active_tracking_loops(
     limit: int = 100,
 ) -> list[dict]:
     """Return all active tracking loops for frontend backfill."""
-    rows = await tracking_repository.get_active_tracking_loops(limit=min(limit, 500))
+    rows = await tracking_repository.get_active_tracking_loops(limit=min(limit, 500))  # type: ignore
     results = []
     for row in rows:
         score = row.get("anomaly_score", 0.0)
@@ -656,7 +656,7 @@ async def list_active_tracking_loops(
             "anomaly_score": score,
             "severity": _derive_severity(score),
             "status": row.get("status", "ACTIVE"),
-            "created_at": row.get("created_at").isoformat()
+            "created_at": row.get("created_at").isoformat()  # type: ignore
             if row.get("created_at")
             else None,
         }

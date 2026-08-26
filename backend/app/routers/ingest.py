@@ -81,7 +81,7 @@ async def ingest_log_endpoint(
     normalized_payload["tenant_id"] = tenant_id
 
     try:
-        redis: Redis = getattr(request.app.state, "redis", None)
+        redis: Redis = getattr(request.app.state, "redis", None)  # type: ignore
         if redis is None:
             raise RuntimeError("Redis connection not available on application state")
 

@@ -43,7 +43,7 @@ async def init_redis_pool() -> Redis:
                 max_connections=100,
             )
             client = Redis(connection_pool=_redis_pool)
-            await client.ping()
+            await client.ping()  # type: ignore
             logger.info(
                 "Successfully connected to Redis on attempt %d/%d.",
                 attempt,

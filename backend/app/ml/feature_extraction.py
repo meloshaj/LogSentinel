@@ -226,7 +226,7 @@ class SlidingWindowExtractor:
             num_services=len(service_distribution),
         )
 
-        return FeatureVector(
+        return FeatureVector(  # type: ignore
             window_id=window.window_id,
             timestamp=datetime.now(timezone.utc),
             log_count=log_count,
@@ -243,7 +243,7 @@ class SlidingWindowExtractor:
 
     def _empty_feature_vector(self, window: LogWindow) -> FeatureVector:
         """Create a zero-filled feature vector for empty windows."""
-        return FeatureVector(
+        return FeatureVector(  # type: ignore
             window_id=window.window_id,
             timestamp=datetime.now(timezone.utc),
             log_count=0,

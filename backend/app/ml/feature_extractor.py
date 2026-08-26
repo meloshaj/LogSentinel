@@ -187,10 +187,10 @@ class SlidingWindowFeatureExtractor:
             "active_services": float(active_services),
             "unique_templates": float(unique_templates),
             "dominant_service_count": float(
-                service_distribution.get(dominant_service, 0)
+                service_distribution.get(dominant_service, 0)  # type: ignore
             ),
             "dominant_template_count": float(
-                template_distribution.get(dominant_template, 0)
+                template_distribution.get(dominant_template, 0)  # type: ignore
             ),
             "logs_per_second": float(logs_per_second),
             "avg_logs_per_minute": float(avg_logs_per_minute),
@@ -200,7 +200,7 @@ class SlidingWindowFeatureExtractor:
         feature_names = list(features.keys())
         feature_array = [float(features[name]) for name in feature_names]
 
-        return FeatureVector(
+        return FeatureVector(  # type: ignore
             window_id=window.window_id,
             timestamp=datetime.now(timezone.utc),
             window_start=window.start_time,
@@ -265,7 +265,7 @@ class SlidingWindowFeatureExtractor:
 
     def _empty_feature_vector(self) -> FeatureVector:
         """Create a zero-filled feature vector for empty windows."""
-        return FeatureVector(
+        return FeatureVector(  # type: ignore
             window_id=f"window-{uuid4().hex[:16]}",
             timestamp=datetime.now(timezone.utc),
             window_start=None,

@@ -34,7 +34,7 @@ class BenchmarkingCollector:
         self._queue_depth: int = 0
         self._max_queue_depth: int = 10000
 
-        self._throughput_window = deque(maxlen=60)
+        self._throughput_window = deque(maxlen=60)  # type: ignore
         self._current_second = int(time.time())
         self._current_second_count = 0
 

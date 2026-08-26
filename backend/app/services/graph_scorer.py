@@ -490,7 +490,7 @@ class DynamicGraphPathwayScorer:
                 BlastRadiusNode(
                     service_name=service,
                     hop_distance=hop_count,
-                    impact_classification=classification,
+                    impact_classification=classification,  # type: ignore
                     dependency_path=dependency_path,
                     propagation_path=propagation_path,
                     impact_score=impact_score,

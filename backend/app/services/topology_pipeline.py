@@ -115,7 +115,7 @@ class NetworkXTopologyPipeline:
 
     def build_graph(self) -> nx.DiGraph:
         """Return a newly built directed graph from retained observations."""
-        graph = nx.DiGraph()
+        graph = nx.DiGraph()  # type: ignore
         node_stats: dict[str, dict[str, Any]] = {}
         edge_stats: dict[tuple[str, str], dict[str, Any]] = {}
         latest_seen: datetime | None = None

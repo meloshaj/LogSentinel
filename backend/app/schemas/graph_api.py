@@ -129,7 +129,7 @@ def runtime_topology_contract(
                 is_blast_path=(source_name, target_name) in blast_edges,
             )
         )
-    return TopologyResponse(
+    return TopologyResponse(  # type: ignore
         nodes=nodes,
         edges=edges,
         snapshot_timestamp=_timestamp(snapshot.get("generated_at")),

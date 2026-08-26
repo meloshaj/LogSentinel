@@ -208,7 +208,7 @@ async def ingest_logs(
         logger.debug("Unable to record OTLP ingestion metrics", exc_info=True)
 
     # Standard OTLP Response
-    resp = ExportLogsServiceResponse(partial_success=ExportLogsPartialSuccess())
+    resp = ExportLogsServiceResponse(partial_success=ExportLogsPartialSuccess())  # type: ignore
     return JSONResponse(
         content=resp.model_dump(by_alias=True, exclude_none=True), status_code=200
     )

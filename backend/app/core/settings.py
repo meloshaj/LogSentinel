@@ -125,9 +125,9 @@ class DatabaseSettings(BaseModel):
     @classmethod
     def _coerce_port(cls, v: object) -> int:
         """Allow the port to arrive as a string from env-var sources."""
-        if isinstance(v, str):
-            return int(v)
-        return int(v)  # type: ignore[arg-type]
+        if isinstance(v, int):
+            return v
+        return int(str(v))  # type: ignore[arg-type]
 
     @property
     def url(self) -> str:

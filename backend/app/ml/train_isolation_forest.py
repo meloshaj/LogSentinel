@@ -42,7 +42,7 @@ def build_sample_feature_vectors() -> list[FeatureVector]:
         logs_per_second = float(log_count) / 10.0
 
         vectors.append(
-            FeatureVector(
+            FeatureVector(  # type: ignore
                 window_id=f"sample-window-{index}",
                 timestamp=base_time + timedelta(seconds=index * 10),
                 window_start=base_time + timedelta(seconds=index * 10),

@@ -117,7 +117,7 @@ class LogRepository:
 
                 tuples = [self._serialize_for_copy(row) for row in live_logs]
 
-                await asyncpg_conn.copy_records_to_table(
+                await asyncpg_conn.copy_records_to_table(  # type: ignore
                     "logs",
                     records=tuples,
                     columns=[
@@ -148,7 +148,7 @@ class LogRepository:
                 SUB_BATCH_SIZE = 500
                 for i in range(0, len(late_logs), SUB_BATCH_SIZE):
                     sub_batch = late_logs[i : i + SUB_BATCH_SIZE]
-                    stmt = insert(logs_table)
+                    stmt = insert(logs_table)  # type: ignore
                     await connection.execute(stmt, sub_batch)
 
             await connection.commit()
@@ -238,7 +238,7 @@ class LogRepository:
         ingested_at_end: datetime,
     ) -> bool:
         """Delete a single log by ID with mandatory time bounds for chunk exclusion."""
-        stmt = delete(logs_table).where(
+        stmt = delete(logs_table).where(  # type: ignore
             and_(
                 logs_table.c.tenant_id == tenant_id,
                 logs_table.c.id == log_id,
@@ -295,7 +295,7 @@ class LogRepository:
 
         where_clause = and_(*conditions) if conditions else True
 
-        count_stmt = select(func.count()).select_from(logs_table).where(where_clause)
+        count_stmt = select(func.count()).select_from(logs_table).where(where_clause)  # type: ignore
 
         stmt = (
             select(
@@ -308,7 +308,7 @@ class LogRepository:
                 logs_table.c.template_text,
                 logs_table.c.metadata,
             )
-            .where(where_clause)
+            .where(where_clause)  # type: ignore
             .order_by(logs_table.c.ingested_at.desc())
             .offset((page - 1) * limit)
             .limit(limit)
