@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     MetaData,
     Table,
+    and_,
     insert,
     select,
 )
@@ -76,18 +77,26 @@ class TrackingRepository:
         try:
             async with self.engine.begin() as conn:
                 await conn.execute(insert(tracking_loops_table), [row])
-            logger.info("Successfully persisted tracking loop for window_id=%s with score=%.3f", window_id, anomaly_score)
+            logger.info(
+                "Successfully persisted tracking loop for window_id=%s with score=%.3f",
+                window_id,
+                anomaly_score,
+            )
         except Exception:
-            logger.exception("Failed to persist tracking loop for window_id=%s", window_id)
+            logger.exception(
+                "Failed to persist tracking loop for window_id=%s", window_id
+            )
 
-    async def get_tracking_loop_by_id(self, tenant_id: str, tracking_loop_id: int) -> dict | None:
+    async def get_tracking_loop_by_id(
+        self, tenant_id: str, tracking_loop_id: int
+    ) -> dict | None:
         """Return one tracking-loop row by primary key without mutating it."""
         stmt = (
             select(tracking_loops_table)
             .where(
                 and_(
                     tracking_loops_table.c.tenant_id == tenant_id,
-                    tracking_loops_table.c.id == tracking_loop_id
+                    tracking_loops_table.c.id == tracking_loop_id,
                 )
             )
             .limit(1)
@@ -99,14 +108,16 @@ class TrackingRepository:
 
         return dict(row) if row is not None else None
 
-    async def get_active_tracking_loops(self, tenant_id: str, limit: int = 100) -> list[dict]:
+    async def get_active_tracking_loops(
+        self, tenant_id: str, limit: int = 100
+    ) -> list[dict]:
         """Return all tracking loops with ACTIVE status, newest first."""
         stmt = (
             select(tracking_loops_table)
             .where(
                 and_(
                     tracking_loops_table.c.tenant_id == tenant_id,
-                    tracking_loops_table.c.status == "ACTIVE"
+                    tracking_loops_table.c.status == "ACTIVE",
                 )
             )
             .order_by(tracking_loops_table.c.created_at.desc())

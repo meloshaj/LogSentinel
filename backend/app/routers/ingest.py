@@ -27,10 +27,16 @@ router = APIRouter(
     summary="Ingest Logs Async via Redis Streams",
     description="Accepts log payloads asynchronously and enqueues them for parsing with approximate stream trimming (MAXLEN ~ 500000).",
     responses={
-        202: {"description": "Log payload accepted for asynchronous processing", "model": IngestResponse},
+        202: {
+            "description": "Log payload accepted for asynchronous processing",
+            "model": IngestResponse,
+        },
         401: {"description": "Missing or invalid API key"},
         422: {"description": "Validation error on payload"},
-        503: {"description": "Redis connection error; retry later", "model": IngestResponse},
+        503: {
+            "description": "Redis connection error; retry later",
+            "model": IngestResponse,
+        },
     },
 )
 @router.post(
@@ -40,10 +46,16 @@ router = APIRouter(
     summary="Ingest Logs Async via Redis Streams (v1)",
     description="Accepts log payloads asynchronously and enqueues them for parsing with approximate stream trimming (MAXLEN ~ 500000).",
     responses={
-        202: {"description": "Log payload accepted for asynchronous processing", "model": IngestResponse},
+        202: {
+            "description": "Log payload accepted for asynchronous processing",
+            "model": IngestResponse,
+        },
         401: {"description": "Missing or invalid API key"},
         422: {"description": "Validation error on payload"},
-        503: {"description": "Redis connection error; retry later", "model": IngestResponse},
+        503: {
+            "description": "Redis connection error; retry later",
+            "model": IngestResponse,
+        },
     },
 )
 async def ingest_log_endpoint(
@@ -64,7 +76,7 @@ async def ingest_log_endpoint(
             "environment": "development",
             "logs": logs_list,
         }
-    
+
     # Enforce authoritative multitenancy
     normalized_payload["tenant_id"] = tenant_id
 
@@ -95,6 +107,7 @@ async def ingest_log_endpoint(
     log_count = len(normalized_payload.get("logs", []))
     try:
         from ..main import benchmarking_collector, ingest_request_rate
+
         benchmarking_collector.record_ingestion(log_count)
         benchmarking_collector.set_queue_depth(queue_size)
         status_label = "202" if accepted else "503"

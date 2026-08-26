@@ -13,28 +13,29 @@ from sqlalchemy.engine import Engine, ExecutionContext
 
 logger = logging.getLogger("logsentinel.profiler")
 
+
 class DatabaseProfiler:
     """Lightweight profiling subsystem for database batch execution."""
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
         self.enabled = False
-        
+
         # Query level metrics
         self.query_durations_ms: list[float] = []
         self.slow_query_threshold_ms = 200.0
-        
+
         # Batch level metrics
         self.batch_durations_ms: list[float] = []
         self.batch_sizes: list[int] = []
-        
+
         # Context-local timer for queries
         self._query_timers: dict[Any, float] = {}
-        
+
     def attach_to_engine(self, engine: Engine) -> None:
         """Attach profiling hooks to the SQLAlchemy engine."""
         self.enabled = True
-        
+
         @event.listens_for(engine, "before_cursor_execute")
         def before_cursor_execute(
             conn: Any,
@@ -58,16 +59,18 @@ class DatabaseProfiler:
             start_time = self._query_timers.pop(context, None)
             if start_time is None:
                 return
-                
+
             duration_ms = (time.perf_counter() - start_time) * 1000.0
-            
+
             with self.lock:
                 self.query_durations_ms.append(duration_ms)
-                
+
             if duration_ms > self.slow_query_threshold_ms:
                 logger.warning(
                     "Slow query detected: %.2f ms (>%.2f ms) - %s",
-                    duration_ms, self.slow_query_threshold_ms, statement[:200]
+                    duration_ms,
+                    self.slow_query_threshold_ms,
+                    statement[:200],
                 )
 
         @event.listens_for(engine, "handle_error")
@@ -75,14 +78,13 @@ class DatabaseProfiler:
             if hasattr(context, "execution_context") and context.execution_context:
                 self._query_timers.pop(context.execution_context, None)
 
-            
         logger.info("Database batch profiling hooks attached to engine.")
 
     def track_batch(self, batch_size: int, duration_ms: float) -> None:
         """Track high-level batch latency and dimensions."""
         if not self.enabled:
             return
-            
+
         with self.lock:
             self.batch_sizes.append(batch_size)
             self.batch_durations_ms.append(duration_ms)
@@ -91,17 +93,17 @@ class DatabaseProfiler:
         """Calculate and return percentile latency and throughput stats."""
         if not self.enabled:
             return {"enabled": False}
-            
+
         with self.lock:
             queries = self.query_durations_ms.copy()
             batches = self.batch_durations_ms.copy()
             sizes = self.batch_sizes.copy()
-            
+
         if not queries and not batches:
             return {"enabled": True, "message": "No profiling data available yet"}
-            
+
         stats: dict[str, Any] = {"enabled": True}
-        
+
         if queries:
             q_arr = np.array(queries)
             stats["queries"] = {
@@ -113,15 +115,19 @@ class DatabaseProfiler:
                 "p95_ms": round(float(np.percentile(q_arr, 95)), 2),
                 "p99_ms": round(float(np.percentile(q_arr, 99)), 2),
             }
-            
+
         if batches and sizes:
             b_arr = np.array(batches)
             s_arr = np.array(sizes)
             total_records = int(np.sum(s_arr))
             total_duration_ms = float(np.sum(b_arr))
-            
-            throughput = (total_records / total_duration_ms) * 1000.0 if total_duration_ms > 0 else 0.0
-            
+
+            throughput = (
+                (total_records / total_duration_ms) * 1000.0
+                if total_duration_ms > 0
+                else 0.0
+            )
+
             stats["batches"] = {
                 "count": len(batches),
                 "total_records": total_records,
@@ -133,7 +139,7 @@ class DatabaseProfiler:
                 "p95_duration_ms": round(float(np.percentile(b_arr, 95)), 2),
                 "throughput_records_per_sec": round(throughput, 2),
             }
-            
+
         return stats
 
     def reset(self) -> None:
@@ -142,5 +148,6 @@ class DatabaseProfiler:
             self.query_durations_ms.clear()
             self.batch_durations_ms.clear()
             self.batch_sizes.clear()
+
 
 db_profiler = DatabaseProfiler()

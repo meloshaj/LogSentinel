@@ -54,7 +54,7 @@ class StreamMessageOutcome(str, Enum):
 class DrainWorker:
     """
     Consume ingest queue items, parse log messages, and keep recent results.
-    
+
     This worker runs as a background task, continuously pulling raw log payloads
     from a memory buffer, processing them through Drain3, and forwarding the
     structured results to downstream systems.
@@ -77,7 +77,7 @@ class DrainWorker:
     ) -> None:
         """
         Initialize the Drain worker with dependencies and configuration.
-        
+
         Args:
             log_buffer: The asynchronous queue providing raw ingest payloads.
             parser: The Drain3 parser instance.
@@ -91,7 +91,7 @@ class DrainWorker:
             benchmarking_collector: Optional collector for performance metrics.
             dlq_stream_name: Redis stream name for dead-letter queue.
             max_retries: Consecutive failure threshold before routing to DLQ.
-            
+
         Raises:
             ValueError: If queue_drain_timeout_seconds is not positive.
         """
@@ -100,14 +100,20 @@ class DrainWorker:
 
         self.log_buffer: Any = log_buffer
         self.parser: DrainParser = parser
-        self.batch_manager: ParsedLogBatchManager = batch_manager or ParsedLogBatchManager()
+        self.batch_manager: ParsedLogBatchManager = (
+            batch_manager or ParsedLogBatchManager()
+        )
         self._recent_parsed_logs: deque[ParsedLog] = deque(maxlen=recent_limit)
         self._on_log_parsed: Callable[[ParsedLog], None] | None = on_log_parsed
-        self.runtime_dependency_parser: RuntimeDependencyParser | None = runtime_dependency_parser
+        self.runtime_dependency_parser: RuntimeDependencyParser | None = (
+            runtime_dependency_parser
+        )
         self._recent_trace_observations: deque[TraceObservation] = deque(
             maxlen=recent_trace_observation_limit
         )
-        self._on_trace_observation: Callable[[TraceObservation], None] | None = on_trace_observation
+        self._on_trace_observation: Callable[[TraceObservation], None] | None = (
+            on_trace_observation
+        )
         self.queue_drain_timeout_seconds: float = queue_drain_timeout_seconds
         self.benchmarking_collector: Any = benchmarking_collector
         self.stream_name: str = "logs:stream"
@@ -127,7 +133,7 @@ class DrainWorker:
         self.consumer_name: str = f"worker-{uuid.uuid4().hex[:8]}"
         self._recovery_task: asyncio.Task[None] | None = None
         self.recovery_idle_time_ms: int = 60000
-        
+
         parser_miner = getattr(self.parser, "_miner", None)
         current_persistence = getattr(parser_miner, "persistence_handler", None)
         self.redis_pers = (
@@ -135,7 +141,7 @@ class DrainWorker:
             if isinstance(current_persistence, RedisPersistence)
             else None
         )
-        
+
         self._logs_since_snapshot = 0
         self._last_snapshot_time = time.monotonic()
 
@@ -172,7 +178,9 @@ class DrainWorker:
         self._running = True
         self.batch_manager.start_periodic_flush()
         self._task = asyncio.create_task(self.run(), name="drain-worker")
-        self._recovery_task = asyncio.create_task(self.recover_pending_messages(), name="drain-worker-recovery")
+        self._recovery_task = asyncio.create_task(
+            self.recover_pending_messages(), name="drain-worker-recovery"
+        )
 
     async def stop(self) -> None:
         """Stop the consumer and flush parsed logs."""
@@ -294,7 +302,10 @@ class DrainWorker:
             try:
                 return await self.redis_client.xadd(self.dlq_stream_name, dlq_entry)
             except Exception:
-                logger.exception("Failed to write poison pill to DLQ stream '%s'", self.dlq_stream_name)
+                logger.exception(
+                    "Failed to write poison pill to DLQ stream '%s'",
+                    self.dlq_stream_name,
+                )
         return None
 
     async def _ack_stream_message(self, message_id: str) -> bool:
@@ -459,8 +470,14 @@ class DrainWorker:
             return
 
         try:
-            await self.redis_client.xgroup_create(self.stream_name, self.group_name, id="$", mkstream=True)
-            logger.info("Redis consumer group '%s' initialized for %s", self.group_name, self.stream_name)
+            await self.redis_client.xgroup_create(
+                self.stream_name, self.group_name, id="$", mkstream=True
+            )
+            logger.info(
+                "Redis consumer group '%s' initialized for %s",
+                self.group_name,
+                self.stream_name,
+            )
         except Exception as e:
             if "BUSYGROUP" not in str(e):
                 logger.exception("Failed to create consumer group")
@@ -489,11 +506,16 @@ class DrainWorker:
                             raise
                         except Exception:
                             self.error_count += 1
-                            logger.exception("Unexpected error processing stream message %s", message_id)
+                            logger.exception(
+                                "Unexpected error processing stream message %s",
+                                message_id,
+                            )
 
                 # Trim the stream periodically to prevent unbounded growth
                 try:
-                    await self.redis_client.xtrim(self.stream_name, maxlen=500000, approximate=True)
+                    await self.redis_client.xtrim(
+                        self.stream_name, maxlen=500000, approximate=True
+                    )
                 except Exception as e:
                     logger.warning("Failed to trim %s: %s", self.stream_name, str(e))
 
@@ -528,7 +550,11 @@ class DrainWorker:
                 if isinstance(result, tuple) or isinstance(result, list):
                     claimed_messages = result[1]
                     if claimed_messages:
-                        logger.info("Auto-claimed %d pending messages from %s", len(claimed_messages), self.stream_name)
+                        logger.info(
+                            "Auto-claimed %d pending messages from %s",
+                            len(claimed_messages),
+                            self.stream_name,
+                        )
                         for message_id, entry in claimed_messages:
                             try:
                                 await self._process_stream_message(message_id, entry)
@@ -536,7 +562,9 @@ class DrainWorker:
                                 raise
                             except Exception:
                                 self.error_count += 1
-                                logger.exception("Failed processing claimed message %s", message_id)
+                                logger.exception(
+                                    "Failed processing claimed message %s", message_id
+                                )
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -552,12 +580,15 @@ class DrainWorker:
     ) -> list[ParsedLog]:
         """Process one queued payload or log entry."""
         import time
+
         start_time = time.perf_counter()
 
         baseline_flushed_records = 0
         if _persist_before_ack:
             baseline_stats = self.batch_manager.get_stats()
-            baseline_flushed_records = int(baseline_stats.get("flushed_record_count", 0))
+            baseline_flushed_records = int(
+                baseline_stats.get("flushed_record_count", 0)
+            )
 
         parsed_logs: list[ParsedLog] = []
         errors_before_extract = self.error_count
@@ -571,7 +602,11 @@ class DrainWorker:
                 or f"raw-{hash(raw_message)}"
             )
             retry_key = str(log_id)
-            snippet = raw_message[:200] if isinstance(raw_message, str) else str(raw_message)[:200]
+            snippet = (
+                raw_message[:200]
+                if isinstance(raw_message, str)
+                else str(raw_message)[:200]
+            )
 
             try:
                 parsed = self.parser.parse(raw_message, metadata=metadata)
@@ -588,7 +623,9 @@ class DrainWorker:
 
                 if retry_count >= self.max_retries:
                     await self._forward_to_dlq(
-                        raw_payload=raw_message if isinstance(raw_message, str) else json.dumps(raw_message),
+                        raw_payload=raw_message
+                        if isinstance(raw_message, str)
+                        else json.dumps(raw_message),
                         error_traceback=tb_str,
                         log_id=str(log_id),
                         metadata=metadata,
@@ -598,9 +635,15 @@ class DrainWorker:
 
                     if message_id and self.redis_client:
                         try:
-                            await self.redis_client.xack(self.stream_name, self.group_name, message_id)
+                            await self.redis_client.xack(
+                                self.stream_name, self.group_name, message_id
+                            )
                         except Exception:
-                            logger.exception("Failed to XACK poisoned message %s from %s", message_id, self.stream_name)
+                            logger.exception(
+                                "Failed to XACK poisoned message %s from %s",
+                                message_id,
+                                self.stream_name,
+                            )
 
                     logger.error(
                         "Poison pill detected for log ID %s (failed %d consecutive times). Routed to DLQ '%s'. Payload snippet: %s",
@@ -656,7 +699,9 @@ class DrainWorker:
                     confidence_score=0.5,
                     is_critical=False,
                 )
-                asyncio.create_task(dispatch_incident_alert(payload, redis_client=self.redis_client))
+                asyncio.create_task(
+                    dispatch_incident_alert(payload, redis_client=self.redis_client)
+                )
 
             # Notify subscribers (e.g., feature extraction worker)
             if self._on_log_parsed:
@@ -675,15 +720,21 @@ class DrainWorker:
                 )
 
         if parsed_logs:
-            event = telemetry_event("batch_processed", {
-                "count": len(parsed_logs),
-                "worker": self.consumer_name,
-            })
+            event = telemetry_event(
+                "batch_processed",
+                {
+                    "count": len(parsed_logs),
+                    "worker": self.consumer_name,
+                },
+            )
             asyncio.create_task(telemetry_manager.broadcast(event))
 
         if not parsed_logs and self.error_count == errors_before_extract:
             self.error_count += 1
-            logger.warning("Drain worker could not extract any log messages from queued item: %r", item)
+            logger.warning(
+                "Drain worker could not extract any log messages from queued item: %r",
+                item,
+            )
 
         if self.benchmarking_collector:
             duration_ms = (time.perf_counter() - start_time) * 1000.0
@@ -767,7 +818,9 @@ class DrainWorker:
     def get_recent_parsed_logs(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent parsed logs as dicts, newest first."""
         safe_limit = max(0, limit)
-        recent = list(self._recent_parsed_logs)[-safe_limit:][::-1] if safe_limit else []
+        recent = (
+            list(self._recent_parsed_logs)[-safe_limit:][::-1] if safe_limit else []
+        )
         return [log.model_dump(mode="json") for log in recent]
 
     def get_recent_trace_observations(self, limit: int = 50) -> list[dict[str, Any]]:
@@ -875,7 +928,9 @@ class DrainWorker:
                 "template_id": parsed.template_id,
                 "template": parsed.template_text,
                 "correlation_id": parsed.correlation_id,
-                "raw_message": getattr(parsed, "message", getattr(parsed, "raw", parsed.raw_message)),
+                "raw_message": getattr(
+                    parsed, "message", getattr(parsed, "raw", parsed.raw_message)
+                ),
                 "metadata": parsed.metadata,
             },
         )
@@ -883,7 +938,9 @@ class DrainWorker:
         try:
             asyncio.create_task(telemetry_manager.broadcast(event))
         except RuntimeError:
-            logger.debug("No running event loop available for log.parsed telemetry broadcast")
+            logger.debug(
+                "No running event loop available for log.parsed telemetry broadcast"
+            )
 
     def _extract_trace_observation(self, parsed: ParsedLog) -> TraceObservation | None:
         if self.runtime_dependency_parser is None:

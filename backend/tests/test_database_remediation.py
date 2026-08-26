@@ -69,18 +69,23 @@ def test_manifest_blocks_incompatible_historical_sequences() -> None:
     manifest = load_manifest()
     active = [migration["path"] for migration in manifest["active_migrations"]]
     blocked = {
-        migration["path"]: migration
-        for migration in manifest["legacy_migrations"]
+        migration["path"]: migration for migration in manifest["legacy_migrations"]
     }
 
     assert active == [
         "scripts/migrations/20260822_0001_schema_reconciliation.sql",
         "scripts/migrations/20260826_0001_multitenant_partitioning.sql",
-        "scripts/migrations/20260826_0002_archive_manifest.sql"
+        "scripts/migrations/20260826_0002_archive_manifest.sql",
     ]
-    assert blocked["scripts/migrations/20260805_add_ulid_to_logs.sql"]["status"] == "BLOCKED"
+    assert (
+        blocked["scripts/migrations/20260805_add_ulid_to_logs.sql"]["status"]
+        == "BLOCKED"
+    )
     assert blocked["scripts/migrations/retention_policies.sql"]["status"] == "BLOCKED"
-    assert blocked["scripts/migrations/20260806_safe_drop_procedure.sql"]["status"] == "BLOCKED"
+    assert (
+        blocked["scripts/migrations/20260806_safe_drop_procedure.sql"]["status"]
+        == "BLOCKED"
+    )
     assert all(path not in active for path in blocked)
     assert [
         path.relative_to(REPO_ROOT).as_posix()
@@ -89,7 +94,9 @@ def test_manifest_blocks_incompatible_historical_sequences() -> None:
 
 
 def test_migration_file_is_additive_and_fails_closed_for_legacy_logs() -> None:
-    migration_path = REPO_ROOT / "scripts" / "migrations" / "20260822_0001_schema_reconciliation.sql"
+    migration_path = (
+        REPO_ROOT / "scripts" / "migrations" / "20260822_0001_schema_reconciliation.sql"
+    )
     migration = migration_path.read_text(encoding="utf-8")
 
     assert "DROP TABLE" not in migration.upper()

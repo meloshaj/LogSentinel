@@ -46,7 +46,7 @@ def get_canonical_model_path() -> Path:
 class IsolationForestAnomalyDetector:
     """
     Train and use an IsolationForest model over feature vectors.
-    
+
     This class wraps the scikit-learn IsolationForest algorithm, adapting it
     specifically for LogSentinel feature vectors. It manages training,
     serialization, and batch prediction with normalized anomaly scores.
@@ -55,7 +55,7 @@ class IsolationForestAnomalyDetector:
     def __init__(self, random_state: int = 42, contamination: float = 0.1) -> None:
         """
         Initialize the anomaly detector.
-        
+
         Args:
             random_state: Seed for reproducible IsolationForest results.
             contamination: The proportion of outliers in the data set.
@@ -73,13 +73,13 @@ class IsolationForestAnomalyDetector:
     def train(self, feature_vectors: list[FeatureVector]) -> IsolationForest:
         """
         Train the IsolationForest model on a collection of feature vectors.
-        
+
         Args:
             feature_vectors: A list of FeatureVector instances to train on.
-            
+
         Returns:
             IsolationForest: The trained scikit-learn model instance.
-            
+
         Raises:
             ValueError: If the feature_vectors list is empty.
         """
@@ -124,7 +124,9 @@ class IsolationForestAnomalyDetector:
             self.inference_errors_total += 1
             raise
 
-    def predict_batch(self, feature_vectors: list[FeatureVector]) -> list[dict[str, Any]]:
+    def predict_batch(
+        self, feature_vectors: list[FeatureVector]
+    ) -> list[dict[str, Any]]:
         """Return structured predictions for a batch of feature vectors."""
         self.inference_total += len(feature_vectors)
         try:
@@ -136,7 +138,9 @@ class IsolationForestAnomalyDetector:
             predictions = self.model.predict(matrix)
             results: list[dict[str, Any]] = []
 
-            for feature_vector, score, prediction in zip(feature_vectors, scores, predictions):
+            for feature_vector, score, prediction in zip(
+                feature_vectors, scores, predictions
+            ):
                 raw_score = float(score)
                 is_anomaly = bool(prediction == -1)
                 if is_anomaly:
@@ -145,7 +149,9 @@ class IsolationForestAnomalyDetector:
                     {
                         "window_id": feature_vector.window_id,
                         "raw_score": round(raw_score, 6),
-                        "anomaly_score": round(normalize_isolation_forest_score(raw_score), 6),
+                        "anomaly_score": round(
+                            normalize_isolation_forest_score(raw_score), 6
+                        ),
                         "is_anomaly": is_anomaly,
                         "severity": self._severity_from_score(raw_score, is_anomaly),
                         "model_version": self.model_version,
@@ -164,7 +170,15 @@ class IsolationForestAnomalyDetector:
 
         model_path = Path(path)
         model_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump({"model": self.model, "model_version": self.model_version, "feature_columns": FEATURE_COLUMNS, "training_samples": self.training_samples}, model_path)
+        joblib.dump(
+            {
+                "model": self.model,
+                "model_version": self.model_version,
+                "feature_columns": FEATURE_COLUMNS,
+                "training_samples": self.training_samples,
+            },
+            model_path,
+        )
         self.model_path = model_path
 
     @classmethod
@@ -190,7 +204,9 @@ class IsolationForestAnomalyDetector:
         model_age_seconds: float | None = None
         if artifact_path is not None and artifact_path.exists():
             try:
-                model_age_seconds = max(0.0, time.time() - artifact_path.stat().st_mtime)
+                model_age_seconds = max(
+                    0.0, time.time() - artifact_path.stat().st_mtime
+                )
             except OSError:
                 model_age_seconds = None
 
@@ -204,7 +220,9 @@ class IsolationForestAnomalyDetector:
             "anomalies_total": self.anomalies_total,
         }
 
-    def _to_feature_matrix(self, feature_vectors: list[FeatureVector]) -> list[list[float]]:
+    def _to_feature_matrix(
+        self, feature_vectors: list[FeatureVector]
+    ) -> list[list[float]]:
         """Convert feature vectors into a numerical matrix for the sklearn model."""
         rows: list[list[float]] = []
         for vector in feature_vectors:
@@ -230,16 +248,30 @@ class IsolationForestAnomalyDetector:
         fallback_map = {
             "log_count": getattr(feature_vector, "log_count", 0),
             "info_count": getattr(feature_vector, "features", {}).get("info_count", 0),
-            "warning_count": getattr(feature_vector, "features", {}).get("warning_count", 0),
+            "warning_count": getattr(feature_vector, "features", {}).get(
+                "warning_count", 0
+            ),
             "error_count": getattr(feature_vector, "error_count", 0),
-            "error_ratio": getattr(feature_vector, "features", {}).get("error_ratio", 0.0),
-            "active_services": getattr(feature_vector, "features", {}).get("active_services", 0.0),
+            "error_ratio": getattr(feature_vector, "features", {}).get(
+                "error_ratio", 0.0
+            ),
+            "active_services": getattr(feature_vector, "features", {}).get(
+                "active_services", 0.0
+            ),
             "unique_templates": getattr(feature_vector, "unique_templates", 0),
-            "dominant_service_count": getattr(feature_vector, "features", {}).get("dominant_service_count", 0.0),
-            "dominant_template_count": getattr(feature_vector, "features", {}).get("dominant_template_count", 0.0),
+            "dominant_service_count": getattr(feature_vector, "features", {}).get(
+                "dominant_service_count", 0.0
+            ),
+            "dominant_template_count": getattr(feature_vector, "features", {}).get(
+                "dominant_template_count", 0.0
+            ),
             "logs_per_second": getattr(feature_vector, "logs_per_second", 0.0),
-            "avg_logs_per_minute": getattr(feature_vector, "features", {}).get("avg_logs_per_minute", 0.0),
-            "burst_indicator": getattr(feature_vector, "features", {}).get("burst_indicator", 0.0),
+            "avg_logs_per_minute": getattr(feature_vector, "features", {}).get(
+                "avg_logs_per_minute", 0.0
+            ),
+            "burst_indicator": getattr(feature_vector, "features", {}).get(
+                "burst_indicator", 0.0
+            ),
         }
         return float(fallback_map.get(column, 0.0))
 

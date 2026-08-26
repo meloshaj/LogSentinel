@@ -55,7 +55,11 @@ def build_sample_feature_vectors() -> list[FeatureVector]:
                 template_entropy=rng.uniform(0.05, 0.3),
                 service_distribution={"api-gateway": log_count},
                 logs_per_second=logs_per_second,
-                feature_array=[float(log_count), float(error_count), float(unique_templates)],
+                feature_array=[
+                    float(log_count),
+                    float(error_count),
+                    float(unique_templates),
+                ],
                 feature_names=["log_count", "error_count", "unique_templates"],
                 features={
                     "log_count": float(log_count),

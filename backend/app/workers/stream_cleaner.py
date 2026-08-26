@@ -7,6 +7,7 @@ from ..core.constants import LOG_WORKERS_GROUP
 
 logger = logging.getLogger("logsentinel.workers.stream_cleaner")
 
+
 class StreamCleanerWorker:
     """Compatibility lifecycle for the retired destructive PEL cleaner.
 
@@ -16,7 +17,7 @@ class StreamCleanerWorker:
     available so existing startup wiring and tests retain their public shape,
     but it intentionally performs no recovery operation.
     """
-    
+
     def __init__(
         self,
         stream_name: str = "logs:stream",
@@ -24,7 +25,7 @@ class StreamCleanerWorker:
         consumer_name: str = "orphan_cleaner",
         check_interval_seconds: float = 60.0,
         min_idle_time_ms: int = 120_000,
-        batch_size: int = 100
+        batch_size: int = 100,
     ):
         self.stream_name = stream_name
         self.group_name = group_name
@@ -32,7 +33,7 @@ class StreamCleanerWorker:
         self.check_interval_seconds = check_interval_seconds
         self.min_idle_time_ms = min_idle_time_ms
         self.batch_size = batch_size
-        
+
         self.redis_client: Redis | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -67,7 +68,7 @@ class StreamCleanerWorker:
                 break
             except Exception:
                 logger.exception("Unexpected error in StreamCleanerWorker loop")
-                
+
     async def _clean_orphans(self) -> None:
         # Deliberately do not call XAUTOCLAIM/XACK here.  Recovery and terminal
         # handling are performed by DrainWorker._process_stream_message.

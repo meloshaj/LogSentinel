@@ -2,37 +2,47 @@
 
 import abc
 import os
-import io
-from typing import BinaryIO
-from botocore.exceptions import ClientError
-from backend.app.core.settings import get_archive_settings
 import threading
+from typing import BinaryIO
+
+from backend.app.core.settings import get_archive_settings
+from botocore.exceptions import ClientError
+
 
 class S3StorageClient(abc.ABC):
     @abc.abstractmethod
-    def put_if_absent(self, object_key: str, data: bytes, content_type: str = "application/octet-stream") -> bool:
+    def put_if_absent(
+        self,
+        object_key: str,
+        data: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> bool:
         """Uploads data if the object key does not already exist."""
-        pass
 
     @abc.abstractmethod
     def head(self, object_key: str) -> dict | None:
         """Returns metadata for the object, or None if it doesn't exist."""
-        pass
 
     @abc.abstractmethod
     def get_stream(self, object_key: str) -> BinaryIO | None:
         """Returns a readable binary stream for the object, or None if it doesn't exist."""
-        pass
 
     @abc.abstractmethod
     def delete(self, object_key: str) -> bool:
         """Deletes the object."""
-        pass
 
 
 class Boto3StorageClient(S3StorageClient):
-    def __init__(self, bucket: str, endpoint_url: str | None, region: str, access_key: str | None, secret_key: str | None):
+    def __init__(
+        self,
+        bucket: str,
+        endpoint_url: str | None,
+        region: str,
+        access_key: str | None,
+        secret_key: str | None,
+    ):
         import boto3
+
         self.bucket = bucket
         self.client = boto3.client(
             "s3",
@@ -42,7 +52,12 @@ class Boto3StorageClient(S3StorageClient):
             aws_secret_access_key=secret_key,
         )
 
-    def put_if_absent(self, object_key: str, data: bytes, content_type: str = "application/octet-stream") -> bool:
+    def put_if_absent(
+        self,
+        object_key: str,
+        data: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> bool:
         try:
             self.client.head_object(Bucket=self.bucket, Key=object_key)
             return False  # Already exists
@@ -81,7 +96,7 @@ class Boto3StorageClient(S3StorageClient):
 
 class LocalMockStorageClient(S3StorageClient):
     """Local filesystem mockup for isolated tests without AWS dependencies."""
-    
+
     def __init__(self, base_dir: str = "/tmp/logsentinel_archive_mock"):
         self.base_dir = base_dir
         os.makedirs(self.base_dir, exist_ok=True)
@@ -90,7 +105,12 @@ class LocalMockStorageClient(S3StorageClient):
     def _get_path(self, object_key: str) -> str:
         return os.path.join(self.base_dir, object_key.replace("/", "_"))
 
-    def put_if_absent(self, object_key: str, data: bytes, content_type: str = "application/octet-stream") -> bool:
+    def put_if_absent(
+        self,
+        object_key: str,
+        data: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> bool:
         path = self._get_path(object_key)
         with self.lock:
             if os.path.exists(path):
@@ -126,7 +146,7 @@ def get_s3_client() -> S3StorageClient:
     """Factory method to get the correct S3 client based on environment."""
     if os.getenv("USE_MOCK_S3", "false").lower() == "true":
         return LocalMockStorageClient()
-        
+
     settings = get_archive_settings()
     return Boto3StorageClient(
         bucket=settings.s3_bucket,

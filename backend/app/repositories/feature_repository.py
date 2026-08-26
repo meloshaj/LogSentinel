@@ -73,7 +73,9 @@ class FeatureRepository:
             return self._engine
         return get_engine()
 
-    async def persist_feature_vector(self, tenant_id: str, feature_vector: FeatureVector) -> None:
+    async def persist_feature_vector(
+        self, tenant_id: str, feature_vector: FeatureVector
+    ) -> None:
         """Insert a single feature vector and its anomaly event (if any)."""
         now = datetime.now(timezone.utc)
 
@@ -95,7 +97,10 @@ class FeatureRepository:
 
                 # If an anomaly was detected, also write an anomaly event row
                 prediction = feature_vector.anomaly_prediction
-                if isinstance(prediction, dict) and prediction.get("is_anomaly") is True:
+                if (
+                    isinstance(prediction, dict)
+                    and prediction.get("is_anomaly") is True
+                ):
                     anomaly_row = {
                         "tenant_id": tenant_id,
                         "window_id": feature_vector.window_id,
@@ -126,13 +131,13 @@ class FeatureRepository:
                 await self.persist_feature_vector(tenant_id, fv)
                 persisted += 1
             except Exception:
-                logger.exception(
-                    "Failed to persist feature vector %s", fv.window_id
-                )
+                logger.exception("Failed to persist feature vector %s", fv.window_id)
 
         return persisted
 
-    async def get_recent_features(self, tenant_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    async def get_recent_features(
+        self, tenant_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
         """Return recent feature windows as dicts, newest first."""
         stmt = (
             select(feature_windows_table)
@@ -147,7 +152,9 @@ class FeatureRepository:
 
         return [dict(row) for row in rows]
 
-    async def get_recent_anomalies(self, tenant_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    async def get_recent_anomalies(
+        self, tenant_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
         """Return recent anomaly events as dicts, newest first."""
         stmt = (
             select(anomaly_events_table)
@@ -176,8 +183,8 @@ class FeatureRepository:
             feature_windows_table,
             and_(
                 anomaly_events_table.c.tenant_id == feature_windows_table.c.tenant_id,
-                anomaly_events_table.c.window_id == feature_windows_table.c.window_id
-            )
+                anomaly_events_table.c.window_id == feature_windows_table.c.window_id,
+            ),
         )
         stmt = (
             select(

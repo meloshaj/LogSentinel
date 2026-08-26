@@ -1,15 +1,15 @@
 """Sidecar metadata writer for Archive."""
 
 import json
-from datetime import datetime
-from uuid import UUID
+from datetime import datetime, timezone
+
 
 def generate_sidecar_manifest(manifest_record: dict) -> bytes:
     """Generates the sidecar .manifest.json byte representation.
-    
+
     Extracts relevant fields from the archive_manifest row dictionary and formats them.
     """
-    
+
     def _format_dt(dt):
         if not dt:
             return None
@@ -37,7 +37,7 @@ def generate_sidecar_manifest(manifest_record: dict) -> bytes:
         "uncompressed_bytes": manifest_record.get("uncompressed_bytes"),
         "compressed_bytes": manifest_record.get("compressed_bytes"),
         "source_fingerprint": manifest_record.get("source_fingerprint"),
-        "generated_at": datetime.utcnow().isoformat() + "Z"
+        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    
+
     return json.dumps(sidecar, indent=2).encode("utf-8")

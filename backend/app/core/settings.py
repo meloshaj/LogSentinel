@@ -16,11 +16,18 @@ from sqlalchemy.engine import make_url
 
 class SMTPSettings(BaseModel):
     """SMTP configuration for transactional emails."""
-    host: str = Field(default="localhost", description="SMTP server host (env: SMTP_HOST)")
+
+    host: str = Field(
+        default="localhost", description="SMTP server host (env: SMTP_HOST)"
+    )
     port: int = Field(default=1025, description="SMTP server port (env: SMTP_PORT)")
     user: str = Field(default="", description="SMTP user (env: SMTP_USER)")
     password: str = Field(default="", description="SMTP password (env: SMTP_PASSWORD)")
-    emails_from_email: str = Field(default="noreply@logsentinel.local", description="Sender email address (env: EMAILS_FROM_EMAIL)")
+    emails_from_email: str = Field(
+        default="noreply@logsentinel.local",
+        description="Sender email address (env: EMAILS_FROM_EMAIL)",
+    )
+
 
 def get_smtp_settings() -> SMTPSettings:
     return SMTPSettings(
@@ -184,7 +191,9 @@ def get_database_settings() -> DatabaseSettings:
         port=int(_database_env("POSTGRES_PORT", "DB_PORT", default="5432")),
         db_name=_database_env("POSTGRES_DB", "DB_NAME", default="logsentinel_db"),
         pool_size=int(os.getenv("POSTGRES_POOL_SIZE", os.getenv("POOL_SIZE", "20"))),
-        max_overflow=int(os.getenv("POSTGRES_MAX_OVERFLOW", os.getenv("POOL_MAX_OVERFLOW", "10"))),
+        max_overflow=int(
+            os.getenv("POSTGRES_MAX_OVERFLOW", os.getenv("POOL_MAX_OVERFLOW", "10"))
+        ),
         pool_recycle_seconds=int(os.getenv("POOL_RECYCLE_SECONDS", "1800")),
         ssl_mode=_database_env("POSTGRES_SSL_MODE", "DB_SSL_MODE", default="disable"),
         echo_sql=os.getenv("SQL_ECHO", "false").lower() == "true",
@@ -223,9 +232,7 @@ def get_drain3_pipeline_settings() -> Drain3PipelineSettings:
     """Construct Drain3 pipeline settings from the current environment."""
     return Drain3PipelineSettings(
         batch_size=int(os.getenv("DRAIN3_BATCH_SIZE", "500")),
-        flush_interval_seconds=float(
-            os.getenv("DRAIN3_FLUSH_INTERVAL_SECONDS", "5.0")
-        ),
+        flush_interval_seconds=float(os.getenv("DRAIN3_FLUSH_INTERVAL_SECONDS", "5.0")),
         queue_drain_timeout_seconds=float(
             os.getenv("DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS", "30.0")
         ),
@@ -299,12 +306,12 @@ class IngestionSecuritySettings(BaseModel):
 
 def _split_api_keys(value: str | None) -> dict[str, str]:
     """Parse comma-separated API keys into a mapping of key -> tenant_id.
-    
+
     Format: 'tenant_id:api_key' or just 'api_key' (defaults to tenant_id='default').
     """
     if not value:
         return {}
-    
+
     result = {}
     for item in value.split(","):
         item = item.strip()
@@ -426,7 +433,9 @@ class MicrosoftAuthSettings(BaseModel):
         try:
             return str(UUID(normalized))
         except ValueError as exc:
-            raise ValueError("AZURE_CLIENT_ID must be an application client GUID") from exc
+            raise ValueError(
+                "AZURE_CLIENT_ID must be an application client GUID"
+            ) from exc
 
     @field_validator("required_scope")
     @classmethod
@@ -567,4 +576,3 @@ def get_archive_settings() -> ArchiveSettings:
         archive_retention_days=int(os.getenv("ARCHIVE_RETENTION_DAYS", "30")),
         staging_row_limit=int(os.getenv("ARCHIVE_STAGING_ROW_LIMIT", "1000000")),
     )
-

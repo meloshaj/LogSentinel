@@ -70,7 +70,9 @@ def stream_entry() -> dict[str, str]:
     }
 
 
-def test_drain_state_path_is_configurable_and_not_filesystem_root(tmp_path, monkeypatch) -> None:
+def test_drain_state_path_is_configurable_and_not_filesystem_root(
+    tmp_path, monkeypatch
+) -> None:
     configured = tmp_path / "drain" / "state.bin"
     monkeypatch.setenv("DRAIN3_STATE_PATH", str(configured))
 
@@ -159,7 +161,9 @@ async def test_stream_cleaner_never_claims_or_acks_pending_work() -> None:
 async def test_drain_recovery_routes_stale_pending_entries_through_normal_processing(
     monkeypatch,
 ) -> None:
-    worker = DrainWorker(None, SuccessfulParser(), batch_manager=ParsedLogBatchManager())  # type: ignore[arg-type]
+    worker = DrainWorker(
+        None, SuccessfulParser(), batch_manager=ParsedLogBatchManager()
+    )  # type: ignore[arg-type]
     worker._running = True
     redis = make_redis()
     redis.xautoclaim = AsyncMock(

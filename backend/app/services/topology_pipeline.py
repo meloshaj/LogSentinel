@@ -62,9 +62,7 @@ class NetworkXTopologyPipeline:
         if max_transactions <= 0:
             raise ValueError("max_transactions must be greater than 0")
         if max_observations_per_transaction <= 0:
-            raise ValueError(
-                "max_observations_per_transaction must be greater than 0"
-            )
+            raise ValueError("max_observations_per_transaction must be greater than 0")
 
         self.max_transactions = max_transactions
         self.max_observations_per_transaction = max_observations_per_transaction
@@ -101,7 +99,9 @@ class NetworkXTopologyPipeline:
         self._transactions.move_to_end(key)
 
         if len(self._transactions[key]) > self.max_observations_per_transaction:
-            overflow = len(self._transactions[key]) - self.max_observations_per_transaction
+            overflow = (
+                len(self._transactions[key]) - self.max_observations_per_transaction
+            )
             del self._transactions[key][:overflow]
             self.evicted_observation_count += overflow
 
@@ -462,7 +462,9 @@ class NetworkXTopologyPipeline:
             evidence_types=existing.evidence_types | contribution.evidence_types,
         )
 
-    def _delay_ms(self, source_timestamp: datetime, target_timestamp: datetime) -> float | None:
+    def _delay_ms(
+        self, source_timestamp: datetime, target_timestamp: datetime
+    ) -> float | None:
         delay_ms = (target_timestamp - source_timestamp).total_seconds() * 1000
         return delay_ms if delay_ms >= 0 else None
 
@@ -511,7 +513,9 @@ class NetworkXTopologyPipeline:
 
     def _serialize_attrs(self, attrs: dict[str, Any]) -> dict[str, Any]:
         return {
-            key: self._serialize_datetime(value) if isinstance(value, datetime) else value
+            key: self._serialize_datetime(value)
+            if isinstance(value, datetime)
+            else value
             for key, value in attrs.items()
         }
 

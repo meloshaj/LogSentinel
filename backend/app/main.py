@@ -28,9 +28,17 @@ from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-ingest_request_rate = Counter("logsentinel_ingest_requests_total", "Total ingestion requests", ["endpoint", "status"])
-batch_ingestion_size = Counter("logsentinel_batch_ingestion_size_total", "Total logs ingested", ["endpoint"])
-active_websocket_connections = Gauge("logsentinel_active_websocket_connections", "Number of active WebSocket connections")
+ingest_request_rate = Counter(
+    "logsentinel_ingest_requests_total",
+    "Total ingestion requests",
+    ["endpoint", "status"],
+)
+batch_ingestion_size = Counter(
+    "logsentinel_batch_ingestion_size_total", "Total logs ingested", ["endpoint"]
+)
+active_websocket_connections = Gauge(
+    "logsentinel_active_websocket_connections", "Number of active WebSocket connections"
+)
 
 from .core import (
     dispose_engine,
@@ -82,6 +90,10 @@ async def ensure_stream_and_group(
             )
         else:
             raise
+
+
+from .archive.rehydration import router as archive_rehydration_router
+from .archive.worker import ArchiveWorker
 from .ml.anomaly_detector import (
     IsolationForestAnomalyDetector,
     get_canonical_model_path,
@@ -103,7 +115,6 @@ from .routers.benchmark_router import router as benchmark_router
 from .routers.ingest import router as ingest_router
 from .routers.ingest_bulk import router as ingest_bulk_router
 from .routers.otel_receiver import router as otel_router
-from .archive.rehydration import router as archive_rehydration_router
 from .schemas.blast_radius import BlastRadiusResult
 from .schemas.graph_api import BlastRadiusRetrievalResponse, TopologyResponse
 from .security import require_ingestion_api_key
@@ -119,7 +130,6 @@ from .workers.drain_worker import DrainWorker
 from .workers.event_manager import EventManager
 from .workers.feature_worker import FeatureExtractionWorker
 from .workers.stream_cleaner import StreamCleanerWorker
-from .archive.worker import ArchiveWorker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -135,11 +145,17 @@ class LogEntry(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the log event was emitted",
     )
-    service_name: str | None = Field(default=None, description="Name of the emitting service")
-    service: str | None = Field(default=None, description="Name of the emitting service (alias)")
+    service_name: str | None = Field(
+        default=None, description="Name of the emitting service"
+    )
+    service: str | None = Field(
+        default=None, description="Name of the emitting service (alias)"
+    )
     level: str = Field(default="info", description="Log severity")
     message: str = Field(..., min_length=1, description="The log message payload")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Optional structured metadata")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict, description="Optional structured metadata"
+    )
     raw: str | None = Field(default=None, description="Raw log line if available")
     created_at: datetime | None = Field(default=None, description="Creation timestamp")
 
@@ -155,10 +171,16 @@ class LogEntry(BaseModel):
 class IngestPayload(BaseModel):
     """Generic payload accepted by the ingestion gateway."""
 
-    source: str = Field(default="unknown", min_length=1, description="Origin of the payload")
-    environment: str = Field(default="development", min_length=1, description="Runtime environment")
+    source: str = Field(
+        default="unknown", min_length=1, description="Origin of the payload"
+    )
+    environment: str = Field(
+        default="development", min_length=1, description="Runtime environment"
+    )
     logs: list[LogEntry] = Field(..., min_length=1, description="A batch of log events")
-    correlation_id: str | None = Field(default=None, description="Optional request correlation identifier")
+    correlation_id: str | None = Field(
+        default=None, description="Optional request correlation identifier"
+    )
 
 
 class IngestResponse(BaseModel):
@@ -189,9 +211,15 @@ if DEFAULT_MODEL_PATH.exists():
     try:
         anomaly_detector = IsolationForestAnomalyDetector.load_model(DEFAULT_MODEL_PATH)
     except Exception:
-        logger.exception("Failed to load canonical Isolation Forest artifact from %s", DEFAULT_MODEL_PATH)
+        logger.exception(
+            "Failed to load canonical Isolation Forest artifact from %s",
+            DEFAULT_MODEL_PATH,
+        )
 else:
-    logger.info("No pretrained isolation forest model found at %s; feature worker will run without anomaly predictions until trained", DEFAULT_MODEL_PATH)
+    logger.info(
+        "No pretrained isolation forest model found at %s; feature worker will run without anomaly predictions until trained",
+        DEFAULT_MODEL_PATH,
+    )
 
 # Feature extraction configuration
 window_config = WindowConfig(
@@ -225,7 +253,6 @@ feature_worker = FeatureExtractionWorker(
 # Create Drain worker with callback to feature worker
 drain_worker = DrainWorker(
     None,  # Placeholder for Redis consumer integration
-
     drain_parser,
     batch_manager=batch_manager,
     on_log_parsed=feature_worker.add_parsed_log,
@@ -242,7 +269,9 @@ stream_cleaner = StreamCleanerWorker(
     batch_size=100,
 )
 
-run_archive_worker_in_lifespan = os.getenv("RUN_ARCHIVE_WORKER_IN_LIFESPAN", "true").lower() == "true"
+run_archive_worker_in_lifespan = (
+    os.getenv("RUN_ARCHIVE_WORKER_IN_LIFESPAN", "true").lower() == "true"
+)
 
 archive_worker = None
 if run_archive_worker_in_lifespan:
@@ -271,7 +300,9 @@ async def _observability_loop(app: FastAPI) -> None:
                 )
 
             drain_stats = drain_worker.get_stats()
-            record_drain_worker_stats(drain_stats, parser_stats=drain_parser.get_stats())
+            record_drain_worker_stats(
+                drain_stats, parser_stats=drain_parser.get_stats()
+            )
             record_feature_worker_stats(feature_worker.get_stats())
 
             event_stats_getter = getattr(event_manager, "get_stats", None)
@@ -299,12 +330,14 @@ async def _observability_loop(app: FastAPI) -> None:
         await asyncio.sleep(5.0)
 
 
-_JWT_DEV_DEFAULTS = frozenset({
-    "logsentinel_jwt_secret_key_change_me_in_prod",
-    "change_me",
-    "secret",
-    "",
-})
+_JWT_DEV_DEFAULTS = frozenset(
+    {
+        "logsentinel_jwt_secret_key_change_me_in_prod",
+        "change_me",
+        "secret",
+        "",
+    }
+)
 
 
 @asynccontextmanager
@@ -314,6 +347,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from .security.auth import (
         JWT_SECRET_KEY,
     )
+
     if environment == "production":
         if not JWT_SECRET_KEY or JWT_SECRET_KEY in _JWT_DEV_DEFAULTS:
             raise RuntimeError(
@@ -400,7 +434,9 @@ from fastapi.middleware.cors import CORSMiddleware
 def _get_frontend_origins(value: str | None = None) -> list[str]:
     """Return validated browser origins for CORS."""
     candidate_str = (
-        value if value is not None else os.getenv("FRONTEND_URL", "http://localhost:5173,http://localhost:8080")
+        value
+        if value is not None
+        else os.getenv("FRONTEND_URL", "http://localhost:5173,http://localhost:8080")
     )
     origins = []
     for candidate in candidate_str.split(","):
@@ -422,6 +458,7 @@ def _get_frontend_origins(value: str | None = None) -> list[str]:
     if not origins:
         origins = ["http://localhost:5173", "http://localhost:8080"]
     return origins
+
 
 # ---------------------------------------------------------------------------
 # Rate limiter (slowapi)
@@ -479,7 +516,9 @@ app.include_router(archive_rehydration_router)
 
 benchmarking_settings = get_benchmarking_settings()
 if benchmarking_settings.enable_benchmarking_endpoints:
-    app.include_router(benchmark_router, prefix="/api/v1/benchmark", tags=["Benchmarking"])
+    app.include_router(
+        benchmark_router, prefix="/api/v1/benchmark", tags=["Benchmarking"]
+    )
 
 
 @app.get(
@@ -521,7 +560,7 @@ async def get_logs_paginated(
     dependencies=[Depends(get_current_user)],
     responses={
         200: {"description": "Topology successfully retrieved"},
-    }
+    },
 )
 async def get_topology() -> TopologyResponse:
     """Return the current live service topology snapshot."""
@@ -544,7 +583,7 @@ async def get_topology() -> TopologyResponse:
         200: {"description": "Blast radius analysis found"},
         404: {"description": "Tracking loop not found"},
         500: {"description": "Stored blast-radius analysis is malformed"},
-    }
+    },
 )
 async def get_tracking_loop_blast_radius(
     tracking_loop_id: int,
@@ -617,7 +656,9 @@ async def list_active_tracking_loops(
             "anomaly_score": score,
             "severity": _derive_severity(score),
             "status": row.get("status", "ACTIVE"),
-            "created_at": row.get("created_at").isoformat() if row.get("created_at") else None,
+            "created_at": row.get("created_at").isoformat()
+            if row.get("created_at")
+            else None,
         }
         # Flatten blast_radius: extract the node array from the full BlastRadiusResult dict
         br = row.get("blast_radius")
@@ -644,9 +685,9 @@ async def telemetry_websocket(websocket: WebSocket) -> None:
     from .security.auth import JWT_ALGORITHM, JWT_SECRET_KEY
 
     telemetry_manager.record_connection_attempt()
-    
+
     await websocket.accept()
-    
+
     try:
         # Wait for the auth handshake frame
         auth_msg = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
@@ -657,7 +698,7 @@ async def telemetry_websocket(websocket: WebSocket) -> None:
         telemetry_manager.record_authentication_failure()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-        
+
     try:
         pyjwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
     except pyjwt.PyJWTError:
@@ -688,7 +729,9 @@ async def telemetry_websocket(websocket: WebSocket) -> None:
 
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(_: object, exc: RequestValidationError) -> JSONResponse:
+async def validation_exception_handler(
+    _: object, exc: RequestValidationError
+) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
@@ -793,11 +836,17 @@ async def readiness_check(request: Request) -> JSONResponse:
     summary="Ingest Logs Async via Redis Streams",
     description="Accepts log payloads asynchronously and enqueues them for parsing and feature extraction.",
     responses={
-        202: {"description": "Log payload accepted for asynchronous processing", "model": IngestResponse},
+        202: {
+            "description": "Log payload accepted for asynchronous processing",
+            "model": IngestResponse,
+        },
         401: {"description": "Missing or invalid API key"},
         422: {"description": "Validation error on payload"},
-        503: {"description": "Redis connection error; retry later", "model": IngestResponse},
-    }
+        503: {
+            "description": "Redis connection error; retry later",
+            "model": IngestResponse,
+        },
+    },
 )
 async def ingest_log(
     request: Request,
@@ -813,21 +862,26 @@ async def ingest_log(
             "environment": "development",
             "logs": logs_list,
         }
-    
+
     try:
         redis = request.app.state.redis
         pipe = redis.pipeline(transaction=False)
-        pipe.xadd("logs:stream", {"payload": json.dumps(normalized_payload)}, maxlen=500000, approximate=True)
+        pipe.xadd(
+            "logs:stream",
+            {"payload": json.dumps(normalized_payload)},
+            maxlen=500000,
+            approximate=True,
+        )
         pipe.xlen("logs:stream")
         results = await pipe.execute()
-        
+
         queue_size = results[1]
         accepted = True
     except Exception as e:
         logger.error("Failed to enqueue payload to Redis: %s", str(e))
         accepted = False
         queue_size = 0
-    
+
     # Record metrics
     log_count = len(normalized_payload.get("logs", []))
     benchmarking_collector.record_ingestion(log_count)
@@ -861,9 +915,6 @@ async def ingest_log(
             "queue_size": queue_size,
         },
     )
-
-
-
 
 
 if __name__ == "__main__":

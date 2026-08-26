@@ -26,6 +26,7 @@ async def init_redis_pool() -> Redis:
     global _redis_pool
     # Redact password for logging
     from urllib.parse import urlparse
+
     parsed = urlparse(REDIS_URL)
     safe_url = REDIS_URL
     if parsed.password:
@@ -53,8 +54,7 @@ async def init_redis_pool() -> Redis:
             last_error = exc
             delay = _BASE_DELAY_SECONDS * (2 ** (attempt - 1))
             logger.warning(
-                "Redis connection attempt %d/%d failed (%s: %s). "
-                "Retrying in %.1fs...",
+                "Redis connection attempt %d/%d failed (%s: %s). Retrying in %.1fs...",
                 attempt,
                 _MAX_RETRIES,
                 type(exc).__name__,
@@ -66,7 +66,10 @@ async def init_redis_pool() -> Redis:
                 try:
                     await _redis_pool.disconnect(inuse_connections=True)
                 except Exception:
-                    logger.debug("Failed to disconnect failed Redis pool during retry cleanup", exc_info=True)
+                    logger.debug(
+                        "Failed to disconnect failed Redis pool during retry cleanup",
+                        exc_info=True,
+                    )
                 _redis_pool = None
             await asyncio.sleep(delay)
 

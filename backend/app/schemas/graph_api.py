@@ -51,7 +51,11 @@ class TopologyResponse(BaseModel):
     @field_validator("snapshot_timestamp")
     @classmethod
     def _normalize_snapshot_timestamp(cls, value: datetime) -> datetime:
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return (
+            value.replace(tzinfo=timezone.utc)
+            if value.tzinfo is None
+            else value.astimezone(timezone.utc)
+        )
 
 
 class BlastRadiusRetrievalResponse(BaseModel):
@@ -85,12 +89,20 @@ def runtime_topology_contract(
 ) -> TopologyResponse:
     """Convert NetworkX runtime output into the public stable topology contract."""
     incident_nodes, blast_edges = _active_incident_state(active_tracking_loops)
-    raw_nodes = [entry for entry in snapshot.get("nodes", []) if isinstance(entry, Mapping)]
-    raw_edges = [entry for entry in snapshot.get("edges", []) if isinstance(entry, Mapping)]
+    raw_nodes = [
+        entry for entry in snapshot.get("nodes", []) if isinstance(entry, Mapping)
+    ]
+    raw_edges = [
+        entry for entry in snapshot.get("edges", []) if isinstance(entry, Mapping)
+    ]
     nodes_by_name = {
         name: entry
         for entry in raw_nodes
-        if (name := _text(entry.get("service")) or _text(entry.get("name")) or _text(entry.get("id")))
+        if (
+            name := _text(entry.get("service"))
+            or _text(entry.get("name"))
+            or _text(entry.get("id"))
+        )
     }
 
     nodes = [
@@ -102,7 +114,10 @@ def runtime_topology_contract(
         source_name, target_name = _text(raw.get("source")), _text(raw.get("target"))
         if source_name is None or target_name is None:
             continue
-        source, target = topology_service_id(source_name), topology_service_id(target_name)
+        source, target = (
+            topology_service_id(source_name),
+            topology_service_id(target_name),
+        )
         edges.append(
             TopologyEdgeContract(
                 id=f"edge_{source.removeprefix('svc_')}_to_{target.removeprefix('svc_')}",
@@ -139,7 +154,8 @@ def _node_contract(
         metrics=TopologyNodeMetrics(
             latency_p95_ms=_number(raw.get("average_start_offset_ms")),
             error_rate_pct=0.0,
-            throughput_rps=_number(raw.get("event_count")) / max(_number(raw.get("transaction_count")), 1.0),
+            throughput_rps=_number(raw.get("event_count"))
+            / max(_number(raw.get("transaction_count")), 1.0),
         ),
         active_anomaly_id=anomaly_id,
         is_root_cause=root,
@@ -166,13 +182,21 @@ def _active_incident_state(
             if name is None:
                 continue
             root = name == root_name or entry.get("impact_classification") == "root"
-            nodes[name] = {"status": "critical" if root else "degraded", "anomaly_id": anomaly_id, "root": root}
+            nodes[name] = {
+                "status": "critical" if root else "degraded",
+                "anomaly_id": anomaly_id,
+                "root": root,
+            }
             path = entry.get("propagation_path")
             if isinstance(path, list):
                 names = [item for item in path if isinstance(item, str) and item]
                 blast_edges.update(zip(names, names[1:]))
         if root_name and root_name not in nodes:
-            nodes[root_name] = {"status": "critical", "anomaly_id": anomaly_id, "root": True}
+            nodes[root_name] = {
+                "status": "critical",
+                "anomaly_id": anomaly_id,
+                "root": True,
+            }
     return nodes, blast_edges
 
 
@@ -180,7 +204,10 @@ def _node_type(name: str) -> TopologyNodeType:
     value = name.lower()
     if "gateway" in value or "ingress" in value:
         return "gateway"
-    if any(token in value for token in ("postgres", "mysql", "mongo", "database", "-db", "_db")):
+    if any(
+        token in value
+        for token in ("postgres", "mysql", "mongo", "database", "-db", "_db")
+    ):
         return "database"
     if any(token in value for token in ("redis", "cache", "memcached")):
         return "cache"
@@ -205,11 +232,19 @@ def _text(value: Any) -> str | None:
 
 def _timestamp(value: Any) -> datetime:
     if isinstance(value, datetime):
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return (
+            value.replace(tzinfo=timezone.utc)
+            if value.tzinfo is None
+            else value.astimezone(timezone.utc)
+        )
     if isinstance(value, str):
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+            return (
+                parsed.replace(tzinfo=timezone.utc)
+                if parsed.tzinfo is None
+                else parsed.astimezone(timezone.utc)
+            )
         except ValueError:
             pass
     return datetime.now(timezone.utc)

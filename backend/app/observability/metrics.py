@@ -392,8 +392,12 @@ class StreamMetricsSampler:
             self._last_refresh_monotonic = now_monotonic
 
             try:
-                stream_length = _integer(await _maybe_await(redis_client.xlen(stream_name)))
-                dlq_size = _integer(await _maybe_await(redis_client.xlen(dlq_stream_name)))
+                stream_length = _integer(
+                    await _maybe_await(redis_client.xlen(stream_name))
+                )
+                dlq_size = _integer(
+                    await _maybe_await(redis_client.xlen(dlq_stream_name))
+                )
                 pending_entries = _pending_count(
                     await _maybe_await(redis_client.xpending(stream_name, group_name))
                 )
@@ -427,7 +431,9 @@ def _pending_count(summary: Any) -> int:
     return _integer(summary)
 
 
-async def _group_lag(redis_client: Any, stream_name: str, group_name: str) -> int | None:
+async def _group_lag(
+    redis_client: Any, stream_name: str, group_name: str
+) -> int | None:
     """Return XINFO GROUPS lag, treating unsupported/old servers as unknown."""
     xinfo_groups = getattr(redis_client, "xinfo_groups", None)
     if xinfo_groups is None:
@@ -571,25 +577,39 @@ def observe_worker_stats(
             value=stats.get(dlq_key),
         )
     if stats.get(queue_key) is not None:
-        WORKER_QUEUE_SIZE.labels(worker=label).set(_finite_non_negative(stats.get(queue_key)))
+        WORKER_QUEUE_SIZE.labels(worker=label).set(
+            _finite_non_negative(stats.get(queue_key))
+        )
 
     snapshot = {
         "running": bool(running) if running is not None else None,
         "heartbeat_timestamp_seconds": heartbeat,
-        "processed": _finite_non_negative(stats.get(processed_key)) if stats.get(processed_key) is not None else None,
-        "errors": _finite_non_negative(stats.get(errors_key)) if stats.get(errors_key) is not None else None,
-        "dlq": _finite_non_negative(stats.get(dlq_key)) if stats.get(dlq_key) is not None else None,
-        "queue_size": _finite_non_negative(stats.get(queue_key)) if stats.get(queue_key) is not None else None,
+        "processed": _finite_non_negative(stats.get(processed_key))
+        if stats.get(processed_key) is not None
+        else None,
+        "errors": _finite_non_negative(stats.get(errors_key))
+        if stats.get(errors_key) is not None
+        else None,
+        "dlq": _finite_non_negative(stats.get(dlq_key))
+        if stats.get(dlq_key) is not None
+        else None,
+        "queue_size": _finite_non_negative(stats.get(queue_key))
+        if stats.get(queue_key) is not None
+        else None,
     }
     with _state_lock:
         _worker_snapshot[label] = snapshot
     return dict(snapshot)
 
 
-def record_worker_heartbeat(worker: str, *, running: bool = True, observed_at: float | None = None) -> None:
+def record_worker_heartbeat(
+    worker: str, *, running: bool = True, observed_at: float | None = None
+) -> None:
     """Record an explicit worker-loop heartbeat from a real lifecycle boundary."""
     label = _worker_label(worker)
-    timestamp = time.time() if observed_at is None else _finite_non_negative(observed_at)
+    timestamp = (
+        time.time() if observed_at is None else _finite_non_negative(observed_at)
+    )
     WORKER_RUNNING.labels(worker=label).set(1 if running else 0)
     WORKER_HEARTBEAT.labels(worker=label).set(timestamp)
     with _state_lock:
@@ -605,8 +625,12 @@ def record_drain_worker_stats(
     """Export the existing DrainWorker and DrainParser diagnostic snapshots."""
     snapshot = observe_worker_stats("drain", stats)
     if parser_stats is not None:
-        DRAIN3_TEMPLATE_CLUSTERS.set(_finite_non_negative(parser_stats.get("cluster_count")))
-        DRAIN3_TOTAL_CLUSTER_SIZE.set(_finite_non_negative(parser_stats.get("total_cluster_size")))
+        DRAIN3_TEMPLATE_CLUSTERS.set(
+            _finite_non_negative(parser_stats.get("cluster_count"))
+        )
+        DRAIN3_TOTAL_CLUSTER_SIZE.set(
+            _finite_non_negative(parser_stats.get("total_cluster_size"))
+        )
     _absolute_counter_from_snapshot(
         DRAIN3_LOGS_PROCESSED,
         field="drain3_processed",
@@ -744,7 +768,9 @@ def observe_ml_inference(*, success: bool, is_anomaly: bool = False) -> None:
     if not success:
         ML_INFERENCE_ERRORS.inc()
         with _state_lock:
-            _ml_snapshot["inference_errors_total"] = int(_ml_snapshot["inference_errors_total"]) + 1
+            _ml_snapshot["inference_errors_total"] = (
+                int(_ml_snapshot["inference_errors_total"]) + 1
+            )
         return
     if is_anomaly:
         ML_ANOMALIES.inc()
@@ -760,10 +786,16 @@ def get_ml_metrics_snapshot() -> dict[str, Any]:
 
 def observe_benchmarking_snapshot(snapshot: Mapping[str, Any]) -> None:
     """Export the existing O(1) BenchmarkingCollector health snapshot."""
-    BENCHMARK_THROUGHPUT.set(_finite_non_negative(snapshot.get("throughput_logs_per_sec")))
-    BENCHMARK_PIPELINE_LATENCY.set(_finite_non_negative(snapshot.get("pipeline_latency_ms")))
+    BENCHMARK_THROUGHPUT.set(
+        _finite_non_negative(snapshot.get("throughput_logs_per_sec"))
+    )
+    BENCHMARK_PIPELINE_LATENCY.set(
+        _finite_non_negative(snapshot.get("pipeline_latency_ms"))
+    )
     BENCHMARK_QUEUE_DEPTH.set(_finite_non_negative(snapshot.get("queue_depth")))
-    BENCHMARK_DB_BATCH_DURATION.set(_finite_non_negative(snapshot.get("db_batch_duration_ms")))
+    BENCHMARK_DB_BATCH_DURATION.set(
+        _finite_non_negative(snapshot.get("db_batch_duration_ms"))
+    )
 
 
 # ---------------------------------------------------------------------------

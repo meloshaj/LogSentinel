@@ -204,7 +204,9 @@ class LogStreamer:
                 latency_ms = (time.perf_counter() - start) * 1000.0
 
                 if resp.status_code in (200, 201, 202):
-                    self.telemetry.record_success(log_count, resp.status_code, latency_ms)
+                    self.telemetry.record_success(
+                        log_count, resp.status_code, latency_ms
+                    )
                     return True
 
                 if resp.status_code in _RETRYABLE_STATUSES and attempt < _MAX_RETRIES:
@@ -212,7 +214,11 @@ class LogStreamer:
                     backoff = self._backoff(attempt)
                     logger.warning(
                         "HTTP %d from %s -- retrying in %.1fs (attempt %d/%d)",
-                        resp.status_code, self._target_url, backoff, attempt, _MAX_RETRIES,
+                        resp.status_code,
+                        self._target_url,
+                        backoff,
+                        attempt,
+                        _MAX_RETRIES,
                     )
                     await asyncio.sleep(backoff)
                     continue
@@ -221,18 +227,30 @@ class LogStreamer:
                 self.telemetry.record_failure(resp.status_code, latency_ms)
                 logger.error(
                     "HTTP %d from %s (attempt %d/%d) -- batch dropped",
-                    resp.status_code, self._target_url, attempt, _MAX_RETRIES,
+                    resp.status_code,
+                    self._target_url,
+                    attempt,
+                    _MAX_RETRIES,
                 )
                 return False
 
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as exc:
+            except (
+                httpx.ConnectError,
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpx.PoolTimeout,
+            ) as exc:
                 latency_ms = (time.perf_counter() - start) * 1000.0
                 if attempt < _MAX_RETRIES:
                     self.telemetry.record_retry()
                     backoff = self._backoff(attempt)
                     logger.warning(
                         "%s connecting to %s -- retrying in %.1fs (attempt %d/%d)",
-                        type(exc).__name__, self._target_url, backoff, attempt, _MAX_RETRIES,
+                        type(exc).__name__,
+                        self._target_url,
+                        backoff,
+                        attempt,
+                        _MAX_RETRIES,
                     )
                     await asyncio.sleep(backoff)
                     continue
@@ -240,14 +258,18 @@ class LogStreamer:
                 self.telemetry.record_failure(None, latency_ms)
                 logger.error(
                     "%s connecting to %s -- batch dropped after %d attempts",
-                    type(exc).__name__, self._target_url, _MAX_RETRIES,
+                    type(exc).__name__,
+                    self._target_url,
+                    _MAX_RETRIES,
                 )
                 return False
 
             except Exception as exc:
                 latency_ms = (time.perf_counter() - start) * 1000.0
                 self.telemetry.record_failure(None, latency_ms)
-                logger.error("Unexpected error sending batch: %s: %s", type(exc).__name__, exc)
+                logger.error(
+                    "Unexpected error sending batch: %s: %s", type(exc).__name__, exc
+                )
                 return False
 
         return False  # pragma: no cover
@@ -284,13 +306,17 @@ class LogStreamer:
         telemetry_interval:
             Seconds between live telemetry prints.
         """
-        interval_per_batch = batch_size / rate_logs_per_sec if rate_logs_per_sec > 0 else 0.1
+        interval_per_batch = (
+            batch_size / rate_logs_per_sec if rate_logs_per_sec > 0 else 0.1
+        )
         deadline = time.monotonic() + duration_seconds if duration_seconds else None
         last_report = time.monotonic()
 
-        print(f"\n  Streaming at ~{rate_logs_per_sec:.0f} logs/s "
-              f"(batch_size={batch_size})"
-              f"{f', duration={duration_seconds}s' if duration_seconds else ', Ctrl+C to stop'}")
+        print(
+            f"\n  Streaming at ~{rate_logs_per_sec:.0f} logs/s "
+            f"(batch_size={batch_size})"
+            f"{f', duration={duration_seconds}s' if duration_seconds else ', Ctrl+C to stop'}"
+        )
         print("-" * 64)
 
         try:
@@ -351,7 +377,9 @@ class LogStreamer:
             for step_idx in range(total_steps):
                 # Emit the scenario step batch.
                 scenario_batch = generator.generate_scenario_batch(
-                    scenario_name, step=step_idx, background_noise=background_noise,
+                    scenario_name,
+                    step=step_idx,
+                    background_noise=background_noise,
                 )
                 step_phase = ""
                 if scenario_name in generator._active_scenarios:
@@ -359,8 +387,10 @@ class LogStreamer:
                     step_obj = sc.get_step(step_idx)
                     step_phase = step_obj.phase
 
-                print(f"\n  >> Step {step_idx}/{total_steps - 1}: "
-                      f"{step_phase} ({len(scenario_batch.logs)} scenario logs)")
+                print(
+                    f"\n  >> Step {step_idx}/{total_steps - 1}: "
+                    f"{step_phase} ({len(scenario_batch.logs)} scenario logs)"
+                )
 
                 await self.send_batch(scenario_batch)
 
@@ -405,8 +435,10 @@ class LogStreamer:
         for _ in range(concurrency):
             await remaining.put(-1)
 
-        print(f"\n  Burst: {total_logs} logs in {total_batches} batches "
-              f"({concurrency} workers, batch_size={batch_size})")
+        print(
+            f"\n  Burst: {total_logs} logs in {total_batches} batches "
+            f"({concurrency} workers, batch_size={batch_size})"
+        )
         print("-" * 64)
 
         async def worker() -> None:

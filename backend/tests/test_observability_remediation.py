@@ -28,7 +28,14 @@ from prometheus_client import generate_latest
 
 
 class FakeRedis:
-    def __init__(self, *, stream_length: int = 10, dlq_size: int = 2, pending: int = 4, lag: int | None = 6) -> None:
+    def __init__(
+        self,
+        *,
+        stream_length: int = 10,
+        dlq_size: int = 2,
+        pending: int = 4,
+        lag: int | None = 6,
+    ) -> None:
         self.stream_length = stream_length
         self.dlq_size = dlq_size
         self.pending = pending
@@ -210,7 +217,9 @@ def test_worker_and_drain3_snapshots_are_bounded_and_reusable() -> None:
     assert workers["feature_extraction"]["errors"] == 1.0
 
 
-def test_ml_status_distinguishes_missing_model_and_counts_inference(tmp_path: Path) -> None:
+def test_ml_status_distinguishes_missing_model_and_counts_inference(
+    tmp_path: Path,
+) -> None:
     before = get_ml_metrics_snapshot()
     missing = set_ml_status(loaded=False)
     assert missing["model_loaded"] is False
@@ -252,7 +261,10 @@ async def test_broadcaster_hooks_count_handshake_and_delivery_outcomes() -> None
     after = get_websocket_metrics_snapshot()
     assert healthy.sent_events
     assert after["connection_attempts_total"] == before["connection_attempts_total"] + 1
-    assert after["authentication_failures_total"] == before["authentication_failures_total"] + 1
+    assert (
+        after["authentication_failures_total"]
+        == before["authentication_failures_total"] + 1
+    )
     assert after["frames_sent_total"] >= before["frames_sent_total"] + 1
     assert after["send_failures_total"] >= before["send_failures_total"] + 1
 
@@ -278,7 +290,9 @@ def test_metrics_are_registered_in_the_default_prometheus_registry() -> None:
 
 
 def test_local_prometheus_scrape_config_targets_backend_service() -> None:
-    config_path = Path(__file__).resolve().parents[2] / "deploy" / "monitoring" / "prometheus.yml"
+    config_path = (
+        Path(__file__).resolve().parents[2] / "deploy" / "monitoring" / "prometheus.yml"
+    )
     config = config_path.read_text(encoding="utf-8")
     assert "job_name: logsentinel-backend" in config
     assert "metrics_path: /metrics" in config
@@ -291,7 +305,11 @@ def test_liveness_readiness_and_metrics_contract(monkeypatch) -> None:
             raise ConnectionError("down")
 
     monkeypatch.setattr(main_module.app.state, "redis", DownRedis(), raising=False)
-    monkeypatch.setattr(main_module, "get_engine", lambda: (_ for _ in ()).throw(RuntimeError("db down")))
+    monkeypatch.setattr(
+        main_module,
+        "get_engine",
+        lambda: (_ for _ in ()).throw(RuntimeError("db down")),
+    )
 
     client = TestClient(main_module.app)
     assert client.get("/health").json()["status"] == "ok"
