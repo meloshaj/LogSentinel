@@ -108,27 +108,38 @@ def build_drain3_redis_persistence() -> RedisPersistence:
 class DrainParser:
     """
     Small application-facing wrapper around Drain3's TemplateMiner.
-    
+
     This class manages the configuration and state persistence of the Drain3
     log template mining algorithm.
     """
 
-    def __init__(self, config_path: str | None = None, state_path: str | None = None, persistence: Any | None = None) -> None:
+    def __init__(
+        self,
+        config_path: str | None = None,
+        state_path: str | None = None,
+        persistence: Any | None = None,
+    ) -> None:
         """
         Initialize the Drain3 parser with optional custom paths.
-        
+
         Args:
             config_path: Optional path to the drain3.ini configuration file.
             state_path: Optional path for the binary state persistence file.
             persistence: Optional persistence handler (RedisPersistence or FilePersistence).
         """
-        self.config_path: Path = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
-        self.state_path: Path = Path(state_path) if state_path else get_drain3_state_path()
+        self.config_path: Path = (
+            Path(config_path) if config_path else DEFAULT_CONFIG_PATH
+        )
+        self.state_path: Path = (
+            Path(state_path) if state_path else get_drain3_state_path()
+        )
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
 
         config = TemplateMinerConfig()
         config.load(str(self.config_path))
-        config.parameter_extraction_cache_capacity = int(config.parameter_extraction_cache_capacity)
+        config.parameter_extraction_cache_capacity = int(
+            config.parameter_extraction_cache_capacity
+        )
 
         if persistence is not None:
             self._miner = TemplateMiner(persistence_handler=persistence, config=config)
@@ -138,40 +149,50 @@ class DrainParser:
 
             file_pers = FilePersistence(str(self.state_path))
             if get_drain3_state_backend() != "redis":
-                self._miner = TemplateMiner(persistence_handler=file_pers, config=config)
+                self._miner = TemplateMiner(
+                    persistence_handler=file_pers, config=config
+                )
                 self.redis_client = None
                 return
 
             try:
                 redis_pers = build_drain3_redis_persistence()
                 self.redis_client = redis_pers.r
-                self._miner = TemplateMiner(persistence_handler=redis_pers, config=config)
+                self._miner = TemplateMiner(
+                    persistence_handler=redis_pers, config=config
+                )
             except Exception as exc:
                 logger.warning(
                     "Drain3 Redis state unavailable; using local state file %s: %s",
                     self.state_path,
                     exc,
                 )
-                self._miner = TemplateMiner(persistence_handler=file_pers, config=config)
+                self._miner = TemplateMiner(
+                    persistence_handler=file_pers, config=config
+                )
                 self.redis_client = None
 
-    def parse(self, raw_message: str, metadata: dict[str, Any] | None = None) -> ParsedLog:
+    def parse(
+        self, raw_message: str, metadata: dict[str, Any] | None = None
+    ) -> ParsedLog:
         """
         Mine a log template and return a validated ParsedLog instance.
-        
+
         Args:
             raw_message: The raw log message string to be parsed.
             metadata: Optional dictionary containing log metadata (service, level, timestamp).
-            
+
         Returns:
             ParsedLog: A structured log entry containing the matched template and extracted parameters.
         """
         result = self._miner.add_log_message(raw_message)
         template_text: str = result["template_mined"]
-        parameters: list[dict[str, Any]] = self._extract_parameters(template_text, raw_message)
-        
+        parameters: list[dict[str, Any]] = self._extract_parameters(
+            template_text, raw_message
+        )
+
         metadata_dict: dict[str, Any] = metadata or {}
-        
+
         # Extract timestamp from metadata or use current time
         timestamp: Any = metadata_dict.get("timestamp")
         if not isinstance(timestamp, datetime):
@@ -182,13 +203,13 @@ class DrainParser:
                     timestamp = datetime.now(timezone.utc)
             else:
                 timestamp = datetime.now(timezone.utc)
-        
+
         # Ensure timezone-aware
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
-        
+
         log_id = ulid.from_timestamp(timestamp).str
-        
+
         return ParsedLog(
             id=log_id,
             timestamp=timestamp,
@@ -210,7 +231,7 @@ class DrainParser:
     def get_stats(self) -> dict[str, Any]:
         """
         Return lightweight parser state useful for diagnostics.
-        
+
         Returns:
             dict[str, Any]: Dictionary containing cluster count, total size, and paths.
         """
@@ -225,7 +246,7 @@ class DrainParser:
     def get_templates(self) -> list[dict[str, Any]]:
         """
         Return the currently mined templates.
-        
+
         Returns:
             list[dict[str, Any]]: List of templates containing ID, text, and cluster size.
         """
@@ -238,14 +259,16 @@ class DrainParser:
             for cluster in self._miner.drain.clusters
         ]
 
-    def _extract_parameters(self, template_text: str, raw_message: str) -> list[dict[str, Any]]:
+    def _extract_parameters(
+        self, template_text: str, raw_message: str
+    ) -> list[dict[str, Any]]:
         """
         Extract dynamic parameters from a raw message based on its template.
-        
+
         Args:
             template_text: The matched template string with wildcard tokens.
             raw_message: The original raw log message.
-            
+
         Returns:
             list[dict[str, Any]]: A list of extracted parameters containing values and mask names.
         """

@@ -39,10 +39,12 @@ from ..core.settings import MicrosoftAuthSettings
 logger = logging.getLogger("logsentinel.microsoft_auth")
 
 # Microsoft Graph audience — must never be accepted as a LogSentinel API token
-_GRAPH_AUDIENCES = frozenset({
-    "https://graph.microsoft.com",
-    "00000003-0000-0000-c000-000000000000",
-})
+_GRAPH_AUDIENCES = frozenset(
+    {
+        "https://graph.microsoft.com",
+        "00000003-0000-0000-c000-000000000000",
+    }
+)
 
 _CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
 
@@ -76,7 +78,9 @@ class MicrosoftAuthDisabledError(MicrosoftAuthError):
 
 
 class InvalidMicrosoftTokenError(MicrosoftAuthError):
-    def __init__(self, detail: str = "The Microsoft access token is invalid or expired.") -> None:
+    def __init__(
+        self, detail: str = "The Microsoft access token is invalid or expired."
+    ) -> None:
         super().__init__("invalid_microsoft_token", detail)
 
 
@@ -156,7 +160,7 @@ class _CachedJWKClient:
                     self._jwks_url,
                     cache_keys=True,
                     lifespan=self._cache_ttl,
-                    timeout=self._timeout,
+                    timeout=self._timeout,  # type: ignore
                 )
                 self._created_at = now
             return self._client
@@ -176,7 +180,9 @@ class _CachedJWKClient:
         except jwt.PyJWKClientConnectionError:
             raise MicrosoftJWKSUnavailableError()
         except jwt.PyJWKClientError:
-            raise InvalidMicrosoftTokenError("Token signing key not found in Microsoft JWKS.")
+            raise InvalidMicrosoftTokenError(
+                "Token signing key not found in Microsoft JWKS."
+            )
 
 
 class MicrosoftTokenVerifier:
@@ -212,7 +218,9 @@ class MicrosoftTokenVerifier:
         if unverified_header.get("alg") != "RS256" or not isinstance(
             unverified_header.get("kid"), str
         ):
-            raise InvalidMicrosoftTokenError("The Microsoft access token header is invalid.")
+            raise InvalidMicrosoftTokenError(
+                "The Microsoft access token header is invalid."
+            )
 
         # ── Retrieve the signing key by kid ───────────────────────────
         signing_key = self._jwk_client.get_signing_key_from_jwt(access_token)
@@ -236,9 +244,13 @@ class MicrosoftTokenVerifier:
         except jwt.ExpiredSignatureError:
             raise InvalidMicrosoftTokenError("The Microsoft access token has expired.")
         except jwt.ImmatureSignatureError:
-            raise InvalidMicrosoftTokenError("The Microsoft access token is not yet valid.")
+            raise InvalidMicrosoftTokenError(
+                "The Microsoft access token is not yet valid."
+            )
         except jwt.InvalidAudienceError:
-            raise InvalidMicrosoftTokenError("The token audience does not match the expected API.")
+            raise InvalidMicrosoftTokenError(
+                "The token audience does not match the expected API."
+            )
         except jwt.DecodeError:
             raise InvalidMicrosoftTokenError("The Microsoft access token is malformed.")
         except jwt.InvalidTokenError:
@@ -271,15 +283,24 @@ class MicrosoftTokenVerifier:
         if iss != expected_issuer:
             # Also check the generic pattern for safety
             if not _MULTI_TENANT_ISSUER_RE.match(iss):
-                raise InvalidMicrosoftTokenError("The token issuer is not a valid Microsoft identity endpoint.")
-            raise InvalidMicrosoftTokenError("The token issuer does not match the token tenant.")
+                raise InvalidMicrosoftTokenError(
+                    "The token issuer is not a valid Microsoft identity endpoint."
+                )
+            raise InvalidMicrosoftTokenError(
+                "The token issuer does not match the token tenant."
+            )
 
         # ── Configured tenant mode and optional allow-list ────────────
         configured_tenant = self._settings.tenant_id
         if configured_tenant not in {"common", "organizations", "consumers"}:
             if normalized_tid != configured_tenant:
                 raise InvalidMicrosoftTenantError()
-        elif configured_tenant == "consumers" and normalized_tid != _CONSUMER_TENANT_ID or configured_tenant == "organizations" and normalized_tid == _CONSUMER_TENANT_ID:
+        elif (
+            configured_tenant == "consumers"
+            and normalized_tid != _CONSUMER_TENANT_ID
+            or configured_tenant == "organizations"
+            and normalized_tid == _CONSUMER_TENANT_ID
+        ):
             raise InvalidMicrosoftTenantError()
 
         if (
@@ -309,7 +330,9 @@ class MicrosoftTokenVerifier:
             if isinstance(preferred, str) and "@" in preferred:
                 email = preferred
 
-        display_name = payload.get("name") if isinstance(payload.get("name"), str) else None
+        display_name = (
+            payload.get("name") if isinstance(payload.get("name"), str) else None
+        )
         oid = payload.get("oid") if isinstance(payload.get("oid"), str) else None
 
         return VerifiedMicrosoftIdentity(

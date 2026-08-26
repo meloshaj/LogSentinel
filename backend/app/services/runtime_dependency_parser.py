@@ -478,9 +478,13 @@ class RuntimeDependencyParser:
                 continue
 
             if normalized_key in self._target_service_keys:
-                self._add_hint(target_hints, token_value, precedence, state, from_text=True)
+                self._add_hint(
+                    target_hints, token_value, precedence, state, from_text=True
+                )
             if normalized_key in self._operation_hint_keys:
-                self._add_hint(operation_hints, token_value, precedence, state, from_text=True)
+                self._add_hint(
+                    operation_hints, token_value, precedence, state, from_text=True
+                )
 
     def _add_traceparent(
         self,
@@ -582,7 +586,9 @@ class RuntimeDependencyParser:
             return None
         return trace_id, parent_id
 
-    def _coerce_identifier_value(self, value: Any, *, from_text: bool = False) -> str | None:
+    def _coerce_identifier_value(
+        self, value: Any, *, from_text: bool = False
+    ) -> str | None:
         if value is None or isinstance(value, bool | bytes | bytearray | memoryview):
             return None
         if isinstance(value, str):
@@ -623,7 +629,10 @@ class RuntimeDependencyParser:
     ) -> _IdentifierOccurrence | None:
         if not occurrences:
             return None
-        return sorted(occurrences, key=lambda occurrence: (occurrence.precedence, occurrence.order))[0]
+        return sorted(
+            occurrences,
+            key=lambda occurrence: (occurrence.precedence, occurrence.order),
+        )[0]
 
     def _select_hint(self, hints: list[_TargetHintOccurrence]) -> str | None:
         if not hints:

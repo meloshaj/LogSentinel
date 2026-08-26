@@ -86,7 +86,9 @@ class PathwayScore(BaseModel):
 
     model_config = ConfigDict(validate_assignment=True)
 
-    @field_validator("supporting_correlation_ids", "supporting_event_ids", mode="before")
+    @field_validator(
+        "supporting_correlation_ids", "supporting_event_ids", mode="before"
+    )
     @classmethod
     def _normalize_ids(cls, value: Any) -> list[str]:
         return _sorted_unique(value)
@@ -106,7 +108,9 @@ class RootCauseCandidate(BaseModel):
 
     model_config = ConfigDict(validate_assignment=True)
 
-    @field_validator("supporting_correlation_ids", "supporting_event_ids", mode="before")
+    @field_validator(
+        "supporting_correlation_ids", "supporting_event_ids", mode="before"
+    )
     @classmethod
     def _normalize_ids(cls, value: Any) -> list[str]:
         return _sorted_unique(value)
@@ -148,7 +152,12 @@ class BlastRadiusResult(BaseModel):
 
     model_config = ConfigDict(validate_assignment=True)
 
-    @field_validator("affected_services", "supporting_correlation_ids", "supporting_event_ids", mode="before")
+    @field_validator(
+        "affected_services",
+        "supporting_correlation_ids",
+        "supporting_event_ids",
+        mode="before",
+    )
     @classmethod
     def _normalize_ids(cls, value: Any) -> list[str]:
         return _sorted_unique(value)

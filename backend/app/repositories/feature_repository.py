@@ -73,11 +73,14 @@ class FeatureRepository:
             return self._engine
         return get_engine()
 
-    async def persist_feature_vector(self, feature_vector: FeatureVector) -> None:
+    async def persist_feature_vector(
+        self, tenant_id: str, feature_vector: FeatureVector
+    ) -> None:
         """Insert a single feature vector and its anomaly event (if any)."""
         now = datetime.now(timezone.utc)
 
         window_row = {
+            "tenant_id": tenant_id,
             "window_id": feature_vector.window_id,
             "start_time": feature_vector.window_start or now,
             "end_time": feature_vector.window_end or now,
@@ -94,8 +97,12 @@ class FeatureRepository:
 
                 # If an anomaly was detected, also write an anomaly event row
                 prediction = feature_vector.anomaly_prediction
-                if isinstance(prediction, dict) and prediction.get("is_anomaly") is True:
+                if (
+                    isinstance(prediction, dict)
+                    and prediction.get("is_anomaly") is True
+                ):
                     anomaly_row = {
+                        "tenant_id": tenant_id,
                         "window_id": feature_vector.window_id,
                         "event_type": "anomaly.detected",
                         "severity": prediction.get("severity", "unknown"),
@@ -112,7 +119,7 @@ class FeatureRepository:
             )
 
     async def persist_feature_vectors(
-        self, feature_vectors: list[FeatureVector]
+        self, tenant_id: str, feature_vectors: list[FeatureVector]
     ) -> int:
         """Insert multiple feature vectors in a single transaction."""
         if not feature_vectors:
@@ -121,19 +128,20 @@ class FeatureRepository:
         persisted = 0
         for fv in feature_vectors:
             try:
-                await self.persist_feature_vector(fv)
+                await self.persist_feature_vector(tenant_id, fv)
                 persisted += 1
             except Exception:
-                logger.exception(
-                    "Failed to persist feature vector %s", fv.window_id
-                )
+                logger.exception("Failed to persist feature vector %s", fv.window_id)
 
         return persisted
 
-    async def get_recent_features(self, limit: int = 50) -> list[dict[str, Any]]:
+    async def get_recent_features(
+        self, tenant_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
         """Return recent feature windows as dicts, newest first."""
         stmt = (
             select(feature_windows_table)
+            .where(feature_windows_table.c.tenant_id == tenant_id)
             .order_by(feature_windows_table.c.created_at.desc())
             .limit(max(0, limit))
         )
@@ -144,10 +152,13 @@ class FeatureRepository:
 
         return [dict(row) for row in rows]
 
-    async def get_recent_anomalies(self, limit: int = 50) -> list[dict[str, Any]]:
+    async def get_recent_anomalies(
+        self, tenant_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
         """Return recent anomaly events as dicts, newest first."""
         stmt = (
             select(anomaly_events_table)
+            .where(anomaly_events_table.c.tenant_id == tenant_id)
             .order_by(anomaly_events_table.c.created_at.desc())
             .limit(max(0, limit))
         )
@@ -161,6 +172,7 @@ class FeatureRepository:
     async def get_recent_anomaly_contexts(
         self,
         *,
+        tenant_id: str,
         start_time: datetime,
         end_time: datetime,
         limit: int = 500,
@@ -169,7 +181,10 @@ class FeatureRepository:
         joined = join(
             anomaly_events_table,
             feature_windows_table,
-            anomaly_events_table.c.window_id == feature_windows_table.c.window_id,
+            and_(
+                anomaly_events_table.c.tenant_id == feature_windows_table.c.tenant_id,
+                anomaly_events_table.c.window_id == feature_windows_table.c.window_id,
+            ),
         )
         stmt = (
             select(
@@ -190,6 +205,7 @@ class FeatureRepository:
             .select_from(joined)
             .where(
                 and_(
+                    anomaly_events_table.c.tenant_id == tenant_id,
                     anomaly_events_table.c.created_at >= start_time,
                     anomaly_events_table.c.created_at <= end_time,
                 )

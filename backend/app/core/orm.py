@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 
+from cryptography.fernet import Fernet
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -14,11 +16,40 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, VARCHAR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.types import TypeDecorator
+
+# Ensure key is a valid Fernet key. It must be 32 URL-safe base64-encoded bytes.
+_secret = os.getenv("ENCRYPTION_KEY")
+if not _secret:
+    raise ValueError(
+        "ENCRYPTION_KEY environment variable is not set. It must be a 32-byte URL-safe base64-encoded string."
+    )
+_fernet = Fernet(_secret.encode("utf-8"))
+
+
+class EncryptedString(TypeDecorator):
+    """Transparently encrypt/decrypt strings using Fernet."""
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            return _fernet.encrypt(value.encode("utf-8")).decode("utf-8")
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            try:
+                return _fernet.decrypt(value.encode("utf-8")).decode("utf-8")
+            except Exception:
+                # Fallback if decryption fails (e.g. data was plaintext)
+                return value
+        return value
 
 
 class Base(DeclarativeBase):
     """Shared declarative base for all LogSentinel ORM models."""
-
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +116,9 @@ class FeatureWindowRecord(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     window_id: Mapped[str] = mapped_column(VARCHAR(128), nullable=False, unique=True)
-    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    start_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     service: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     log_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -190,8 +223,8 @@ class AccountRecord(Base):
     )
     provider: Mapped[str] = mapped_column(VARCHAR(32), nullable=False)
     provider_account_id: Mapped[str] = mapped_column(VARCHAR(512), nullable=False)
-    access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_token: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    refresh_token: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -206,7 +239,8 @@ class AccountRecord(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "provider", "provider_account_id",
+            "provider",
+            "provider_account_id",
             name="uq_accounts_provider_provider_account_id",
         ),
     )
@@ -266,10 +300,13 @@ class ExternalIdentityRecord(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "provider", "issuer", "subject",
+            "provider",
+            "issuer",
+            "subject",
             name="uq_external_identities_provider_issuer_subject",
         ),
     )
+
 
 # ---------------------------------------------------------------------------
 # Tracking Loops — automated tracking for anomaly alerts
@@ -288,7 +325,9 @@ class TrackingLoopRecord(Base):
         nullable=False,
     )
     anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
-    status: Mapped[str] = mapped_column(VARCHAR(32), nullable=False, default="triggered")
+    status: Mapped[str] = mapped_column(
+        VARCHAR(32), nullable=False, default="triggered"
+    )
     blast_radius: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

@@ -122,27 +122,27 @@ _PAYMENT_STACK_TRACES: list[str] = [
 _SYMPTOM_TEMPLATES: list[tuple[str, str]] = [
     (
         "Downstream service {failed_service} returned HTTP {status} after {duration_ms}ms",
-        '{ts} ERROR {service_name}: downstream_error target={failed_service} status={status} latency={duration_ms}ms correlation_id={correlation_id}',
+        "{ts} ERROR {service_name}: downstream_error target={failed_service} status={status} latency={duration_ms}ms correlation_id={correlation_id}",
     ),
     (
         "Circuit breaker OPEN for {failed_service}: {failure_count} failures in last 60s",
-        '{ts} ERROR {service_name}: circuit_breaker_open target={failed_service} failures={failure_count} window=60s correlation_id={correlation_id}',
+        "{ts} ERROR {service_name}: circuit_breaker_open target={failed_service} failures={failure_count} window=60s correlation_id={correlation_id}",
     ),
     (
         "Connection timeout to {failed_service} after {duration_ms}ms — request dropped",
-        '{ts} ERROR {service_name}: connection_timeout target={failed_service} timeout={duration_ms}ms correlation_id={correlation_id}',
+        "{ts} ERROR {service_name}: connection_timeout target={failed_service} timeout={duration_ms}ms correlation_id={correlation_id}",
     ),
     (
         "Retry {retry_count}/3 to {failed_service} failed: upstream unavailable",
-        '{ts} WARN {service_name}: retry_exhausted target={failed_service} attempt={retry_count} max=3 correlation_id={correlation_id}',
+        "{ts} WARN {service_name}: retry_exhausted target={failed_service} attempt={retry_count} max=3 correlation_id={correlation_id}",
     ),
     (
         "Fallback activated for {failed_service}: serving stale cache entry",
-        '{ts} WARN {service_name}: fallback_activated target={failed_service} strategy=stale_cache correlation_id={correlation_id}',
+        "{ts} WARN {service_name}: fallback_activated target={failed_service} strategy=stale_cache correlation_id={correlation_id}",
     ),
     (
         "Request aborted: dependency {failed_service} unreachable — returning {status} to caller",
-        '{ts} ERROR {service_name}: request_aborted dependency={failed_service} status={status} correlation_id={correlation_id}',
+        "{ts} ERROR {service_name}: request_aborted dependency={failed_service} status={status} correlation_id={correlation_id}",
     ),
 ]
 
@@ -156,37 +156,37 @@ _ERROR_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
         "service_types": ["database"],
         "stack_traces": _DB_STACK_TRACES,
         "message": "Connection pool exhausted: QueuePool limit reached — all {pool_max} connections in use, {overflow} overflow active",
-        "raw": '{ts} CRITICAL {service_name}: pool_exhausted pool_size={pool_max} overflow={overflow} queued={queued} correlation_id={correlation_id}',
+        "raw": "{ts} CRITICAL {service_name}: pool_exhausted pool_size={pool_max} overflow={overflow} queued={queued} correlation_id={correlation_id}",
     },
     "deadlock": {
         "service_types": ["database"],
         "stack_traces": _DB_STACK_TRACES,
         "message": "Deadlock detected on table {table}: transaction rolled back after {duration_ms}ms",
-        "raw": '{ts} CRITICAL {service_name}: deadlock table={table} duration={duration_ms}ms txn_id={txn_id} correlation_id={correlation_id}',
+        "raw": "{ts} CRITICAL {service_name}: deadlock table={table} duration={duration_ms}ms txn_id={txn_id} correlation_id={correlation_id}",
     },
     "auth_key_rotation_failure": {
         "service_types": ["auth"],
         "stack_traces": _AUTH_STACK_TRACES,
         "message": "Signing key rotation failed: unable to persist new RSA key to key store",
-        "raw": '{ts} CRITICAL {service_name}: key_rotation_failed error=ConnectionError target=redis:6379 correlation_id={correlation_id}',
+        "raw": "{ts} CRITICAL {service_name}: key_rotation_failed error=ConnectionError target=redis:6379 correlation_id={correlation_id}",
     },
     "jwt_verification_failure": {
         "service_types": ["auth"],
         "stack_traces": _AUTH_STACK_TRACES,
         "message": "JWT verification failed for all incoming requests: signing key unavailable",
-        "raw": '{ts} CRITICAL {service_name}: jwt_verification_mass_failure active_sessions_affected={affected_sessions} correlation_id={correlation_id}',
+        "raw": "{ts} CRITICAL {service_name}: jwt_verification_mass_failure active_sessions_affected={affected_sessions} correlation_id={correlation_id}",
     },
     "network_partition": {
         "service_types": ["gateway", "order", "payment", "database", "auth", "generic"],
         "stack_traces": _NETWORK_STACK_TRACES,
         "message": "Network partition detected: {packet_loss_pct}% packet loss to {target_host}",
-        "raw": '{ts} CRITICAL {service_name}: network_partition target={target_host} packet_loss={packet_loss_pct}% rtt={rtt_ms}ms correlation_id={correlation_id}',
+        "raw": "{ts} CRITICAL {service_name}: network_partition target={target_host} packet_loss={packet_loss_pct}% rtt={rtt_ms}ms correlation_id={correlation_id}",
     },
     "payment_provider_outage": {
         "service_types": ["payment"],
         "stack_traces": _PAYMENT_STACK_TRACES,
         "message": "Payment provider {provider} unreachable: connection refused on all endpoints",
-        "raw": '{ts} CRITICAL {service_name}: provider_outage provider={provider} endpoints_tried=3 last_error=ConnectTimeout correlation_id={correlation_id}',
+        "raw": "{ts} CRITICAL {service_name}: provider_outage provider={provider} endpoints_tried=3 last_error=ConnectTimeout correlation_id={correlation_id}",
     },
     "oom_crash": {
         "service_types": ["gateway", "order", "payment", "database", "auth", "generic"],
@@ -198,7 +198,7 @@ _ERROR_TYPE_REGISTRY: dict[str, dict[str, Any]] = {
                   Process will be terminated by OOM killer"""),
         ],
         "message": "Process terminated by OOM killer: RSS {rss_mb}MB exceeded limit {limit_mb}MB",
-        "raw": '{ts} CRITICAL {service_name}: oom_kill rss_mb={rss_mb} limit_mb={limit_mb} correlation_id={correlation_id}',
+        "raw": "{ts} CRITICAL {service_name}: oom_kill rss_mb={rss_mb} limit_mb={limit_mb} correlation_id={correlation_id}",
     },
 }
 
@@ -397,7 +397,11 @@ class CascadingExceptionEngine:
         }
 
         # Determine level: warnings for retries/fallbacks, errors for the rest.
-        level = "warning" if "retry" in msg_fmt.lower() or "fallback" in msg_fmt.lower() else "error"
+        level = (
+            "warning"
+            if "retry" in msg_fmt.lower() or "fallback" in msg_fmt.lower()
+            else "error"
+        )
 
         message = msg_fmt.format_map(variables)
         raw = raw_fmt.format_map(variables)

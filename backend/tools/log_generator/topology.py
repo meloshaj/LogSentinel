@@ -131,7 +131,5 @@ class ServiceTopology:
             "roots": self.root_services(),
             "leaves": self.leaf_services(),
             "topological_order": self.service_names,
-            "edges": [
-                {"from": u, "to": v} for u, v in self._graph.edges
-            ],
+            "edges": [{"from": u, "to": v} for u, v in self._graph.edges],
         }

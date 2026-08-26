@@ -55,7 +55,9 @@ def init_engine(settings: DatabaseSettings) -> AsyncEngine:
     global _engine, _session_factory
 
     if _engine is not None:
-        logger.warning("init_engine() called while an engine already exists — disposing the old one first")
+        logger.warning(
+            "init_engine() called while an engine already exists — disposing the old one first"
+        )
         # Can't await here so we just replace; the lifespan should call dispose first.
 
     _engine = create_async_engine(
@@ -74,6 +76,7 @@ def init_engine(settings: DatabaseSettings) -> AsyncEngine:
 
     if settings.profiling_enabled:
         from .profiler import db_profiler
+
         db_profiler.attach_to_engine(_engine.sync_engine)
 
     _session_factory = async_sessionmaker(
@@ -153,9 +156,10 @@ async def verify_schema_ready() -> None:
     try:
         async with engine.connect() as connection:
             row = (
-                await connection.execute(
-                    text(
-                        """
+                (
+                    await connection.execute(
+                        text(
+                            """
                         SELECT
                             EXISTS (
                                 SELECT 1
@@ -175,7 +179,7 @@ async def verify_schema_ready() -> None:
                             EXISTS (
                                 SELECT 1
                                 FROM schema_migrations
-                                WHERE version = '20260822_0001_schema_reconciliation'
+                                WHERE version = '20260826_0001_multitenant_partitioning'
                             ) AS current_migration,
                             EXISTS (
                                 SELECT 1
@@ -189,9 +193,12 @@ async def verify_schema_ready() -> None:
                                   AND hypertable_name = 'logs'
                             ) AS logs_hypertable
                         """
+                        )
                     )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
     except Exception as exc:
         raise RuntimeError(
             "FATAL: canonical LogSentinel schema is not ready; run "
@@ -310,9 +317,9 @@ def check_pool_health() -> dict[str, Any]:
     pool = _engine.pool
     return {
         "initialized": True,
-        "pool_size": pool.size(),
-        "checked_in": pool.checkedin(),
-        "checked_out": pool.checkedout(),
-        "overflow": pool.overflow(),
+        "pool_size": pool.size(),  # type: ignore
+        "checked_in": pool.checkedin(),  # type: ignore
+        "checked_out": pool.checkedout(),  # type: ignore
+        "overflow": pool.overflow(),  # type: ignore
         "status": pool.status(),
     }

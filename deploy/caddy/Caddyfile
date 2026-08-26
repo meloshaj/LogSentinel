@@ -1,0 +1,68 @@
+{
+    # Global options
+    admin off
+}
+
+{$DOMAIN_NAME:localhost} {
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss: https:;"
+    }
+
+    # Block external access to internal metrics and OpenAPI docs
+    @internal {
+        remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1/8 ::1
+    }
+    
+    @external_blocked {
+        not remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1/8 ::1
+        path /metrics /readiness /health /docs /redoc /openapi.json
+    }
+    
+    respond @external_blocked 403
+
+    # Proxy API and WebSockets to backend
+    handle /api/* {
+        reverse_proxy backend:8000
+    }
+    
+    handle /v1/* {
+        reverse_proxy backend:8000
+    }
+
+    handle /ingest-log {
+        reverse_proxy backend:8000
+    }
+    
+    handle /ws/* {
+        reverse_proxy backend:8000
+    }
+    
+    # Internal routes (if accessed directly, but we handled the block above)
+    handle /metrics {
+        reverse_proxy backend:8000
+    }
+    handle /readiness {
+        reverse_proxy backend:8000
+    }
+    handle /health {
+        reverse_proxy backend:8000
+    }
+    handle /docs {
+        reverse_proxy backend:8000
+    }
+    handle /redoc {
+        reverse_proxy backend:8000
+    }
+    handle /openapi.json {
+        reverse_proxy backend:8000
+    }
+
+    # Serve static SPA files
+    root * /usr/share/caddy/html
+    try_files {path} /index.html
+    file_server
+}

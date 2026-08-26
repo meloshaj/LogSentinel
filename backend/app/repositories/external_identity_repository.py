@@ -61,7 +61,9 @@ class ExternalIdentityRepository:
         user_id: int,
     ) -> list[ExternalIdentityRecord]:
         """Look up all external identities for a specific user."""
-        stmt = select(ExternalIdentityRecord).where(ExternalIdentityRecord.user_id == user_id)
+        stmt = select(ExternalIdentityRecord).where(
+            ExternalIdentityRecord.user_id == user_id
+        )
         result = await db.execute(stmt)
         return list(result.scalars().all())
 

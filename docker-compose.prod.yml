@@ -1,0 +1,163 @@
+version: '3.8'
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: logsentinel_postgres_prod
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-logsentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
+      POSTGRES_DB: ${POSTGRES_DB:-logsentinel_db}
+    # No ports exposed to host in production
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logsentinel} -d ${POSTGRES_DB:-logsentinel_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8.0-alpine
+    container_name: logsentinel_valkey_prod
+    command: ["valkey-server", "--save", "60", "1", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes", "--appendfsync", "everysec"]
+    # No ports exposed to host in production
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  db-migrator:
+    build:
+      context: ./backend
+    image: logsentinel-backend:prod
+    command: ["python", "/repo/scripts/database_lifecycle.py", "--apply"]
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+    volumes:
+      - .:/repo:ro
+    working_dir: /repo
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+    image: logsentinel-backend:prod
+    environment:
+      - ENVIRONMENT=production
+      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
+      - REDIS_URL=redis://valkey:6379/0
+      - INGEST_API_KEY=${INGEST_API_KEY:?INGEST_API_KEY must be set}
+      - LOG_STREAM_NAME=logs:stream
+      - LOG_WORKERS_GROUP=log_workers
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
+      - FRONTEND_URL=${FRONTEND_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}
+      - RUN_ARCHIVE_WORKER_IN_LIFESPAN=false
+    volumes:
+      - drain_data:/app/app/state
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      db-migrator:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  archive-worker:
+    build:
+      context: ./backend
+    image: logsentinel-backend:prod
+    command: ["python", "-m", "app.archive.worker"]
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 1024M
+    environment:
+      - ENVIRONMENT=production
+      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
+      - REDIS_URL=redis://valkey:6379/0
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+    volumes:
+      - archive_temp:/tmp/archive
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    build:
+      context: .
+      target: production
+      args:
+        VITE_API_URL: https://${DOMAIN_NAME:-logsentinel.example.com}
+    image: logsentinel-dashboard:prod
+    container_name: logsentinel_caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME:-logsentinel.example.com}
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  timescale_data:
+  valkey_data:
+  drain_data:
+  archive_temp:
+  caddy_data:
+  caddy_config:

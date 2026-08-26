@@ -111,7 +111,7 @@ class GraphAnalysisService:
         observed_at = _feature_observed_at(feature_vector)
         calculated = _normalize_datetime(calculated_at or observed_at)
         lookback_start = observed_at - timedelta(seconds=self.settings.lookback_seconds)
-        anomaly_contexts = await self.feature_repository.get_recent_anomaly_contexts(
+        anomaly_contexts = await self.feature_repository.get_recent_anomaly_contexts(  # type: ignore
             start_time=lookback_start,
             end_time=observed_at,
             limit=self.settings.max_anomaly_events,
@@ -127,6 +127,7 @@ class GraphAnalysisService:
             logger.debug("Graph analysis skipped: no anomaly evidence")
             return None
         import asyncio
+
         result = await asyncio.to_thread(
             self.scorer.score, graph, evidence, calculated_at=calculated
         )
@@ -184,7 +185,7 @@ class GraphAnalysisService:
             return []
 
         correlation_ids = _correlation_ids_from_contexts(contexts)
-        log_rows = await self.log_repository.get_recent_correlation_evidence(
+        log_rows = await self.log_repository.get_recent_correlation_evidence(  # type: ignore
             start_time=start_time,
             end_time=end_time,
             services=sorted(service_names),
@@ -193,10 +194,7 @@ class GraphAnalysisService:
         )
         self._apply_log_evidence(accumulators, log_rows)
 
-        return [
-            accumulators[service].to_schema()
-            for service in sorted(accumulators)
-        ]
+        return [accumulators[service].to_schema() for service in sorted(accumulators)]
 
     def _apply_log_evidence(
         self,
@@ -289,7 +287,9 @@ def _dedupe_contexts(contexts: Sequence[Mapping[str, Any]]) -> list[Mapping[str,
             continue
         seen.add(key)
         deduped.append(context)
-    return sorted(deduped, key=lambda item: (_context_observed_at(item), _context_event_id(item)))
+    return sorted(
+        deduped, key=lambda item: (_context_observed_at(item), _context_event_id(item))
+    )
 
 
 def _prediction_from_context(context: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -373,7 +373,9 @@ def _collect_correlation_values(source: Mapping[str, Any], values: set[str]) -> 
             cleaned = _clean_text(raw_value)
             if cleaned is not None:
                 values.add(cleaned)
-        elif isinstance(raw_value, Sequence) and not isinstance(raw_value, str | bytes | bytearray):
+        elif isinstance(raw_value, Sequence) and not isinstance(
+            raw_value, str | bytes | bytearray
+        ):
             for item in raw_value:
                 cleaned = _clean_text(item)
                 if cleaned is not None:

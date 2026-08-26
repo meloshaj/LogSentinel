@@ -48,7 +48,9 @@ async def check_database_health(engine: AsyncEngine | None = None) -> dict[str, 
     try:
         async with engine.connect() as connection:
             table_exists = await _logs_table_exists(connection)
-            existing_columns = await _logs_columns(connection) if table_exists else set()
+            existing_columns = (
+                await _logs_columns(connection) if table_exists else set()
+            )
             missing_columns = find_missing_columns(existing_columns)
 
             return {

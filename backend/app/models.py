@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class ParsedLog(BaseModel):
     """Standardized parsed log structure from Drain3 pipeline.
-    
+
     This model ensures type safety and validation for logs that have been
     processed through the Drain3 template mining pipeline.
 
@@ -42,7 +42,7 @@ class ParsedLog(BaseModel):
         min_length=1,
         description="Original unprocessed log message",
     )
-    
+
     # Drain3 template fields
     template_id: str = Field(
         ...,
@@ -65,7 +65,7 @@ class ParsedLog(BaseModel):
         None,
         description="Drain3 change type (none, cluster_created, cluster_template_changed)",
     )
-    
+
     # Optional metadata fields
     source: str | None = Field(
         None,
@@ -83,13 +83,13 @@ class ParsedLog(BaseModel):
         default_factory=dict,
         description="Additional structured metadata",
     )
-    
+
     # Processing timestamps
     parsed_at: datetime | None = Field(
         None,
         description="Timestamp when Drain3 parsing completed",
     )
-    
+
     model_config = ConfigDict(validate_assignment=True)
 
     def __getitem__(self, item: str) -> Any:
@@ -129,10 +129,10 @@ class ParsedLog(BaseModel):
 
 class LogWindow(BaseModel):
     """A time-based sliding window of parsed logs.
-    
+
     Used for feature extraction and anomaly detection over temporal sequences.
     """
-    
+
     window_id: str = Field(
         ...,
         description="Unique identifier for this window",
@@ -153,31 +153,31 @@ class LogWindow(BaseModel):
         None,
         description="Service filter applied to this window (if any)",
     )
-    
+
     def log_count(self) -> int:
         """Return the number of logs in this window."""
         return len(self.logs)
-    
+
     def duration_seconds(self) -> float:
         """Return the window duration in seconds."""
         return (self.end_time - self.start_time).total_seconds()
-    
+
     def template_distribution(self) -> dict[str, int]:
         """Return distribution of template IDs in this window."""
         distribution: dict[str, int] = {}
         for log in self.logs:
             distribution[log.template_id] = distribution.get(log.template_id, 0) + 1
         return distribution
-    
+
     model_config = ConfigDict()
 
 
 class FeatureVector(BaseModel):
     """Feature vector extracted from a log window for ML processing.
-    
+
     Contains both statistical and semantic features derived from log patterns.
     """
-    
+
     window_id: str = Field(
         ...,
         description="Reference to the source LogWindow",
@@ -194,7 +194,7 @@ class FeatureVector(BaseModel):
         None,
         description="Exclusive end of the source window",
     )
-    
+
     # Statistical features
     log_count: int = Field(
         ...,
@@ -216,7 +216,7 @@ class FeatureVector(BaseModel):
         ge=0,
         description="Number of warning-level logs",
     )
-    
+
     # Template features
     template_frequencies: dict[str, float] = Field(
         default_factory=dict,
@@ -227,20 +227,20 @@ class FeatureVector(BaseModel):
         ge=0.0,
         description="Shannon entropy of template distribution",
     )
-    
+
     # Service features
     service_distribution: dict[str, int] = Field(
         default_factory=dict,
         description="Distribution of logs across services",
     )
-    
+
     # Temporal features
     logs_per_second: float | None = Field(
         None,
         ge=0.0,
         description="Average log rate in this window",
     )
-    
+
     # Raw feature array for ML models
     feature_array: list[float] | None = Field(
         None,
@@ -258,13 +258,13 @@ class FeatureVector(BaseModel):
         default_factory=dict,
         description="Additional structured feature values for inspection and downstream use",
     )
-    
+
     model_config = ConfigDict()
 
 
 class PerformanceEvent(BaseModel):
     """Performance threshold breach event."""
-    
+
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         description="Event creation timestamp",
@@ -289,7 +289,7 @@ class PerformanceEvent(BaseModel):
         default_factory=dict,
         description="Snapshot of all health metrics at the time of breach",
     )
-    
+
     model_config = ConfigDict()
 
 

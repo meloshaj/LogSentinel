@@ -44,6 +44,7 @@ import {
   authenticatedWebSocketUrl,
   clearAuthToken,
   fetchAuthenticated,
+  getAuthToken,
 } from "../utils/auth";
 
 // ---------------------------------------------------------------------------
@@ -854,6 +855,18 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
         reconnectAttemptsRef.current = 0;
         updateConnectionState("connected");
         setConnectionUrl(candidate);
+        
+        // Send the authentication handshake
+        const token = getAuthToken();
+        if (token) {
+          socket.send(JSON.stringify({ type: "auth", token }));
+        } else {
+          // If no token is available, clear credential and trigger disconnect flow
+          clearAuthToken();
+          reconnectEnabled = false;
+          updateConnectionState("error");
+          socket.close();
+        }
       };
 
       socket.onmessage = (msg) => {

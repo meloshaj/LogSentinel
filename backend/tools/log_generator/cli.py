@@ -67,7 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="RNG seed for reproducible generation.",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable DEBUG-level logging.",
     )
@@ -192,12 +193,14 @@ async def _run(args: argparse.Namespace) -> None:
 
     try:
         if args.mode == "stream":
-            task = asyncio.create_task(streamer.stream_continuous(
-                generator=generator,
-                rate_logs_per_sec=args.rate,
-                batch_size=args.batch_size,
-                duration_seconds=args.duration,
-            ))
+            task = asyncio.create_task(
+                streamer.stream_continuous(
+                    generator=generator,
+                    rate_logs_per_sec=args.rate,
+                    batch_size=args.batch_size,
+                    duration_seconds=args.duration,
+                )
+            )
             # Wait for either the task to finish or a shutdown signal.
             done, _ = await asyncio.wait(
                 [task, asyncio.create_task(shutdown_event.wait())],
@@ -211,13 +214,15 @@ async def _run(args: argparse.Namespace) -> None:
                     pass
 
         elif args.mode == "scenario":
-            task = asyncio.create_task(streamer.stream_scenario(
-                generator=generator,
-                scenario_name=args.name,
-                step_duration_seconds=args.step_duration,
-                background_noise=args.background_noise,
-                batch_size=args.batch_size,
-            ))
+            task = asyncio.create_task(
+                streamer.stream_scenario(
+                    generator=generator,
+                    scenario_name=args.name,
+                    step_duration_seconds=args.step_duration,
+                    background_noise=args.background_noise,
+                    batch_size=args.batch_size,
+                )
+            )
             done, _ = await asyncio.wait(
                 [task, asyncio.create_task(shutdown_event.wait())],
                 return_when=asyncio.FIRST_COMPLETED,
@@ -230,12 +235,14 @@ async def _run(args: argparse.Namespace) -> None:
                     pass
 
         elif args.mode == "burst":
-            task = asyncio.create_task(streamer.burst(
-                generator=generator,
-                total_logs=args.count,
-                batch_size=args.batch_size,
-                concurrency=args.concurrency,
-            ))
+            task = asyncio.create_task(
+                streamer.burst(
+                    generator=generator,
+                    total_logs=args.count,
+                    batch_size=args.batch_size,
+                    concurrency=args.concurrency,
+                )
+            )
             done, _ = await asyncio.wait(
                 [task, asyncio.create_task(shutdown_event.wait())],
                 return_when=asyncio.FIRST_COMPLETED,
@@ -253,18 +260,18 @@ async def _run(args: argparse.Namespace) -> None:
     # Print final report if shutdown was triggered before the task printed it.
     if shutdown_event.is_set():
         print(streamer.telemetry.format_final_report())
-        
+
     if args.mode == "scenario" and args.name == "database_pool_exhaustion":
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("  PHASE 3: METRICS VALIDATION COMPLETE")
-        print("="*60)
+        print("=" * 60)
         print("  Injected Anomaly: Database Connection Pool Exhaustion")
         print("  Correlation ID:   Generated dynamically by CascadingExceptionEngine")
         print("  Burst Volume:     500 explicit CRITICAL logs")
         print("  Expected Alerts:  1. 'database-service' flashing red in Topology")
         print("                    2. ML Anomaly Score > 0.85")
         print("                    3. Tracking loop created in Incidents Panel")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
 
 
 # ---------------------------------------------------------------------------

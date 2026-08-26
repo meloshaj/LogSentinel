@@ -1,0 +1,53 @@
+groups:
+  - name: logsentinel-alerts
+    rules:
+      - alert: ArchiveBacklogGrowing
+        expr: archive_backlog_seconds > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Archive backlog is growing (> 24h)"
+          description: "The age of the oldest unarchived data exceeds 24 hours, currently at {{ $value }} seconds."
+
+      - alert: ArchiveVerificationFailed
+        expr: increase(logsentinel_archive_verification_failures_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Archive verification failed"
+          description: "One or more archive manifest verifications failed in the last 5 minutes."
+
+      - alert: ArchiveHotDeleteFailed
+        expr: increase(logsentinel_archive_hot_delete_failures_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Archive hot delete failed"
+          description: "One or more chunks failed to drop from hot storage after verification in the last 5 minutes."
+
+      - alert: TimescaleDiskSpaceRunningLow
+        expr: (node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql/data"} / node_filesystem_size_bytes{mountpoint="/var/lib/postgresql/data"}) * 100 < 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "TimescaleDB persistent volume is running low on disk space"
+          description: "Disk usage has exceeded 80% on the persistent volume."
+
+      - alert: ValkeyBufferOverflow
+        expr: increase(log_dropped_buffer_full_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Valkey log buffer overflow"
+          description: "Logs were dropped due to a full buffer in the last 5 minutes."
+
+      - alert: BackendReadinessFailing
+        expr: probe_success{job="logsentinel-backend"} == 0 or up{job="logsentinel-backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend readiness probe failing"
+          description: "The backend service readiness check has been failing for more than 1 minute."

@@ -291,7 +291,7 @@ export function ServiceTopologyGraph({
 
   if (error && initialNodes.length === 0) {
     return (
-      <div className="flex items-center justify-center w-full h-full bg-[#161b22] rounded-xl border border-[#21262d] p-6">
+      <div data-testid="topology-error" className="flex items-center justify-center w-full h-full bg-[#161b22] rounded-xl border border-[#21262d] p-6">
         <div className="flex flex-col items-center gap-3 text-center">
           <AlertTriangle className="w-8 h-8 text-[#ef4444]" />
           <span className="text-[#e6edf3] font-semibold text-sm">Failed to load service topology</span>
@@ -308,7 +308,10 @@ export function ServiceTopologyGraph({
   }
 
   return (
-    <div className="relative w-full h-full bg-[#0d1117] rounded-xl border border-[#21262d] overflow-hidden group">
+    <div 
+      data-testid="topology-graph" 
+      className={`relative w-full h-full bg-[#0d1117] rounded-xl border border-[#21262d] overflow-hidden group topology-graph--${mode}`}
+    >
       {/* Header bar */}
       <div className="absolute top-3 left-4 right-4 z-10 flex flex-wrap items-center justify-between gap-2 pointer-events-none">
         <div className="flex items-center gap-2 pointer-events-auto bg-[#161b22]/95 backdrop-blur-md px-3 py-1.5 rounded-lg border border-[#21262d] shadow-md">

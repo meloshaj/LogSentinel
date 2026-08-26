@@ -112,13 +112,11 @@ export async function fetchAuthenticated(
 /** Build a tokenized WebSocket URL without exposing the token in UI state. */
 export function authenticatedWebSocketUrl(
   candidate: string,
-  token: string | null = getAuthToken(),
 ): string | null {
-  if (!token || !isTrustedBackendUrl(candidate)) return null;
+  if (!isTrustedBackendUrl(candidate)) return null;
 
   try {
     const url = new URL(candidate, window.location.href);
-    url.searchParams.set("token", token);
     return url.toString();
   } catch {
     return null;

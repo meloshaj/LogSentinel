@@ -16,11 +16,18 @@ from sqlalchemy.engine import make_url
 
 class SMTPSettings(BaseModel):
     """SMTP configuration for transactional emails."""
-    host: str = Field(default="localhost", description="SMTP server host (env: SMTP_HOST)")
+
+    host: str = Field(
+        default="localhost", description="SMTP server host (env: SMTP_HOST)"
+    )
     port: int = Field(default=1025, description="SMTP server port (env: SMTP_PORT)")
     user: str = Field(default="", description="SMTP user (env: SMTP_USER)")
     password: str = Field(default="", description="SMTP password (env: SMTP_PASSWORD)")
-    emails_from_email: str = Field(default="noreply@logsentinel.local", description="Sender email address (env: EMAILS_FROM_EMAIL)")
+    emails_from_email: str = Field(
+        default="noreply@logsentinel.local",
+        description="Sender email address (env: EMAILS_FROM_EMAIL)",
+    )
+
 
 def get_smtp_settings() -> SMTPSettings:
     return SMTPSettings(
@@ -118,9 +125,9 @@ class DatabaseSettings(BaseModel):
     @classmethod
     def _coerce_port(cls, v: object) -> int:
         """Allow the port to arrive as a string from env-var sources."""
-        if isinstance(v, str):
-            return int(v)
-        return int(v)  # type: ignore[arg-type]
+        if isinstance(v, int):
+            return v
+        return int(str(v))  # type: ignore[arg-type]
 
     @property
     def url(self) -> str:
@@ -184,7 +191,9 @@ def get_database_settings() -> DatabaseSettings:
         port=int(_database_env("POSTGRES_PORT", "DB_PORT", default="5432")),
         db_name=_database_env("POSTGRES_DB", "DB_NAME", default="logsentinel_db"),
         pool_size=int(os.getenv("POSTGRES_POOL_SIZE", os.getenv("POOL_SIZE", "20"))),
-        max_overflow=int(os.getenv("POSTGRES_MAX_OVERFLOW", os.getenv("POOL_MAX_OVERFLOW", "10"))),
+        max_overflow=int(
+            os.getenv("POSTGRES_MAX_OVERFLOW", os.getenv("POOL_MAX_OVERFLOW", "10"))
+        ),
         pool_recycle_seconds=int(os.getenv("POOL_RECYCLE_SECONDS", "1800")),
         ssl_mode=_database_env("POSTGRES_SSL_MODE", "DB_SSL_MODE", default="disable"),
         echo_sql=os.getenv("SQL_ECHO", "false").lower() == "true",
@@ -223,9 +232,7 @@ def get_drain3_pipeline_settings() -> Drain3PipelineSettings:
     """Construct Drain3 pipeline settings from the current environment."""
     return Drain3PipelineSettings(
         batch_size=int(os.getenv("DRAIN3_BATCH_SIZE", "500")),
-        flush_interval_seconds=float(
-            os.getenv("DRAIN3_FLUSH_INTERVAL_SECONDS", "5.0")
-        ),
+        flush_interval_seconds=float(os.getenv("DRAIN3_FLUSH_INTERVAL_SECONDS", "5.0")),
         queue_drain_timeout_seconds=float(
             os.getenv("DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS", "30.0")
         ),
@@ -286,9 +293,9 @@ def get_graph_scoring_settings() -> GraphScoringSettings:
 class IngestionSecuritySettings(BaseModel):
     """Stateless API-key configuration for the ingestion endpoint."""
 
-    api_keys: tuple[str, ...] = Field(
-        default_factory=tuple,
-        description="Configured ingestion API keys from INGEST_API_KEY and INGEST_API_KEYS",
+    api_keys: dict[str, str] = Field(
+        default_factory=dict,
+        description="Configured ingestion API keys mapping api_key -> tenant_id from INGEST_API_KEY and INGEST_API_KEYS",
     )
 
     @property
@@ -297,19 +304,34 @@ class IngestionSecuritySettings(BaseModel):
         return bool(self.api_keys)
 
 
-def _split_api_keys(value: str | None) -> list[str]:
+def _split_api_keys(value: str | None) -> dict[str, str]:
+    """Parse comma-separated API keys into a mapping of key -> tenant_id.
+
+    Format: 'tenant_id:api_key' or just 'api_key' (defaults to tenant_id='default').
+    """
     if not value:
-        return []
-    return [key.strip() for key in value.split(",") if key.strip()]
+        return {}
+
+    result = {}
+    for item in value.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if ":" in item:
+            tenant_id, key = item.split(":", 1)
+            result[key.strip()] = tenant_id.strip()
+        else:
+            result[item] = "default"
+    return result
 
 
 def get_ingestion_security_settings() -> IngestionSecuritySettings:
     """Construct ingestion security settings from the current environment."""
-    keys: list[str] = []
-    keys.extend(_split_api_keys(os.getenv("INGEST_API_KEY")))
-    keys.extend(_split_api_keys(os.getenv("INGEST_API_KEYS")))
+    keys: dict[str, str] = {}
+    keys.update(_split_api_keys(os.getenv("INGEST_API_KEY")))
+    keys.update(_split_api_keys(os.getenv("INGEST_API_KEYS")))
 
-    return IngestionSecuritySettings(api_keys=tuple(dict.fromkeys(keys)))
+    return IngestionSecuritySettings(api_keys=keys)
 
 
 class GitHubAuthSettings(BaseModel):
@@ -411,7 +433,9 @@ class MicrosoftAuthSettings(BaseModel):
         try:
             return str(UUID(normalized))
         except ValueError as exc:
-            raise ValueError("AZURE_CLIENT_ID must be an application client GUID") from exc
+            raise ValueError(
+                "AZURE_CLIENT_ID must be an application client GUID"
+            ) from exc
 
     @field_validator("required_scope")
     @classmethod
@@ -503,4 +527,52 @@ def get_benchmarking_settings() -> BenchmarkingSettings:
         enable_benchmarking_endpoints=_parse_bool(
             os.getenv("ENABLE_BENCHMARKING_ENDPOINTS"), default=False
         ),
+    )
+
+
+class ArchiveSettings(BaseModel):
+    """Configuration for S3 Hot/Cold Storage Archive."""
+
+    s3_bucket: str = Field(
+        default="logsentinel-archive",
+        description="S3 bucket for cold storage (env: ARCHIVE_S3_BUCKET)",
+    )
+    s3_endpoint_url: str | None = Field(
+        default=None,
+        description="S3 endpoint URL, usually for local/MinIO (env: ARCHIVE_S3_ENDPOINT_URL)",
+    )
+    s3_region: str = Field(
+        default="us-east-1",
+        description="AWS/S3 region (env: ARCHIVE_S3_REGION)",
+    )
+    s3_access_key: str | None = Field(
+        default=None,
+        description="S3 Access Key ID (env: ARCHIVE_S3_ACCESS_KEY)",
+    )
+    s3_secret_key: str | None = Field(
+        default=None,
+        description="S3 Secret Access Key (env: ARCHIVE_S3_SECRET_KEY)",
+    )
+    archive_retention_days: int = Field(
+        default=30,
+        gt=0,
+        description="Number of days to keep data in hot storage before archiving (env: ARCHIVE_RETENTION_DAYS)",
+    )
+    staging_row_limit: int = Field(
+        default=1_000_000,
+        gt=0,
+        description="Maximum rows to rehydrate into temporary staging tables (env: ARCHIVE_STAGING_ROW_LIMIT)",
+    )
+
+
+def get_archive_settings() -> ArchiveSettings:
+    """Construct Archive settings from the current environment."""
+    return ArchiveSettings(
+        s3_bucket=os.getenv("ARCHIVE_S3_BUCKET", "logsentinel-archive"),
+        s3_endpoint_url=os.getenv("ARCHIVE_S3_ENDPOINT_URL"),
+        s3_region=os.getenv("ARCHIVE_S3_REGION", "us-east-1"),
+        s3_access_key=os.getenv("ARCHIVE_S3_ACCESS_KEY"),
+        s3_secret_key=os.getenv("ARCHIVE_S3_SECRET_KEY"),
+        archive_retention_days=int(os.getenv("ARCHIVE_RETENTION_DAYS", "30")),
+        staging_row_limit=int(os.getenv("ARCHIVE_STAGING_ROW_LIMIT", "1000000")),
     )

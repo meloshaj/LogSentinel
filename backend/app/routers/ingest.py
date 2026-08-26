@@ -27,10 +27,16 @@ router = APIRouter(
     summary="Ingest Logs Async via Redis Streams",
     description="Accepts log payloads asynchronously and enqueues them for parsing with approximate stream trimming (MAXLEN ~ 500000).",
     responses={
-        202: {"description": "Log payload accepted for asynchronous processing", "model": IngestResponse},
+        202: {
+            "description": "Log payload accepted for asynchronous processing",
+            "model": IngestResponse,
+        },
         401: {"description": "Missing or invalid API key"},
         422: {"description": "Validation error on payload"},
-        503: {"description": "Redis connection error; retry later", "model": IngestResponse},
+        503: {
+            "description": "Redis connection error; retry later",
+            "model": IngestResponse,
+        },
     },
 )
 @router.post(
@@ -40,15 +46,22 @@ router = APIRouter(
     summary="Ingest Logs Async via Redis Streams (v1)",
     description="Accepts log payloads asynchronously and enqueues them for parsing with approximate stream trimming (MAXLEN ~ 500000).",
     responses={
-        202: {"description": "Log payload accepted for asynchronous processing", "model": IngestResponse},
+        202: {
+            "description": "Log payload accepted for asynchronous processing",
+            "model": IngestResponse,
+        },
         401: {"description": "Missing or invalid API key"},
         422: {"description": "Validation error on payload"},
-        503: {"description": "Redis connection error; retry later", "model": IngestResponse},
+        503: {
+            "description": "Redis connection error; retry later",
+            "model": IngestResponse,
+        },
     },
 )
 async def ingest_log_endpoint(
     request: Request,
     payload: IngestPayload | list[LogEntry],
+    tenant_id: str = Depends(require_ingestion_api_key),
 ) -> JSONResponse:
     """Accept log payloads asynchronously and enqueue them to Redis streams with approximate trimming."""
     if isinstance(payload, IngestPayload):
@@ -64,8 +77,11 @@ async def ingest_log_endpoint(
             "logs": logs_list,
         }
 
+    # Enforce authoritative multitenancy
+    normalized_payload["tenant_id"] = tenant_id
+
     try:
-        redis: Redis = getattr(request.app.state, "redis", None)
+        redis: Redis = getattr(request.app.state, "redis", None)  # type: ignore
         if redis is None:
             raise RuntimeError("Redis connection not available on application state")
 
@@ -91,6 +107,7 @@ async def ingest_log_endpoint(
     log_count = len(normalized_payload.get("logs", []))
     try:
         from ..main import benchmarking_collector, ingest_request_rate
+
         benchmarking_collector.record_ingestion(log_count)
         benchmarking_collector.set_queue_depth(queue_size)
         status_label = "202" if accepted else "503"

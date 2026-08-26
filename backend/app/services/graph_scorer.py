@@ -212,26 +212,28 @@ class DynamicGraphPathwayScorer:
             calculated_at=calculated,
             algorithm_version=self.config.algorithm_version,
         )
-        
+
         # Trigger alert if confidence is high
         if result.confidence >= 0.7:
             payload = IncidentAlertPayload(
-                incident_id=winner.supporting_event_ids[0] if winner.supporting_event_ids else str(uuid.uuid4()),
+                incident_id=winner.supporting_event_ids[0]
+                if winner.supporting_event_ids
+                else str(uuid.uuid4()),
                 root_cause_service=winner.service_name,
                 triggering_template=f"Score: {winner.root_cause_score:.2f}",
                 affected_services=result.affected_services,
                 propagation_chain=[item.service_name for item in blast_radius],
                 confidence_score=result.confidence,
-                is_critical=(result.confidence >= 0.9 or directly_affected > 2)
+                is_critical=(result.confidence >= 0.9 or directly_affected > 2),
             )
-            
+
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(dispatch_incident_alert(payload, redis_client=None))
             except RuntimeError:
                 # No running loop, can't easily dispatch async from sync here
                 pass
-                
+
         return result
 
     def rank_root_candidates(
@@ -275,11 +277,13 @@ class DynamicGraphPathwayScorer:
                 kept_pathways
             )
             strongest_pathway = max(item.final_score for item in kept_pathways)
-            coverage_ratio = len({item.affected_service for item in kept_pathways}) / max(
-                total_anomalous, 1
-            )
+            coverage_ratio = len(
+                {item.affected_service for item in kept_pathways}
+            ) / max(total_anomalous, 1)
             direct_root_anomaly = summaries.get(candidate)
-            direct_root_score = direct_root_anomaly.anomaly_score if direct_root_anomaly else 0.0
+            direct_root_score = (
+                direct_root_anomaly.anomaly_score if direct_root_anomaly else 0.0
+            )
             supporting_correlation_ids = set().union(
                 *(set(item.supporting_correlation_ids) for item in kept_pathways)
             )
@@ -317,7 +321,9 @@ class DynamicGraphPathwayScorer:
                         ),
                     ),
                     supporting_event_ids=_sorted_unique(supporting_event_ids),
-                    supporting_correlation_ids=_sorted_unique(supporting_correlation_ids),
+                    supporting_correlation_ids=_sorted_unique(
+                        supporting_correlation_ids
+                    ),
                 )
             )
 
@@ -462,8 +468,7 @@ class DynamicGraphPathwayScorer:
             )
             if (
                 service != root
-                and impact_score
-                < self.config.minimum_blast_radius_impact_threshold
+                and impact_score < self.config.minimum_blast_radius_impact_threshold
             ):
                 continue
 
@@ -485,7 +490,7 @@ class DynamicGraphPathwayScorer:
                 BlastRadiusNode(
                     service_name=service,
                     hop_distance=hop_count,
-                    impact_classification=classification,
+                    impact_classification=classification,  # type: ignore
                     dependency_path=dependency_path,
                     propagation_path=propagation_path,
                     impact_score=impact_score,
@@ -579,7 +584,9 @@ class DynamicGraphPathwayScorer:
         outgoing_counts = [
             count
             for _, target in graph.out_edges(caller)
-            for count in [_safe_float(graph.edges[caller, target].get("transition_count"))]
+            for count in [
+                _safe_float(graph.edges[caller, target].get("transition_count"))
+            ]
             if count is not None
         ]
         if not outgoing_counts:
@@ -645,7 +652,9 @@ class DynamicGraphPathwayScorer:
             margin = 1.0
         else:
             second = candidates[1].root_cause_score
-            margin = (winner.root_cause_score - second) / max(winner.root_cause_score, 1e-12)
+            margin = (winner.root_cause_score - second) / max(
+                winner.root_cause_score, 1e-12
+            )
         return _clamp(
             0.40 * _clamp(margin)
             + 0.35 * winner.coverage_ratio
@@ -687,9 +696,13 @@ class DynamicGraphPathwayScorer:
                     )
                 ),
                 event_ids=tuple(
-                    _sorted_unique(event_id for item in items for event_id in item.event_ids)
+                    _sorted_unique(
+                        event_id for item in items for event_id in item.event_ids
+                    )
                 ),
-                error_count=self._sum_optional_counts(item.error_count for item in items),
+                error_count=self._sum_optional_counts(
+                    item.error_count for item in items
+                ),
                 warning_count=self._sum_optional_counts(
                     item.warning_count for item in items
                 ),

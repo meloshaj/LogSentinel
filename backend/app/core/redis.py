@@ -24,7 +24,14 @@ async def init_redis_pool() -> Redis:
     delays where Valkey may not yet be accepting connections.
     """
     global _redis_pool
-    logger.info("Initializing Redis connection pool to %s", REDIS_URL)
+    # Redact password for logging
+    from urllib.parse import urlparse
+
+    parsed = urlparse(REDIS_URL)
+    safe_url = REDIS_URL
+    if parsed.password:
+        safe_url = REDIS_URL.replace(f":{parsed.password}@", ":***@")
+    logger.info("Initializing Redis connection pool to %s", safe_url)
 
     last_error: Exception | None = None
 
@@ -36,7 +43,7 @@ async def init_redis_pool() -> Redis:
                 max_connections=100,
             )
             client = Redis(connection_pool=_redis_pool)
-            await client.ping()
+            await client.ping()  # type: ignore
             logger.info(
                 "Successfully connected to Redis on attempt %d/%d.",
                 attempt,
@@ -47,8 +54,7 @@ async def init_redis_pool() -> Redis:
             last_error = exc
             delay = _BASE_DELAY_SECONDS * (2 ** (attempt - 1))
             logger.warning(
-                "Redis connection attempt %d/%d failed (%s: %s). "
-                "Retrying in %.1fs...",
+                "Redis connection attempt %d/%d failed (%s: %s). Retrying in %.1fs...",
                 attempt,
                 _MAX_RETRIES,
                 type(exc).__name__,
@@ -60,12 +66,15 @@ async def init_redis_pool() -> Redis:
                 try:
                     await _redis_pool.disconnect(inuse_connections=True)
                 except Exception:
-                    logger.debug("Failed to disconnect failed Redis pool during retry cleanup", exc_info=True)
+                    logger.debug(
+                        "Failed to disconnect failed Redis pool during retry cleanup",
+                        exc_info=True,
+                    )
                 _redis_pool = None
             await asyncio.sleep(delay)
 
     raise RuntimeError(
-        f"FATAL: Could not connect to Redis at {REDIS_URL} after "
+        f"FATAL: Could not connect to Redis at {safe_url} after "
         f"{_MAX_RETRIES} attempts. Last error: {last_error}"
     )
 

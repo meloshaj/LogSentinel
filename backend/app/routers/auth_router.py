@@ -51,10 +51,14 @@ router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
 # ─── Request/Response Schemas ────────────────────────────────────────────────
 
+
 class UserRegisterRequest(BaseModel):
     """Schema for user registration request."""
+
     email: EmailStr
-    password: str = Field(..., min_length=8, description="Password must be at least 8 characters long")
+    password: str = Field(
+        ..., min_length=8, description="Password must be at least 8 characters long"
+    )
     fullName: str | None = Field(None, description="Optional full name of the user")
     organization: str | None = Field(None, description="Optional organization name")
 
@@ -63,18 +67,21 @@ class UserRegisterRequest(BaseModel):
 
 class UserLoginRequest(BaseModel):
     """Schema for user login request."""
+
     email: EmailStr
     password: str
 
 
 class TokenResponse(BaseModel):
     """Schema for login response containing the JWT token."""
+
     access_token: str
     token_type: str = "bearer"
 
 
 class UserResponse(BaseModel):
     """Schema for authenticated user profile details."""
+
     id: int
     email: str
     full_name: str | None
@@ -85,11 +92,13 @@ class UserResponse(BaseModel):
 
 class GoogleLoginRequest(BaseModel):
     """Schema for Google SSO login — accepts the id_token from the frontend."""
+
     credential: str
 
 
 class ForgotPasswordRequest(BaseModel):
     """Schema for requesting a password reset email."""
+
     email: EmailStr
 
 
@@ -100,6 +109,7 @@ class MicrosoftLoginRequest(BaseModel):
     Authorization Code Flow with PKCE, then sends it here for
     verification and internal JWT issuance.
     """
+
     access_token: str = Field(
         ...,
         min_length=1,
@@ -110,8 +120,11 @@ class MicrosoftLoginRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     """Schema for resetting the password with a valid token."""
+
     token: str
-    new_password: str = Field(..., min_length=8, description="New password must be at least 8 characters long")
+    new_password: str = Field(
+        ..., min_length=8, description="New password must be at least 8 characters long"
+    )
 
 
 # ─── Endpoint Route Handlers ─────────────────────────────────────────────────
@@ -119,7 +132,9 @@ class ResetPasswordRequest(BaseModel):
 from ..core.rate_limit import limiter
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse)
+@router.post(
+    "/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse
+)
 @limiter.limit("3/minute")
 async def register_user(
     request: Request,
@@ -130,7 +145,9 @@ async def register_user(
     # Check if a user already exists with this email
     existing_user = await UserRepository.get_user_by_email(db, payload.email)
     if existing_user is not None:
-        identities = await ExternalIdentityRepository.get_all_by_user_id(db, existing_user.id)
+        identities = await ExternalIdentityRepository.get_all_by_user_id(
+            db, existing_user.id
+        )
         if identities:
             # User has an OAuth identity, so standard signup should not be allowed
             provider = identities[0].provider.capitalize()
@@ -175,7 +192,11 @@ async def login_user(
                 detail=f"This email is already registered using {provider} Login. Please sign in with {provider}.",
             )
 
-    if user is None or not user.hashed_password or not verify_password(payload.password, user.hashed_password):
+    if (
+        user is None
+        or not user.hashed_password
+        or not verify_password(payload.password, user.hashed_password)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -183,7 +204,9 @@ async def login_user(
         )
 
     # Generate token with sub set to email and full_name for sidebar display
-    token = create_access_token(data={"sub": user.email, "full_name": user.full_name or ""})
+    token = create_access_token(
+        data={"sub": user.email, "full_name": user.full_name or ""}
+    )
     return TokenResponse(access_token=token)
 
 
@@ -196,6 +219,7 @@ async def get_my_profile(
 
 
 # ─── Google SSO ──────────────────────────────────────────────────────────────
+
 
 @router.post("/google", response_model=TokenResponse)
 async def google_login(
@@ -217,8 +241,7 @@ async def google_login(
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "https://www.googleapis.com/oauth2/v3/userinfo",
-                headers={"Authorization": f"Bearer {payload.credential}"}
+                f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.credential}"
             )
             if resp.status_code != 200:
                 raise HTTPException(
@@ -226,6 +249,11 @@ async def google_login(
                     detail="Invalid Google credential",
                 )
             idinfo = resp.json()
+            if idinfo.get("aud") != GOOGLE_CLIENT_ID:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Google credential audience mismatch",
+                )
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -264,7 +292,7 @@ async def google_login(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This email is registered with a standard password. Please sign in with your password.",
             )
-        
+
         try:
             user = await UserRepository.create_user(
                 db=db,
@@ -273,15 +301,17 @@ async def google_login(
                 full_name=full_name,
                 commit=False,
             )
-            external_identity = await ExternalIdentityRepository.create_external_identity(
-                db=db,
-                user_id=user.id,
-                provider="google",
-                issuer=idinfo.get("iss", "accounts.google.com"),
-                subject=idinfo.get("sub", ""),
-                email=email,
-                display_name=full_name,
-                commit=False,
+            external_identity = (
+                await ExternalIdentityRepository.create_external_identity(
+                    db=db,
+                    user_id=user.id,
+                    provider="google",
+                    issuer=idinfo.get("iss", "accounts.google.com"),
+                    subject=idinfo.get("sub", ""),
+                    email=email,
+                    display_name=full_name,
+                    commit=False,
+                )
             )
             await db.commit()
             await db.refresh(user)
@@ -296,14 +326,19 @@ async def google_login(
             raise
         logger.info("Auto-created user via Google SSO: %s", email)
 
-    token = create_access_token(data={"sub": user.email, "full_name": user.full_name or ""})
+    token = create_access_token(
+        data={"sub": user.email, "full_name": user.full_name or ""}
+    )
     return TokenResponse(access_token=token)
 
 
 # ─── Forgot Password ────────────────────────────────────────────────────────
 
+
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
+@limiter.limit("3/minute")
 async def forgot_password(
+    request: Request,
     payload: ForgotPasswordRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSessionDep,
@@ -316,7 +351,7 @@ async def forgot_password(
     from datetime import datetime, timedelta, timezone
 
     import jwt as pyjwt
-    
+
     user = await UserRepository.get_user_by_email(db, payload.email)
 
     if user is not None:
@@ -324,18 +359,21 @@ async def forgot_password(
             "Password reset requested for user_id=%s",
             user.id,
         )
-        
+
         expire = datetime.now(timezone.utc) + timedelta(minutes=15)
         to_encode = {"sub": user.email, "type": "password_reset", "exp": expire}
         token = pyjwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-        
+
         background_tasks.add_task(send_password_reset_email, user.email, token)
 
     # Generic response to prevent email enumeration
-    return {"message": "If an account with that email exists, a password reset link has been sent."}
+    return {
+        "message": "If an account with that email exists, a password reset link has been sent."
+    }
 
 
 # ─── Reset Password ─────────────────────────────────────────────────────────
+
 
 @router.post("/reset-password", status_code=status.HTTP_200_OK)
 async def reset_password(
@@ -346,7 +384,9 @@ async def reset_password(
     import jwt as pyjwt
 
     try:
-        token_data = pyjwt.decode(payload.token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        token_data = pyjwt.decode(
+            payload.token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM]
+        )
     except pyjwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -382,7 +422,9 @@ async def reset_password(
     hashed = hash_password(payload.new_password)
     await UserRepository.update_password(db, user, hashed)
 
-    return {"message": "Password has been reset successfully. You can now sign in with your new password."}
+    return {
+        "message": "Password has been reset successfully. You can now sign in with your new password."
+    }
 
 
 # ─── Microsoft SSO ───────────────────────────────────────────────────────────
@@ -479,7 +521,9 @@ async def microsoft_login(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="microsoft_identity_conflict",
             )
-        token = create_access_token(data={"sub": user.email, "full_name": user.full_name or ""})
+        token = create_access_token(
+            data={"sub": user.email, "full_name": user.full_name or ""}
+        )
         return TokenResponse(access_token=token)
 
     # ── New Microsoft identity — provision user ────────────────────────
@@ -541,7 +585,9 @@ async def microsoft_login(
 
     logger.info("Auto-created user via Microsoft SSO: user_id=%d", new_user.id)
 
-    token = create_access_token(data={"sub": new_user.email, "full_name": new_user.full_name or ""})
+    token = create_access_token(
+        data={"sub": new_user.email, "full_name": new_user.full_name or ""}
+    )
     return TokenResponse(access_token=token)
 
 
@@ -564,13 +610,17 @@ async def github_login_redirect(request: Request):
             detail="GitHub SSO is not configured.",
         )
 
-    # Capture the frontend origin so we can redirect back to the correct port
+    # Validate the frontend origin to prevent redirect URL poisoning
+    allowed_origins = [
+        o.strip() for o in os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")
+    ]
     referer = request.headers.get("referer")
+    frontend_origin = allowed_origins[0]
     if referer:
         parsed = urllib.parse.urlparse(referer)
-        frontend_origin = f"{parsed.scheme}://{parsed.netloc}"
-    else:
-        frontend_origin = os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")[0].strip()
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if origin in allowed_origins:
+            frontend_origin = origin
 
     state = secrets.token_urlsafe(32)
     github_auth_url = "https://github.com/login/oauth/authorize"
@@ -637,14 +687,26 @@ async def github_login_callback(
             },
         )
         if token_res.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to retrieve GitHub access token")
-        
+            raise HTTPException(
+                status_code=400, detail="Failed to retrieve GitHub access token"
+            )
+
         token_data = token_res.json()
         access_token = token_data.get("access_token")
         if not access_token:
-            gh_error = token_data.get("error_description") or token_data.get("error") or "No access token returned from GitHub"
-            logger.error("GitHub token exchange failed: %s (raw response: %s)", gh_error, token_data)
-            raise HTTPException(status_code=400, detail=f"GitHub OAuth error: {gh_error}")
+            gh_error = (
+                token_data.get("error_description")
+                or token_data.get("error")
+                or "No access token returned from GitHub"
+            )
+            logger.error(
+                "GitHub token exchange failed: %s (raw response: %s)",
+                gh_error,
+                token_data,
+            )
+            raise HTTPException(
+                status_code=400, detail=f"GitHub OAuth error: {gh_error}"
+            )
 
         # 2. Fetch user profile
         user_res = await client.get(
@@ -655,12 +717,14 @@ async def github_login_callback(
             },
         )
         if user_res.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to retrieve GitHub user profile")
-        
+            raise HTTPException(
+                status_code=400, detail="Failed to retrieve GitHub user profile"
+            )
+
         github_user = user_res.json()
         github_id = str(github_user["id"])
         full_name = github_user.get("name") or github_user.get("login")
-        
+
         # 3. Fetch primary email
         email_res = await client.get(
             "https://api.github.com/user/emails",
@@ -670,29 +734,44 @@ async def github_login_callback(
             },
         )
         if email_res.status_code != 200:
-            raise HTTPException(status_code=400, detail="Failed to retrieve GitHub emails")
-            
+            raise HTTPException(
+                status_code=400, detail="Failed to retrieve GitHub emails"
+            )
+
         emails = email_res.json()
         primary_email = next(
             (e["email"] for e in emails if e.get("primary") and e.get("verified")), None
         )
         if not primary_email:
-            raise HTTPException(status_code=400, detail="No primary email found on GitHub account")
-            
+            raise HTTPException(
+                status_code=400, detail="No primary email found on GitHub account"
+            )
+
     # 4. Handle Account Linking & Unified User Logic
     account = await AccountRepository.get_account_by_provider(db, "github", github_id)
     if account is not None:
         user = await UserRepository.get_user_by_id(db, account.user_id)
         if user is None:
-            raise HTTPException(status_code=409, detail="GitHub identity conflict: user missing")
+            raise HTTPException(
+                status_code=409, detail="GitHub identity conflict: user missing"
+            )
     else:
         user = await UserRepository.get_user_by_email(db, primary_email)
         if user is not None:
             # Email conflict: User exists but not linked to this GitHub account
-            frontend_url = request.cookies.get("github_oauth_origin") or os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")[-1].strip()
-            error_msg = urllib.parse.quote("This email is already registered using a different provider. Please sign in with your primary method.")
-            return RedirectResponse(f"{frontend_url}/login?error={error_msg}", status_code=303)
-            
+            frontend_url = (
+                request.cookies.get("github_oauth_origin")
+                or os.getenv("FRONTEND_URL", "http://localhost:8080")
+                .split(",")[-1]
+                .strip()
+            )
+            error_msg = urllib.parse.quote(
+                "This email is already registered using a different provider. Please sign in with your primary method."
+            )
+            return RedirectResponse(
+                f"{frontend_url}/login?error={error_msg}", status_code=303
+            )
+
         # New User
         try:
             user = await UserRepository.create_user(
@@ -714,14 +793,26 @@ async def github_login_callback(
             await db.refresh(user)
         except IntegrityError:
             await db.rollback()
-            raise HTTPException(status_code=409, detail="GitHub identity conflict during creation")
+            raise HTTPException(
+                status_code=409, detail="GitHub identity conflict during creation"
+            )
         except Exception:
             await db.rollback()
             raise
-            
+
         logger.info("Auto-created user via GitHub SSO: %s", primary_email)
 
-    # 5. Issue session token and redirect
-    token = create_access_token(data={"sub": user.email, "full_name": user.full_name or ""})
-    frontend_url = request.cookies.get("github_oauth_origin") or os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")[-1].strip()
-    return RedirectResponse(f"{frontend_url}/login?token={token}", status_code=303)
+    # 5. Issue session token and redirect using URL fragment to avoid access log leakage
+    token = create_access_token(
+        data={"sub": user.email, "full_name": user.full_name or ""}
+    )
+
+    allowed_origins = [
+        o.strip() for o in os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")
+    ]
+    cookie_origin = request.cookies.get("github_oauth_origin")
+    frontend_url = (
+        cookie_origin if cookie_origin in allowed_origins else allowed_origins[0]
+    )
+
+    return RedirectResponse(f"{frontend_url}/login#token={token}", status_code=303)

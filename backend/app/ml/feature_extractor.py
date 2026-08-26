@@ -25,11 +25,19 @@ logger = logging.getLogger("logsentinel.feature_extractor")
 class WindowConfig(BaseModel):
     """Configuration for sliding-window feature extraction."""
 
-    window_size_seconds: int = Field(default=10, ge=1, description="Size of each time window")
+    window_size_seconds: int = Field(
+        default=10, ge=1, description="Size of each time window"
+    )
     stride_seconds: int = Field(default=5, ge=1, description="Spacing between windows")
-    min_logs_per_window: int = Field(default=1, ge=0, description="Minimum logs required to emit a window")
-    max_logs_per_window: int = Field(default=10000, ge=1, description="Maximum logs to keep per window")
-    service_filter: str | None = Field(default=None, description="Optional service filter")
+    min_logs_per_window: int = Field(
+        default=1, ge=0, description="Minimum logs required to emit a window"
+    )
+    max_logs_per_window: int = Field(
+        default=10000, ge=1, description="Maximum logs to keep per window"
+    )
+    service_filter: str | None = Field(
+        default=None, description="Optional service filter"
+    )
 
     def validate_config(self) -> None:
         """Validate the window configuration."""
@@ -68,7 +76,9 @@ class SlidingWindowFeatureExtractor:
         for log in logs:
             self.add_log(log)
 
-    def get_pending_windows(self, current_time: datetime | None = None) -> list[LogWindow]:
+    def get_pending_windows(
+        self, current_time: datetime | None = None
+    ) -> list[LogWindow]:
         """Generate closed windows from the buffered log history."""
         if not self._log_buffer:
             return []
@@ -83,13 +93,17 @@ class SlidingWindowFeatureExtractor:
             end_time = start_time + timedelta(seconds=self.config.window_size_seconds)
             if end_time > current_time:
                 break
-            
+
             window_logs = [
-                log for log in self._log_buffer
+                log
+                for log in self._log_buffer
                 if start_time <= log.timestamp < end_time
-                and (not self.config.service_filter or log.service == self.config.service_filter)
+                and (
+                    not self.config.service_filter
+                    or log.service == self.config.service_filter
+                )
             ]
-            
+
             if len(window_logs) >= self.config.min_logs_per_window:
                 windows.append(
                     LogWindow(
@@ -101,12 +115,16 @@ class SlidingWindowFeatureExtractor:
                     )
                 )
                 self._windows_generated += 1
-            
+
             start_time = start_time + timedelta(seconds=self.config.stride_seconds)
             self._last_window_end = start_time
 
         if self._last_window_end:
-            self._log_buffer = [log for log in self._log_buffer if log.timestamp >= self._last_window_end]
+            self._log_buffer = [
+                log
+                for log in self._log_buffer
+                if log.timestamp >= self._last_window_end
+            ]
 
         return windows
 
@@ -115,24 +133,45 @@ class SlidingWindowFeatureExtractor:
         if window is None or not window.logs:
             return self._empty_feature_vector()
 
-        logs = [log for log in window.logs if not self.config.service_filter or log.service == self.config.service_filter]
+        logs = [
+            log
+            for log in window.logs
+            if not self.config.service_filter
+            or log.service == self.config.service_filter
+        ]
         if not logs:
             return self._empty_feature_vector()
 
         level_counts = Counter(log.level.lower() for log in logs)
-        info_count = sum(v for k, v in level_counts.items() if k in {"info", "information", "notice"})
-        warning_count = sum(v for k, v in level_counts.items() if k in {"warn", "warning"})
-        error_count = sum(v for k, v in level_counts.items() if k in {"error", "critical", "fatal", "exception"})
+        info_count = sum(
+            v for k, v in level_counts.items() if k in {"info", "information", "notice"}
+        )
+        warning_count = sum(
+            v for k, v in level_counts.items() if k in {"warn", "warning"}
+        )
+        error_count = sum(
+            v
+            for k, v in level_counts.items()
+            if k in {"error", "critical", "fatal", "exception"}
+        )
         log_count = len(logs)
         error_ratio = error_count / log_count if log_count else 0.0
 
         service_distribution = Counter(log.service for log in logs)
         active_services = len(service_distribution)
-        dominant_service = max(service_distribution.items(), key=lambda item: (item[1], item[0]), default=(None, 0))[0]
+        dominant_service = max(
+            service_distribution.items(),
+            key=lambda item: (item[1], item[0]),
+            default=(None, 0),
+        )[0]
 
         template_distribution = Counter(log.template_id for log in logs)
         unique_templates = len(template_distribution)
-        dominant_template = max(template_distribution.items(), key=lambda item: (item[1], item[0]), default=(None, 0))[0]
+        dominant_template = max(
+            template_distribution.items(),
+            key=lambda item: (item[1], item[0]),
+            default=(None, 0),
+        )[0]
 
         duration_seconds = window.duration_seconds()
         logs_per_second = log_count / duration_seconds if duration_seconds > 0 else 0.0
@@ -147,8 +186,12 @@ class SlidingWindowFeatureExtractor:
             "error_ratio": float(error_ratio),
             "active_services": float(active_services),
             "unique_templates": float(unique_templates),
-            "dominant_service_count": float(service_distribution.get(dominant_service, 0)),
-            "dominant_template_count": float(template_distribution.get(dominant_template, 0)),
+            "dominant_service_count": float(
+                service_distribution.get(dominant_service, 0)  # type: ignore
+            ),
+            "dominant_template_count": float(
+                template_distribution.get(dominant_template, 0)  # type: ignore
+            ),
             "logs_per_second": float(logs_per_second),
             "avg_logs_per_minute": float(avg_logs_per_minute),
             "burst_indicator": float(burst_indicator),
@@ -157,7 +200,7 @@ class SlidingWindowFeatureExtractor:
         feature_names = list(features.keys())
         feature_array = [float(features[name]) for name in feature_names]
 
-        return FeatureVector(
+        return FeatureVector(  # type: ignore
             window_id=window.window_id,
             timestamp=datetime.now(timezone.utc),
             window_start=window.start_time,
@@ -170,7 +213,9 @@ class SlidingWindowFeatureExtractor:
                 template_id: count / log_count if log_count else 0.0
                 for template_id, count in template_distribution.items()
             },
-            template_entropy=self._compute_entropy(list(template_distribution.values()), log_count),
+            template_entropy=self._compute_entropy(
+                list(template_distribution.values()), log_count
+            ),
             service_distribution=dict(service_distribution),
             logs_per_second=logs_per_second,
             feature_array=feature_array,
@@ -179,8 +224,13 @@ class SlidingWindowFeatureExtractor:
                 **features,
                 "dominant_service": dominant_service,
                 "dominant_template": dominant_template,
-                "service_counts": {service: count for service, count in service_distribution.items()},
-                "template_counts": {template_id: count for template_id, count in template_distribution.items()},
+                "service_counts": {
+                    service: count for service, count in service_distribution.items()
+                },
+                "template_counts": {
+                    template_id: count
+                    for template_id, count in template_distribution.items()
+                },
             },
         )
 
@@ -190,7 +240,9 @@ class SlidingWindowFeatureExtractor:
             "config": self.config.model_dump(),
             "logs_processed": self._logs_processed,
             "windows_generated": self._windows_generated,
-            "last_window_end": self._last_window_end.isoformat() if self._last_window_end else None,
+            "last_window_end": self._last_window_end.isoformat()
+            if self._last_window_end
+            else None,
             "current_buffer_size": len(self._log_buffer),
         }
 
@@ -203,13 +255,17 @@ class SlidingWindowFeatureExtractor:
 
     def _align_to_window(self, timestamp: datetime) -> datetime:
         epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-        seconds_since_epoch = int((timestamp.astimezone(timezone.utc) - epoch).total_seconds())
-        window_seconds = (seconds_since_epoch // self.config.window_size_seconds) * self.config.window_size_seconds
+        seconds_since_epoch = int(
+            (timestamp.astimezone(timezone.utc) - epoch).total_seconds()
+        )
+        window_seconds = (
+            seconds_since_epoch // self.config.window_size_seconds
+        ) * self.config.window_size_seconds
         return datetime.fromtimestamp(window_seconds, tz=timezone.utc)
 
     def _empty_feature_vector(self) -> FeatureVector:
         """Create a zero-filled feature vector for empty windows."""
-        return FeatureVector(
+        return FeatureVector(  # type: ignore
             window_id=f"window-{uuid4().hex[:16]}",
             timestamp=datetime.now(timezone.utc),
             window_start=None,

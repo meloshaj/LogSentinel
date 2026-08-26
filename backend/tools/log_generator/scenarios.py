@@ -142,14 +142,16 @@ class BaseScenario:
                 base_latency_ms=node.base_latency_ms,
                 latency_jitter_ms=node.latency_jitter_ms,
             )
-            logs.append(LogEntry(
-                timestamp=datetime.now(timezone.utc),
-                service_name=svc,
-                level="info",
-                message=message,
-                metadata=metadata,
-                raw=raw,
-            ))
+            logs.append(
+                LogEntry(
+                    timestamp=datetime.now(timezone.utc),
+                    service_name=svc,
+                    level="info",
+                    message=message,
+                    metadata=metadata,
+                    raw=raw,
+                )
+            )
         return logs
 
     def _degradation_logs(
@@ -175,14 +177,16 @@ class BaseScenario:
             )
             metadata["degradation"] = True
             metadata["latency_multiplier"] = latency_multiplier
-            logs.append(LogEntry(
-                timestamp=datetime.now(timezone.utc),
-                service_name=service_name,
-                level="warning",
-                message=message,
-                metadata=metadata,
-                raw=raw,
-            ))
+            logs.append(
+                LogEntry(
+                    timestamp=datetime.now(timezone.utc),
+                    service_name=service_name,
+                    level="warning",
+                    message=message,
+                    metadata=metadata,
+                    raw=raw,
+                )
+            )
         return logs
 
 
@@ -215,34 +219,40 @@ class DatabasePoolExhaustionScenario(BaseScenario):
         cid = str(uuid.uuid4())
 
         # Step 0: baseline
-        self._steps.append(ScenarioStep(
-            step_index=0,
-            phase="baseline",
-            description="Normal traffic across all services",
-            logs=self._normal_background_logs(20),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=0,
+                phase="baseline",
+                description="Normal traffic across all services",
+                logs=self._normal_background_logs(20),
+            )
+        )
 
         # Step 1: degradation (3× latency)
-        self._steps.append(ScenarioStep(
-            step_index=1,
-            phase="degradation",
-            description="inventory-db latency increasing, slow query warnings",
-            logs=(
-                self._normal_background_logs(10)
-                + self._degradation_logs("inventory-db", 8, latency_multiplier=3.0)
-            ),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=1,
+                phase="degradation",
+                description="inventory-db latency increasing, slow query warnings",
+                logs=(
+                    self._normal_background_logs(10)
+                    + self._degradation_logs("inventory-db", 8, latency_multiplier=3.0)
+                ),
+            )
+        )
 
         # Step 2: escalation (8× latency, pool pressure)
-        self._steps.append(ScenarioStep(
-            step_index=2,
-            phase="escalation",
-            description="inventory-db latency critical, pool utilization >90%",
-            logs=(
-                self._normal_background_logs(5)
-                + self._degradation_logs("inventory-db", 12, latency_multiplier=8.0)
-            ),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=2,
+                phase="escalation",
+                description="inventory-db latency critical, pool utilization >90%",
+                logs=(
+                    self._normal_background_logs(5)
+                    + self._degradation_logs("inventory-db", 12, latency_multiplier=8.0)
+                ),
+            )
+        )
 
         # Step 3: failure — pool exhaustion + deadlock
         pool_cascade = self._cascade_engine.trigger_cascade(
@@ -255,17 +265,17 @@ class DatabasePoolExhaustionScenario(BaseScenario):
             error_type="deadlock",
             correlation_id=cid,
         )
-        self._steps.append(ScenarioStep(
-            step_index=3,
-            phase="failure",
-            description="Connection pool exhaustion and deadlock at inventory-db",
-            logs=(
-                self._normal_background_logs(3)
-                + pool_cascade
-                + deadlock_cascade
-            ),
-            correlation_id=cid,
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=3,
+                phase="failure",
+                description="Connection pool exhaustion and deadlock at inventory-db",
+                logs=(
+                    self._normal_background_logs(3) + pool_cascade + deadlock_cascade
+                ),
+                correlation_id=cid,
+            )
+        )
 
         # Step 4: cascade — sustained errors across order-service and api-gateway + BURST
         sustained_cascade = self._cascade_engine.trigger_cascade(
@@ -273,103 +283,110 @@ class DatabasePoolExhaustionScenario(BaseScenario):
             error_type="connection_pool_exhaustion",
             correlation_id=cid,
         )
-        
+
         # Inject 500 explicit CRITICAL/ERROR log bursts tagged with correlation_id
         from datetime import timedelta
 
         from .generator import LogEntry
+
         burst_logs: list[Any] = []
         base_ts = datetime.now(timezone.utc)
-        
+
         for i in range(500):
             ts = base_ts + timedelta(milliseconds=i * 10)
             svc_index = i % 3
-            
+
             if svc_index == 0:
                 # inventory-db (root cause)
                 message = "sqlalchemy.exc.TimeoutError: QueuePool limit of size 20 overflow 10 reached, connection timed out, timeout 30.00"
                 raw = (
-                    f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z CRITICAL inventory-db: '
-                    f'{message} correlation_id={cid}'
+                    f"{ts.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z CRITICAL inventory-db: "
+                    f"{message} correlation_id={cid}"
                 )
-                burst_logs.append(LogEntry(
-                    timestamp=ts,
-                    service_name="inventory-db",
-                    level="critical",
-                    message=message,
-                    metadata={
-                        "correlation_id": cid,
-                        "root_cause": True,
-                        "error_type": "connection_pool_exhaustion",
-                    },
-                    raw=raw,
-                ))
+                burst_logs.append(
+                    LogEntry(
+                        timestamp=ts,
+                        service_name="inventory-db",
+                        level="critical",
+                        message=message,
+                        metadata={
+                            "correlation_id": cid,
+                            "root_cause": True,
+                            "error_type": "connection_pool_exhaustion",
+                        },
+                        raw=raw,
+                    )
+                )
             elif svc_index == 1:
                 # order-service (symptom)
                 message = "CRITICAL BURST: Database connection pool completely exhausted and transaction failed"
                 raw = (
-                    f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z CRITICAL order-service: '
-                    f'{message} target=inventory-db correlation_id={cid}'
+                    f"{ts.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z CRITICAL order-service: "
+                    f"{message} target=inventory-db correlation_id={cid}"
                 )
-                burst_logs.append(LogEntry(
-                    timestamp=ts,
-                    service_name="order-service",
-                    level="critical",
-                    message=message,
-                    metadata={
-                        "correlation_id": cid,
-                        "root_cause": False,
-                        "propagated_symptom": True,
-                        "error_type": "connection_pool_exhaustion",
-                        "target_service": "inventory-db",
-                        "parent_service": "inventory-db",
-                        "status": 503,
-                    },
-                    raw=raw,
-                ))
+                burst_logs.append(
+                    LogEntry(
+                        timestamp=ts,
+                        service_name="order-service",
+                        level="critical",
+                        message=message,
+                        metadata={
+                            "correlation_id": cid,
+                            "root_cause": False,
+                            "propagated_symptom": True,
+                            "error_type": "connection_pool_exhaustion",
+                            "target_service": "inventory-db",
+                            "parent_service": "inventory-db",
+                            "status": 503,
+                        },
+                        raw=raw,
+                    )
+                )
             else:
                 # api-gateway (symptom)
                 message = "CRITICAL BURST: Database connection pool completely exhausted and transaction failed"
                 raw = (
-                    f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z CRITICAL api-gateway: '
-                    f'{message} target=inventory-db correlation_id={cid}'
+                    f"{ts.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z CRITICAL api-gateway: "
+                    f"{message} target=inventory-db correlation_id={cid}"
                 )
-                burst_logs.append(LogEntry(
-                    timestamp=ts,
-                    service_name="api-gateway",
-                    level="critical",
-                    message=message,
-                    metadata={
-                        "correlation_id": cid,
-                        "root_cause": False,
-                        "propagated_symptom": True,
-                        "error_type": "connection_pool_exhaustion",
-                        "target_service": "inventory-db",
-                        "parent_service": "order-service",
-                        "status": 503,
-                    },
-                    raw=raw,
-                ))
-            
-        self._steps.append(ScenarioStep(
-            step_index=4,
-            phase="cascade",
-            description="Sustained cascading failures in order-service and api-gateway with ML burst",
-            logs=(
-                self._normal_background_logs(5)
-                + sustained_cascade
-                + burst_logs
-            ),
-            correlation_id=cid,
-        ))
+                burst_logs.append(
+                    LogEntry(
+                        timestamp=ts,
+                        service_name="api-gateway",
+                        level="critical",
+                        message=message,
+                        metadata={
+                            "correlation_id": cid,
+                            "root_cause": False,
+                            "propagated_symptom": True,
+                            "error_type": "connection_pool_exhaustion",
+                            "target_service": "inventory-db",
+                            "parent_service": "order-service",
+                            "status": 503,
+                        },
+                        raw=raw,
+                    )
+                )
+
+        self._steps.append(
+            ScenarioStep(
+                step_index=4,
+                phase="cascade",
+                description="Sustained cascading failures in order-service and api-gateway with ML burst",
+                logs=(self._normal_background_logs(5) + sustained_cascade + burst_logs),
+                correlation_id=cid,
+            )
+        )
 
         # Step 5: recovery
-        self._steps.append(ScenarioStep(
-            step_index=5,
-            phase="recovery",
-            description="Traffic returns to normal",
-            logs=self._normal_background_logs(20),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=5,
+                phase="recovery",
+                description="Traffic returns to normal",
+                logs=self._normal_background_logs(20),
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -401,23 +418,27 @@ class AuthTokenStormScenario(BaseScenario):
         cid = str(uuid.uuid4())
 
         # Step 0: baseline
-        self._steps.append(ScenarioStep(
-            step_index=0,
-            phase="baseline",
-            description="Normal traffic across all services",
-            logs=self._normal_background_logs(20),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=0,
+                phase="baseline",
+                description="Normal traffic across all services",
+                logs=self._normal_background_logs(20),
+            )
+        )
 
         # Step 1: degradation — auth latency increase
-        self._steps.append(ScenarioStep(
-            step_index=1,
-            phase="degradation",
-            description="auth-service latency rising, intermittent JWT warnings",
-            logs=(
-                self._normal_background_logs(10)
-                + self._degradation_logs("auth-service", 10, latency_multiplier=4.0)
-            ),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=1,
+                phase="degradation",
+                description="auth-service latency rising, intermittent JWT warnings",
+                logs=(
+                    self._normal_background_logs(10)
+                    + self._degradation_logs("auth-service", 10, latency_multiplier=4.0)
+                ),
+            )
+        )
 
         # Step 2: failure — key rotation fails
         key_cascade = self._cascade_engine.trigger_cascade(
@@ -425,16 +446,15 @@ class AuthTokenStormScenario(BaseScenario):
             error_type="auth_key_rotation_failure",
             correlation_id=cid,
         )
-        self._steps.append(ScenarioStep(
-            step_index=2,
-            phase="failure",
-            description="Signing key rotation fails at auth-service",
-            logs=(
-                self._normal_background_logs(3)
-                + key_cascade
-            ),
-            correlation_id=cid,
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=2,
+                phase="failure",
+                description="Signing key rotation fails at auth-service",
+                logs=(self._normal_background_logs(3) + key_cascade),
+                correlation_id=cid,
+            )
+        )
 
         # Step 3: cascade — mass JWT verification failures
         jwt_cascade = self._cascade_engine.trigger_cascade(
@@ -442,40 +462,48 @@ class AuthTokenStormScenario(BaseScenario):
             error_type="jwt_verification_failure",
             correlation_id=cid,
         )
-        self._steps.append(ScenarioStep(
-            step_index=3,
-            phase="cascade",
-            description="Mass JWT verification failures, 401 flood at api-gateway",
-            logs=(
-                self._normal_background_logs(5)
-                + jwt_cascade
-                + self._generate_auth_storm_burst(cid, count=15)
-            ),
-            correlation_id=cid,
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=3,
+                phase="cascade",
+                description="Mass JWT verification failures, 401 flood at api-gateway",
+                logs=(
+                    self._normal_background_logs(5)
+                    + jwt_cascade
+                    + self._generate_auth_storm_burst(cid, count=15)
+                ),
+                correlation_id=cid,
+            )
+        )
 
         # Step 4: storm — sustained elevated error rate
-        self._steps.append(ScenarioStep(
-            step_index=4,
-            phase="storm",
-            description="Sustained 401/503 error storm across gateway",
-            logs=(
-                self._normal_background_logs(5)
-                + self._generate_auth_storm_burst(cid, count=20)
-            ),
-            correlation_id=cid,
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=4,
+                phase="storm",
+                description="Sustained 401/503 error storm across gateway",
+                logs=(
+                    self._normal_background_logs(5)
+                    + self._generate_auth_storm_burst(cid, count=20)
+                ),
+                correlation_id=cid,
+            )
+        )
 
         # Step 5: recovery
-        self._steps.append(ScenarioStep(
-            step_index=5,
-            phase="recovery",
-            description="Key rotation succeeds, traffic normalizes",
-            logs=self._normal_background_logs(20),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=5,
+                phase="recovery",
+                description="Key rotation succeeds, traffic normalizes",
+                logs=self._normal_background_logs(20),
+            )
+        )
 
     def _generate_auth_storm_burst(
-        self, correlation_id: str, count: int,
+        self,
+        correlation_id: str,
+        count: int,
     ) -> list[Any]:
         """Generate a burst of 401/503 error logs at the api-gateway."""
         from .generator import LogEntry
@@ -484,33 +512,40 @@ class AuthTokenStormScenario(BaseScenario):
         ts = datetime.now(timezone.utc)
         for _ in range(count):
             status = self._rng.choice([401, 401, 401, 503])
-            path = self._rng.choice([
-                "/api/v1/orders", "/api/v1/users", "/api/v1/cart",
-                "/api/v1/checkout", "/api/v1/products",
-            ])
+            path = self._rng.choice(
+                [
+                    "/api/v1/orders",
+                    "/api/v1/users",
+                    "/api/v1/cart",
+                    "/api/v1/checkout",
+                    "/api/v1/products",
+                ]
+            )
             user_id = f"usr_{self._rng.randint(100000, 999999)}"
             message = f"Authentication failed for {user_id}: auth-service returned {status} on {path}"
             raw = (
-                f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z ERROR api-gateway: '
-                f'auth_failed user_id={user_id} status={status} path={path} '
-                f'correlation_id={correlation_id}'
+                f"{ts.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z ERROR api-gateway: "
+                f"auth_failed user_id={user_id} status={status} path={path} "
+                f"correlation_id={correlation_id}"
             )
-            logs.append(LogEntry(
-                timestamp=ts,
-                service_name="api-gateway",
-                level="error",
-                message=message,
-                metadata={
-                    "correlation_id": correlation_id,
-                    "root_cause": False,
-                    "propagated_symptom": True,
-                    "error_type": "auth_token_storm",
-                    "status": status,
-                    "user_id": user_id,
-                    "path": path,
-                },
-                raw=raw,
-            ))
+            logs.append(
+                LogEntry(
+                    timestamp=ts,
+                    service_name="api-gateway",
+                    level="error",
+                    message=message,
+                    metadata={
+                        "correlation_id": correlation_id,
+                        "root_cause": False,
+                        "propagated_symptom": True,
+                        "error_type": "auth_token_storm",
+                        "status": status,
+                        "user_id": user_id,
+                        "path": path,
+                    },
+                    raw=raw,
+                )
+            )
         return logs
 
 
@@ -543,46 +578,52 @@ class NetworkPartitionScenario(BaseScenario):
         cid = str(uuid.uuid4())
 
         # Step 0: baseline
-        self._steps.append(ScenarioStep(
-            step_index=0,
-            phase="baseline",
-            description="Normal traffic across all services",
-            logs=self._normal_background_logs(20),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=0,
+                phase="baseline",
+                description="Normal traffic across all services",
+                logs=self._normal_background_logs(20),
+            )
+        )
 
         # Step 1: intermittent — occasional timeouts
-        self._steps.append(ScenarioStep(
-            step_index=1,
-            phase="intermittent",
-            description="Occasional request timeouts between order-service and payment-gateway",
-            logs=(
-                self._normal_background_logs(12)
-                + self._generate_intermittent_failures(
-                    source="order-service",
-                    target="payment-gateway",
-                    correlation_id=cid,
-                    count=5,
-                    failure_probability=0.4,
-                )
-            ),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=1,
+                phase="intermittent",
+                description="Occasional request timeouts between order-service and payment-gateway",
+                logs=(
+                    self._normal_background_logs(12)
+                    + self._generate_intermittent_failures(
+                        source="order-service",
+                        target="payment-gateway",
+                        correlation_id=cid,
+                        count=5,
+                        failure_probability=0.4,
+                    )
+                ),
+            )
+        )
 
         # Step 2: degradation — retries escalate
-        self._steps.append(ScenarioStep(
-            step_index=2,
-            phase="degradation",
-            description="Retry storms between order-service and payment-gateway",
-            logs=(
-                self._normal_background_logs(5)
-                + self._generate_intermittent_failures(
-                    source="order-service",
-                    target="payment-gateway",
-                    correlation_id=cid,
-                    count=12,
-                    failure_probability=0.7,
-                )
-            ),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=2,
+                phase="degradation",
+                description="Retry storms between order-service and payment-gateway",
+                logs=(
+                    self._normal_background_logs(5)
+                    + self._generate_intermittent_failures(
+                        source="order-service",
+                        target="payment-gateway",
+                        correlation_id=cid,
+                        count=12,
+                        failure_probability=0.7,
+                    )
+                ),
+            )
+        )
 
         # Step 3: partition — complete failure
         partition_cascade = self._cascade_engine.trigger_cascade(
@@ -590,16 +631,15 @@ class NetworkPartitionScenario(BaseScenario):
             error_type="network_partition",
             correlation_id=cid,
         )
-        self._steps.append(ScenarioStep(
-            step_index=3,
-            phase="partition",
-            description="Full network partition: payment-gateway unreachable",
-            logs=(
-                self._normal_background_logs(3)
-                + partition_cascade
-            ),
-            correlation_id=cid,
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=3,
+                phase="partition",
+                description="Full network partition: payment-gateway unreachable",
+                logs=(self._normal_background_logs(3) + partition_cascade),
+                correlation_id=cid,
+            )
+        )
 
         # Step 4: cascade — upstream propagation
         sustained = self._cascade_engine.trigger_cascade(
@@ -607,24 +647,25 @@ class NetworkPartitionScenario(BaseScenario):
             error_type="network_partition",
             correlation_id=cid,
         )
-        self._steps.append(ScenarioStep(
-            step_index=4,
-            phase="cascade",
-            description="Cascading failures reach order-service and api-gateway",
-            logs=(
-                self._normal_background_logs(5)
-                + sustained
-            ),
-            correlation_id=cid,
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=4,
+                phase="cascade",
+                description="Cascading failures reach order-service and api-gateway",
+                logs=(self._normal_background_logs(5) + sustained),
+                correlation_id=cid,
+            )
+        )
 
         # Step 5: recovery
-        self._steps.append(ScenarioStep(
-            step_index=5,
-            phase="recovery",
-            description="Network connectivity restored, traffic normalizes",
-            logs=self._normal_background_logs(20),
-        ))
+        self._steps.append(
+            ScenarioStep(
+                step_index=5,
+                phase="recovery",
+                description="Network connectivity restored, traffic normalizes",
+                logs=self._normal_background_logs(20),
+            )
+        )
 
     def _generate_intermittent_failures(
         self,
@@ -651,26 +692,28 @@ class NetworkPartitionScenario(BaseScenario):
                     f"(retry {retry}/3)"
                 )
                 raw = (
-                    f'{ts.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]}Z WARN {source}: '
-                    f'downstream_timeout target={target} timeout={duration_ms}ms '
-                    f'retry={retry}/3 correlation_id={correlation_id}'
+                    f"{ts.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3]}Z WARN {source}: "
+                    f"downstream_timeout target={target} timeout={duration_ms}ms "
+                    f"retry={retry}/3 correlation_id={correlation_id}"
                 )
-                logs.append(LogEntry(
-                    timestamp=ts,
-                    service_name=source,
-                    level="warning",
-                    message=message,
-                    metadata={
-                        "correlation_id": correlation_id,
-                        "root_cause": False,
-                        "propagated_symptom": True,
-                        "error_type": "network_partition",
-                        "target": target,
-                        "duration_ms": duration_ms,
-                        "retry": retry,
-                    },
-                    raw=raw,
-                ))
+                logs.append(
+                    LogEntry(
+                        timestamp=ts,
+                        service_name=source,
+                        level="warning",
+                        message=message,
+                        metadata={
+                            "correlation_id": correlation_id,
+                            "root_cause": False,
+                            "propagated_symptom": True,
+                            "error_type": "network_partition",
+                            "target": target,
+                            "duration_ms": duration_ms,
+                            "retry": retry,
+                        },
+                        raw=raw,
+                    )
+                )
             else:
                 # Successful but slow
                 node = self._topology.get_node(source)
@@ -682,14 +725,16 @@ class NetworkPartitionScenario(BaseScenario):
                     base_latency_ms=node.base_latency_ms * 2.0,
                     latency_jitter_ms=node.latency_jitter_ms * 2.0,
                 )
-                logs.append(LogEntry(
-                    timestamp=ts,
-                    service_name=source,
-                    level="info",
-                    message=message_ok,
-                    metadata=meta_ok,
-                    raw=raw_ok,
-                ))
+                logs.append(
+                    LogEntry(
+                        timestamp=ts,
+                        service_name=source,
+                        level="info",
+                        message=message_ok,
+                        metadata=meta_ok,
+                        raw=raw_ok,
+                    )
+                )
         return logs
 
 

@@ -11,6 +11,16 @@
       "version": "20260822_0001_schema_reconciliation",
       "path": "scripts/migrations/20260822_0001_schema_reconciliation.sql",
       "description": "Add ORM/auth tables and additive indexes/columns missing from older clean volumes."
+    },
+    {
+      "version": "20260826_0001_multitenant_partitioning",
+      "path": "scripts/migrations/20260826_0001_multitenant_partitioning.sql",
+      "description": "Implement authoritative multi-tenancy and switch hypertable partitioning to ingestion time."
+    },
+    {
+      "version": "20260826_0002_archive_manifest",
+      "path": "scripts/migrations/20260826_0002_archive_manifest.sql",
+      "description": "Create archive_manifest table for Cold Storage architecture."
     }
   ],
   "legacy_migrations": [
