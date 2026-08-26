@@ -111,8 +111,8 @@ async def _coalesce_and_dispatch(
 
         # Parse items
         payloads = [
-            IncidentAlertPayload.model_validate_json(item)
-            for item in raw_items  # type: ignore
+            IncidentAlertPayload.model_validate_json(item)  # type: ignore
+            for item in raw_items
         ]
 
         # Coalesce the payloads
