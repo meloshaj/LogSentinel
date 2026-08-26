@@ -17,7 +17,7 @@ Object.defineProperty(window, 'matchMedia', {
 });
 
 if (typeof HTMLCanvasElement !== 'undefined') {
-  HTMLCanvasElement.prototype.getContext = () => ({
+  HTMLCanvasElement.prototype.getContext = (() => ({
     fillRect: () => {},
     clearRect: () => {},
     getImageData: () => ({ data: [] }),
@@ -42,5 +42,5 @@ if (typeof HTMLCanvasElement !== 'undefined') {
     transform: () => {},
     rect: () => {},
     clip: () => {}
-  }) as unknown as CanvasRenderingContext2D;
+  })) as any;
 }
