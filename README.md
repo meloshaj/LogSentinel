@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://via.placeholder.com/150x150.png?text=LogSentinel" alt="LogSentinel Logo" width="150" height="150" />
+  <img src="src/assets/logo.png" alt="LogSentinel Logo" width="150" height="150" />
   
   # LogSentinel
 
