@@ -498,10 +498,10 @@ class DrainWorker:
                 if not messages:
                     continue
 
-                for stream_name, stream_messages in messages:  # type: ignore[misc]
-                    for message_id, entry in stream_messages:  # type: ignore[misc]
+                for stream_name, stream_messages in messages:  # type: ignore
+                    for message_id, entry in stream_messages:  # type: ignore
                         try:
-                            await self._process_stream_message(message_id, entry)  # type: ignore[arg-type]
+                            await self._process_stream_message(message_id, entry)  # type: ignore
                         except asyncio.CancelledError:
                             raise
                         except Exception:
