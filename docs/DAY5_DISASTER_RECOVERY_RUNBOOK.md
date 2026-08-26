@@ -57,22 +57,34 @@ Valkey holds the critical state for Drain3 parsing templates, Stream PELs, and a
 
 Your DR strategy is only as good as your last tested restore. Execute the following drill in a staging cluster:
 
-### The Drill:
-1. **Wipe the Database:** Drop the entire `logsentinel_db` and delete the Valkey persistent volume.
+### 1. Automated Backups
+LogSentinel provides an automated backup script that captures logical schema, hypertable state, and uploads directly to S3.
+* **Run Backup:**
+  ```bash
+  ./scripts/backup_database.sh
+  ```
+* This script manages local retention and pushes a timestamped `.sql.gz` snapshot to your configured `S3_BACKUP_BUCKET`.
+
+### 2. The Drill:
+1. **Wipe the Database:** The restore script will automatically drop and recreate the database under a maintenance lock. You should also delete the Valkey persistent volume manually.
 2. **Restore TimescaleDB:**
-   * Provision a fresh TimescaleDB instance.
-   * Restore the latest base backup and replay the WAL logs to a specific point-in-time using pgBackRest.
+   * Run the restore script, passing the backup filename:
+     ```bash
+     ./scripts/restore_database.sh logsentinel_backup_YYYYMMDD_HHMMSS.sql.gz
+     ```
+   * The script will automatically fetch it from S3 if it is not available locally.
+   * It restores the schema/data and verifies the TimescaleDB extension and hypertable integrity.
 3. **Restore Valkey:**
    * Place the latest `dump.rdb` and `appendonly.aof` files into the Valkey data directory before pod startup.
 4. **Validation:**
-   * Start the `drain-worker` and `event-worker` deployments.
+   * Start the `archive-worker` and `backend` deployments.
    * Verify that the Drain3 parser successfully reloads the `drain3:state:snapshot` from Valkey.
-   * Verify that TimescaleDB background jobs automatically resume indexing and compressing the restored chunks.
+   * Verify that the sidecar reconciliation helper runs to ensure `archive_manifest` consistency.
 
 ---
 
 ## ✅ Day 5 Sign-Off Checklist
 - [ ] `scripts/init.sql` executed against staging with zero errors or locked tables.
-- [ ] TimescaleDB WAL archiving (e.g., pgBackRest) configured and pushing to remote object storage.
+- [ ] `./scripts/backup_database.sh` scheduled (e.g. via cronjob) and pushing to remote S3 object storage.
 - [ ] Valkey AOF + RDB persistence enabled.
-- [ ] Cold restore drill performed successfully with confirmed Drain3 state recovery.
+- [ ] Cold restore drill performed successfully with `./scripts/restore_database.sh` and confirmed Drain3 state recovery.

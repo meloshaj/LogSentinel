@@ -24,7 +24,13 @@ async def init_redis_pool() -> Redis:
     delays where Valkey may not yet be accepting connections.
     """
     global _redis_pool
-    logger.info("Initializing Redis connection pool to %s", REDIS_URL)
+    # Redact password for logging
+    from urllib.parse import urlparse
+    parsed = urlparse(REDIS_URL)
+    safe_url = REDIS_URL
+    if parsed.password:
+        safe_url = REDIS_URL.replace(f":{parsed.password}@", ":***@")
+    logger.info("Initializing Redis connection pool to %s", safe_url)
 
     last_error: Exception | None = None
 
@@ -65,7 +71,7 @@ async def init_redis_pool() -> Redis:
             await asyncio.sleep(delay)
 
     raise RuntimeError(
-        f"FATAL: Could not connect to Redis at {REDIS_URL} after "
+        f"FATAL: Could not connect to Redis at {safe_url} after "
         f"{_MAX_RETRIES} attempts. Last error: {last_error}"
     )
 

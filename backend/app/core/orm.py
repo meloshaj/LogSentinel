@@ -13,8 +13,36 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, VARCHAR
+from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from cryptography.fernet import Fernet
+import os
+import base64
 
+# Ensure key is a valid Fernet key. It must be 32 URL-safe base64-encoded bytes.
+_secret = os.getenv("ENCRYPTION_KEY")
+if not _secret:
+    raise ValueError("ENCRYPTION_KEY environment variable is not set. It must be a 32-byte URL-safe base64-encoded string.")
+_fernet = Fernet(_secret.encode("utf-8"))
+
+class EncryptedString(TypeDecorator):
+    """Transparently encrypt/decrypt strings using Fernet."""
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            return _fernet.encrypt(value.encode('utf-8')).decode('utf-8')
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            try:
+                return _fernet.decrypt(value.encode('utf-8')).decode('utf-8')
+            except Exception:
+                # Fallback if decryption fails (e.g. data was plaintext)
+                return value
+        return value
 
 class Base(DeclarativeBase):
     """Shared declarative base for all LogSentinel ORM models."""
@@ -190,8 +218,8 @@ class AccountRecord(Base):
     )
     provider: Mapped[str] = mapped_column(VARCHAR(32), nullable=False)
     provider_account_id: Mapped[str] = mapped_column(VARCHAR(512), nullable=False)
-    access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    access_token: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    refresh_token: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

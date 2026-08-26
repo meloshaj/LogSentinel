@@ -81,6 +81,7 @@ class LogRepository:
             metadata = "{}"
 
         return (
+            row.get("tenant_id", "default"),
             row["id"],
             row["timestamp"],
             row["service"],
@@ -95,6 +96,7 @@ class LogRepository:
             metadata,
             row.get("parsed_at") or datetime.now(timezone.utc),
             row["created_at"],
+            row.get("ingested_at") or datetime.now(timezone.utc),
         )
 
     async def bulk_insert_parsed_logs(self, parsed_logs: Sequence[ParsedLog]) -> int:
@@ -117,9 +119,9 @@ class LogRepository:
                     "logs",
                     records=tuples,
                     columns=[
-                        "id", "timestamp", "service", "raw_message", "template_id", 
+                        "tenant_id", "id", "timestamp", "service", "raw_message", "template_id", 
                         "template_text", "parameters", "level", "source", "environment", 
-                        "correlation_id", "metadata", "parsed_at", "created_at"
+                        "correlation_id", "metadata", "parsed_at", "created_at", "ingested_at"
                     ]
                 )
             
@@ -141,6 +143,7 @@ class LogRepository:
     async def get_recent_correlation_evidence(
         self,
         *,
+        tenant_id: str,
         start_time: datetime,
         end_time: datetime,
         services: Sequence[str] | None = None,
@@ -149,11 +152,12 @@ class LogRepository:
     ) -> list[dict[str, Any]]:
         """Return bounded recent log rows needed for service/trace evidence."""
         conditions = [
+            logs_table.c.tenant_id == tenant_id,
             logs_table.c.timestamp >= start_time,
             logs_table.c.timestamp <= end_time,
             # Mandatory chunk-exclusion filter for TimescaleDB
-            logs_table.c.created_at >= start_time,
-            logs_table.c.created_at <= end_time,
+            logs_table.c.ingested_at >= start_time,
+            logs_table.c.ingested_at <= end_time,
         ]
         cleaned_services = sorted({service for service in services or [] if service})
         cleaned_correlation_ids = sorted(
@@ -173,7 +177,7 @@ class LogRepository:
                 logs_table.c.service,
                 logs_table.c.level,
                 logs_table.c.correlation_id,
-                logs_table.c.metadata_,
+                logs_table.c.metadata,
             )
             .where(and_(*conditions))
             .order_by(logs_table.c.timestamp.desc(), logs_table.c.service.asc())
@@ -187,16 +191,17 @@ class LogRepository:
         return [dict(row) for row in rows]
 
     async def get_log_by_id(
-        self, log_id: str, created_at_start: datetime, created_at_end: datetime
+        self, tenant_id: str, log_id: str, ingested_at_start: datetime, ingested_at_end: datetime
     ) -> dict[str, Any] | None:
         """Fetch a single log by ID with mandatory time bounds for chunk exclusion."""
         stmt = (
             select(logs_table)
             .where(
                 and_(
+                    logs_table.c.tenant_id == tenant_id,
                     logs_table.c.id == log_id,
-                    logs_table.c.created_at >= created_at_start,
-                    logs_table.c.created_at <= created_at_end,
+                    logs_table.c.ingested_at >= ingested_at_start,
+                    logs_table.c.ingested_at <= ingested_at_end,
                 )
             )
         )
@@ -206,16 +211,17 @@ class LogRepository:
             return dict(row) if row else None
 
     async def delete_log(
-        self, log_id: str, created_at_start: datetime, created_at_end: datetime
+        self, tenant_id: str, log_id: str, ingested_at_start: datetime, ingested_at_end: datetime
     ) -> bool:
         """Delete a single log by ID with mandatory time bounds for chunk exclusion."""
         stmt = (
             delete(logs_table)
             .where(
                 and_(
+                    logs_table.c.tenant_id == tenant_id,
                     logs_table.c.id == log_id,
-                    logs_table.c.created_at >= created_at_start,
-                    logs_table.c.created_at <= created_at_end,
+                    logs_table.c.ingested_at >= ingested_at_start,
+                    logs_table.c.ingested_at <= ingested_at_end,
                 )
             )
         )
@@ -223,7 +229,7 @@ class LogRepository:
             result = await conn.execute(stmt)
             return result.rowcount > 0
 
-    async def get_recent_logs(self, limit: int = 500) -> list[dict[str, Any]]:
+    async def get_recent_logs(self, tenant_id: str, limit: int = 500) -> list[dict[str, Any]]:
         """Return the most recent logs for backfilling the UI."""
         stmt = (
             select(
@@ -234,9 +240,10 @@ class LogRepository:
                 logs_table.c.level,
                 logs_table.c.template_id,
                 logs_table.c.template_text,
-                logs_table.c.metadata_,
+                logs_table.c.metadata,
             )
-            .order_by(logs_table.c.created_at.desc())
+            .where(logs_table.c.tenant_id == tenant_id)
+            .order_by(logs_table.c.ingested_at.desc())
             .limit(limit)
         )
 
@@ -247,11 +254,11 @@ class LogRepository:
         return [dict(row) for row in rows]
 
     async def get_logs_paginated(
-        self, page: int = 1, limit: int = 50, service: str | None = None, level: str | None = None
+        self, tenant_id: str, page: int = 1, limit: int = 50, service: str | None = None, level: str | None = None
     ) -> dict[str, Any]:
         """Fetch paginated logs with optional filters."""
         from sqlalchemy import func
-        conditions = []
+        conditions = [logs_table.c.tenant_id == tenant_id]
         if service:
             conditions.append(logs_table.c.service == service)
         if level:
@@ -273,7 +280,7 @@ class LogRepository:
                 logs_table.c.metadata,
             )
             .where(where_clause)
-            .order_by(logs_table.c.created_at.desc())
+            .order_by(logs_table.c.ingested_at.desc())
             .offset((page - 1) * limit)
             .limit(limit)
         )
@@ -299,6 +306,7 @@ class LogRepository:
         """Convert a validated ParsedLog into one database insert row."""
         return {
             "id": parsed_log.id,
+            "tenant_id": getattr(parsed_log, "tenant_id", "default"),
             "timestamp": parsed_log.timestamp,
             "service": getattr(parsed_log, "service_name", parsed_log.service),
             "raw_message": getattr(parsed_log, "message", getattr(parsed_log, "raw", parsed_log.raw_message)),
@@ -311,8 +319,8 @@ class LogRepository:
             "correlation_id": getattr(parsed_log, "correlation_id", None),
             "metadata": _json_safe_dict(parsed_log.metadata),
             "parsed_at": parsed_log.parsed_at,
-            # Assign created_at to timestamp if historical, else now
             "created_at": parsed_log.timestamp if getattr(parsed_log, "timestamp", None) else datetime.now(timezone.utc),
+            "ingested_at": datetime.now(timezone.utc),
         }
 
 

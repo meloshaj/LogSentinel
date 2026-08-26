@@ -836,6 +836,7 @@ class DrainWorker:
             ("level", "level"),
             ("timestamp", "timestamp"),
             ("correlation_id", "correlation_id"),
+            ("tenant_id", "tenant_id"),
         ):
             value = entry.get(source_key)
             if value is not None:
@@ -845,7 +846,7 @@ class DrainWorker:
 
     def _metadata_from_payload(self, item: dict[str, Any]) -> dict[str, Any]:
         metadata: dict[str, Any] = {}
-        for key in ("source", "environment", "correlation_id"):
+        for key in ("source", "environment", "correlation_id", "tenant_id"):
             value = item.get(key)
             if value is not None:
                 metadata[key] = value

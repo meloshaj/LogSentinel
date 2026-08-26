@@ -11,8 +11,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..models import ParsedLog
+from prometheus_client import Counter
 
 logger = logging.getLogger("logsentinel.batch_manager")
+
+LOG_DROPPED_BUFFER_FULL = Counter(
+    "log_dropped_buffer_full_total",
+    "Total number of logs dropped or rejected due to batch buffer being full"
+)
 
 BatchSink = Callable[[list[ParsedLog]], Any]
 
@@ -71,8 +77,9 @@ class ParsedLogBatchManager:
         should_flush = False
         async with self._state_lock:
             if len(self._buffer) >= MAX_BUFFER_CAPACITY:
-                logger.warning(f"Buffer capacity exceeded ({MAX_BUFFER_CAPACITY}). Dropping log.")
-                return
+                LOG_DROPPED_BUFFER_FULL.inc()
+                logger.warning(f"Buffer capacity exceeded ({MAX_BUFFER_CAPACITY}). Rejecting log.")
+                raise BufferError("Buffer capacity exceeded")
             if len(self._buffer) == 0:
                 self._oldest_timestamp = time.monotonic()
             

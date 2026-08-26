@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logsentinel_secret}
       POSTGRES_DB: ${POSTGRES_DB:-logsentinel_db}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - demo_pgdata:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -22,7 +22,7 @@ services:
       - "-c"
       - "effective_cache_size=1536MB"
       - "-c"
-      - "synchronous_commit=off"
+      - "synchronous_commit=on"
       - "-c"
       - "wal_buffers=64MB"
       - "-c"
@@ -52,9 +52,9 @@ services:
   valkey:
     image: valkey/valkey:8.0-alpine
     container_name: demo_valkey
-    command: ["valkey-server", "--save", "60", "1"]
+    command: ["valkey-server", "--save", "60", "1", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - demo_valkey_data:/data
     healthcheck:
@@ -84,6 +84,25 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  db-migrator:
+    build:
+      context: ./backend
+    image: logsentinel-backend:demo
+    container_name: demo_db_migrator
+    command: ["python", "/repo/scripts/database_lifecycle.py", "--apply"]
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+    volumes:
+      - .:/repo:ro
+    working_dir: /repo
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   backend:
     build:
       context: ./backend
@@ -101,11 +120,14 @@ services:
       - INGEST_API_KEYS=ls_live_demo_key_123,dev-local-key
       - GRAPH_SCORING_LOOKBACK_SECONDS=${GRAPH_SCORING_LOOKBACK_SECONDS:-180}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-demo_secret_key_12345}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
     depends_on:
       postgres:
         condition: service_healthy
+      db-migrator:
+        condition: service_completed_successfully
       valkey:
         condition: service_healthy
     restart: unless-stopped

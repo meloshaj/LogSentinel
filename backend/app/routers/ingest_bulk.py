@@ -32,6 +32,7 @@ async def ingest_bulk(
     request: Request,
     service: str | None = Query(None, description="Fallback service name"),
     x_service_name: str | None = Header(None, alias="X-Service-Name"),
+    tenant_id: str = Depends(require_ingestion_api_key),
 ) -> BulkIngestResponse:
     body = await request.body()
     if len(body) > MAX_PAYLOAD_SIZE:
@@ -104,9 +105,11 @@ async def ingest_bulk(
         redis = request.app.state.redis
         pipe = redis.pipeline(transaction=False)
         for log in logs:
+            payload_dict = log.model_dump(exclude_none=True)
+            payload_dict["tenant_id"] = tenant_id
             pipe.xadd(
                 "logs:stream",
-                {"payload": log.model_dump_json(exclude_none=True)},
+                {"payload": json.dumps(payload_dict)},
                 maxlen=500000,
                 approximate=True
             )

@@ -33,13 +33,13 @@ describe("authenticated browser transport", () => {
     expect(new Headers(init.headers).has("Authorization")).toBe(false);
   });
 
-  it("URL-encodes the current token in the WebSocket query", () => {
+  it("does not leak the current token in the WebSocket query", () => {
     const token = "jwt token/+?";
     setAuthToken(token);
 
     const candidate = authenticatedWebSocketUrl("ws://localhost:8000/ws/telemetry");
     expect(candidate).not.toBeNull();
-    expect(new URL(candidate!).searchParams.get("token")).toBe(token);
+    expect(new URL(candidate!).searchParams.has("token")).toBe(false);
   });
 
   it("clears an expired token when a protected request is rejected", async () => {

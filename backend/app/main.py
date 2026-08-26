@@ -103,6 +103,7 @@ from .routers.benchmark_router import router as benchmark_router
 from .routers.ingest import router as ingest_router
 from .routers.ingest_bulk import router as ingest_bulk_router
 from .routers.otel_receiver import router as otel_router
+from .archive.rehydration import router as archive_rehydration_router
 from .schemas.blast_radius import BlastRadiusResult
 from .schemas.graph_api import BlastRadiusRetrievalResponse, TopologyResponse
 from .security import require_ingestion_api_key
@@ -118,6 +119,7 @@ from .workers.drain_worker import DrainWorker
 from .workers.event_manager import EventManager
 from .workers.feature_worker import FeatureExtractionWorker
 from .workers.stream_cleaner import StreamCleanerWorker
+from .archive.worker import ArchiveWorker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -240,6 +242,14 @@ stream_cleaner = StreamCleanerWorker(
     batch_size=100,
 )
 
+run_archive_worker_in_lifespan = os.getenv("RUN_ARCHIVE_WORKER_IN_LIFESPAN", "true").lower() == "true"
+
+archive_worker = None
+if run_archive_worker_in_lifespan:
+    archive_worker = ArchiveWorker(
+        check_interval_seconds=60.0,
+    )
+
 
 async def _observability_loop(app: FastAPI) -> None:
     """Publish bounded worker, stream, ML, and benchmark state periodically.
@@ -311,7 +321,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "default. Set a strong, unique secret via the JWT_SECRET_KEY environment "
                 "variable before starting in production."
             )
-        logger.info("Production guardrails passed — JWT_SECRET_KEY is configured.")
+        postgres_password = os.getenv("POSTGRES_PASSWORD", "")
+        if postgres_password in {"postgres", "logsentinel_secret", "changeme", ""}:
+            raise RuntimeError(
+                "FATAL: POSTGRES_PASSWORD is missing or set to an insecure default. "
+                "Set a strong password in production."
+            )
+        logger.info("Production guardrails passed — secrets are configured.")
     else:
         if JWT_SECRET_KEY in _JWT_DEV_DEFAULTS:
             logger.warning(
@@ -346,6 +362,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     feature_worker.start()
     event_manager.start()
     stream_cleaner.start()
+    if archive_worker:
+        archive_worker.start()
     telemetry_manager.set_redis_client(app.state.redis)
     telemetry_manager.start()
     app.state.observability_task = asyncio.create_task(
@@ -368,6 +386,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await drain_worker.stop()
         await feature_worker.stop()
         await event_manager.stop()
+        if archive_worker:
+            await archive_worker.stop()
         await telemetry_manager.stop()
         await batch_manager.flush_all()
         await dispose_engine()
@@ -455,6 +475,7 @@ app.include_router(auth_router)
 app.include_router(ingest_router)
 app.include_router(ingest_bulk_router)
 app.include_router(otel_router)
+app.include_router(archive_rehydration_router)
 
 benchmarking_settings = get_benchmarking_settings()
 if benchmarking_settings.enable_benchmarking_endpoints:
@@ -611,10 +632,11 @@ async def list_active_tracking_loops(
 
 
 @app.websocket("/ws/telemetry")
-async def telemetry_websocket(websocket: WebSocket, token: str | None = None) -> None:
+async def telemetry_websocket(websocket: WebSocket) -> None:
     """
     WebSocket endpoint for real-time telemetry streaming.
     Clients receive updates for logs, topology, and anomalies.
+    Expects an initial auth handshake frame: {"type": "auth", "token": "..."}
     """
     import jwt as pyjwt
     from fastapi import status
@@ -622,7 +644,16 @@ async def telemetry_websocket(websocket: WebSocket, token: str | None = None) ->
     from .security.auth import JWT_ALGORITHM, JWT_SECRET_KEY
 
     telemetry_manager.record_connection_attempt()
-    if not token:
+    
+    await websocket.accept()
+    
+    try:
+        # Wait for the auth handshake frame
+        auth_msg = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+        token = auth_msg.get("token")
+        if not token or auth_msg.get("type") != "auth":
+            raise ValueError("Invalid auth frame")
+    except Exception:
         telemetry_manager.record_authentication_failure()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return

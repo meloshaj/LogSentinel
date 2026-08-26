@@ -31,6 +31,7 @@ def send_password_reset_email(email_to: str, token: str) -> None:
     try:
         # We use sync smtplib in a background task (which FastAPI runs in a threadpool)
         with smtplib.SMTP(settings.host, settings.port, timeout=5) as server:
+            server.starttls() # Enforce TLS
             if settings.user and settings.password:
                 server.login(settings.user, settings.password)
             server.send_message(msg)
@@ -38,6 +39,6 @@ def send_password_reset_email(email_to: str, token: str) -> None:
     except Exception as e:
         logger.warning(
             "Failed to send password reset email to %s via SMTP (%s:%s): %s. "
-            "Falling back to logging the reset URL: %s",
-            email_to, settings.host, settings.port, str(e), reset_url
+            "Falling back to stdout logging (URL omitted for security).",
+            email_to, settings.host, settings.port, str(e)
         )

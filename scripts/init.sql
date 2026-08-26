@@ -66,6 +66,7 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS logs (
     id              VARCHAR(26),
+    tenant_id       VARCHAR(64)     NOT NULL DEFAULT 'default',
     timestamp       TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     service         VARCHAR(255)    NOT NULL,
     raw_message     TEXT            NOT NULL,
@@ -79,16 +80,17 @@ CREATE TABLE IF NOT EXISTS logs (
     metadata        JSONB           NOT NULL DEFAULT '{}'::jsonb,
     parsed_at       TIMESTAMPTZ     NULL,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (created_at, id)
+    ingested_at     TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_id, ingested_at, id)
 );
 
 -- Initialize TimescaleDB hypertable
-SELECT create_hypertable('logs', 'created_at', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
+SELECT create_hypertable('logs', 'ingested_at', chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);
 
 -- Configure Columnar Compression
 ALTER TABLE logs SET (
     timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'service',
+    timescaledb.compress_segmentby = 'tenant_id, service',
     timescaledb.compress_orderby = 'timestamp DESC'
 );
 
@@ -101,13 +103,14 @@ SELECT add_compression_policy('logs', INTERVAL '7 days', if_not_exists => TRUE);
 CREATE MATERIALIZED VIEW IF NOT EXISTS logs_rollup_1m
 WITH (timescaledb.continuous) AS
 SELECT
-    time_bucket('1 minute', created_at) AS bucket,
+    time_bucket('1 minute', ingested_at) AS bucket,
+    tenant_id,
     service AS service_name,
     level AS log_level,
     COUNT(*) AS log_count,
     COUNT(*) FILTER (WHERE level IN ('ERROR', 'CRITICAL', 'FATAL'))::FLOAT / NULLIF(COUNT(*), 0) AS error_ratio
 FROM logs
-GROUP BY bucket, service, level
+GROUP BY bucket, tenant_id, service, level
 WITH NO DATA;
 
 SELECT add_continuous_aggregate_policy('logs_rollup_1m',
@@ -126,7 +129,7 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN
 END $$;
 
-SELECT add_retention_policy('logs', INTERVAL '30 days', if_not_exists => TRUE);
+-- SELECT add_retention_policy('logs', INTERVAL '30 days', if_not_exists => TRUE);
 
 -- NOTE: Columns template_text, parameters, level, source, environment,
 -- metadata, parsed_at, created_at are already defined in the CREATE TABLE
@@ -142,6 +145,7 @@ SELECT add_retention_policy('logs', INTERVAL '30 days', if_not_exists => TRUE);
 
 CREATE TABLE IF NOT EXISTS incidents (
     id              BIGSERIAL       PRIMARY KEY,
+    tenant_id       VARCHAR(64)     NOT NULL DEFAULT 'default',
     root_cause      TEXT            NULL,
     severity        severity_level  NOT NULL,
     blast_radius    FLOAT           NULL,
@@ -159,14 +163,16 @@ CREATE TABLE IF NOT EXISTS incidents (
 
 CREATE TABLE IF NOT EXISTS feature_windows (
     id                  BIGSERIAL       PRIMARY KEY,
-    window_id           VARCHAR(128)    NOT NULL UNIQUE,
+    tenant_id           VARCHAR(64)     NOT NULL DEFAULT 'default',
+    window_id           VARCHAR(128)    NOT NULL,
     start_time          TIMESTAMPTZ     NOT NULL,
     end_time            TIMESTAMPTZ     NOT NULL,
     service             VARCHAR(255)    NULL,
     log_count           INTEGER         NOT NULL DEFAULT 0,
     feature_vector      JSONB           NOT NULL DEFAULT '{}'::jsonb,
     anomaly_prediction  JSONB           NULL,
-    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_feature_windows_tenant_window UNIQUE (tenant_id, window_id)
 );
 
 -- ---------------------------------------------------------------------------
@@ -177,14 +183,16 @@ CREATE TABLE IF NOT EXISTS feature_windows (
 
 CREATE TABLE IF NOT EXISTS anomaly_events (
     id              BIGSERIAL       PRIMARY KEY,
-    window_id       VARCHAR(128)    NOT NULL
-                        REFERENCES feature_windows(window_id) ON DELETE CASCADE,
+    tenant_id       VARCHAR(64)     NOT NULL DEFAULT 'default',
+    window_id       VARCHAR(128)    NOT NULL,
     event_type      VARCHAR(64)     NOT NULL,
     severity        VARCHAR(32)     NOT NULL,
     score           FLOAT           NULL,
     details         JSONB           NULL,
     acknowledged    BOOLEAN         NOT NULL DEFAULT FALSE,
-    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_anomaly_events_window FOREIGN KEY (tenant_id, window_id)
+        REFERENCES feature_windows(tenant_id, window_id) ON DELETE CASCADE
 );
 
 -- ---------------------------------------------------------------------------
@@ -194,46 +202,46 @@ CREATE TABLE IF NOT EXISTS anomaly_events (
 
 -- Accelerates Drain3 template pattern grouping queries
 CREATE INDEX IF NOT EXISTS idx_logs_template_id
-    ON logs (template_id);
+    ON logs (tenant_id, template_id);
 
 -- Accelerates distributed trace correlation lookups
 CREATE INDEX IF NOT EXISTS idx_logs_correlation_id
-    ON logs (correlation_id);
+    ON logs (tenant_id, correlation_id);
 
 -- Accelerates time-range scans (essential for any log platform)
 CREATE INDEX IF NOT EXISTS idx_logs_timestamp
-    ON logs (timestamp);
+    ON logs (tenant_id, timestamp);
 
 -- TimescaleDB compound indexes for high-frequency filtering
-CREATE INDEX IF NOT EXISTS idx_logs_service_created_at
-    ON logs (service, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_logs_service_ingested_at
+    ON logs (tenant_id, service, ingested_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_logs_level_created_at
-    ON logs (level, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_logs_level_ingested_at
+    ON logs (tenant_id, level, ingested_at DESC);
 
 -- Accelerates open-incident dashboard queries
 CREATE INDEX IF NOT EXISTS idx_incidents_status
-    ON incidents (status);
+    ON incidents (tenant_id, status);
 
 -- Feature window lookups by window identifier
 CREATE INDEX IF NOT EXISTS idx_feature_windows_window_id
-    ON feature_windows (window_id);
+    ON feature_windows (tenant_id, window_id);
 
 -- Time-range scans over feature windows
 CREATE INDEX IF NOT EXISTS idx_feature_windows_start_time
-    ON feature_windows (start_time);
+    ON feature_windows (tenant_id, start_time);
 
 -- Anomaly event lookups by originating window
 CREATE INDEX IF NOT EXISTS idx_anomaly_events_window_id
-    ON anomaly_events (window_id);
+    ON anomaly_events (tenant_id, window_id);
 
 -- Anomaly event recency / dashboard queries
 CREATE INDEX IF NOT EXISTS idx_anomaly_events_created_at
-    ON anomaly_events (created_at);
+    ON anomaly_events (tenant_id, created_at);
 
 -- Anomaly severity filtering
 CREATE INDEX IF NOT EXISTS idx_anomaly_events_severity
-    ON anomaly_events (severity);
+    ON anomaly_events (tenant_id, severity);
 
 -- ---------------------------------------------------------------------------
 -- Tracking Loops Table
@@ -243,23 +251,25 @@ CREATE INDEX IF NOT EXISTS idx_anomaly_events_severity
 
 CREATE TABLE IF NOT EXISTS tracking_loops (
     id              BIGSERIAL       PRIMARY KEY,
-    window_id       VARCHAR(128)    NOT NULL
-                        REFERENCES feature_windows(window_id) ON DELETE CASCADE,
+    tenant_id       VARCHAR(64)     NOT NULL DEFAULT 'default',
+    window_id       VARCHAR(128)    NOT NULL,
     anomaly_score   FLOAT           NOT NULL,
     status          VARCHAR(32)     NOT NULL DEFAULT 'ACTIVE',
     blast_radius    JSONB           NULL,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT fk_tracking_loops_window FOREIGN KEY (tenant_id, window_id)
+        REFERENCES feature_windows(tenant_id, window_id) ON DELETE CASCADE
 );
 
 ALTER TABLE tracking_loops
     ADD COLUMN IF NOT EXISTS blast_radius JSONB NULL;
 
 CREATE INDEX IF NOT EXISTS idx_tracking_loops_window_id
-    ON tracking_loops (window_id);
+    ON tracking_loops (tenant_id, window_id);
 
 CREATE INDEX IF NOT EXISTS idx_tracking_loops_created_at
-    ON tracking_loops (created_at);
+    ON tracking_loops (tenant_id, created_at);
 
 -- ---------------------------------------------------------------------------
 -- Users Table
@@ -335,16 +345,16 @@ CREATE INDEX IF NOT EXISTS idx_external_identities_lookup
 -- ---------------------------------------------------------------------------
 
 -- Accelerates GET /api/v1/logs/recent and paginated log queries
-CREATE INDEX IF NOT EXISTS idx_logs_created_service
-    ON logs (created_at DESC, service);
+CREATE INDEX IF NOT EXISTS idx_logs_ingested_service
+    ON logs (tenant_id, ingested_at DESC, service);
 
 -- Accelerates tracking-loop dashboard queries filtered by recency and status
 CREATE INDEX IF NOT EXISTS idx_tracking_loops_severity
-    ON tracking_loops (created_at DESC, status);
+    ON tracking_loops (tenant_id, created_at DESC, status);
 
 -- Accelerates feature-window time-range scans used by the anomaly pipeline
 CREATE INDEX IF NOT EXISTS idx_features_window
-    ON feature_windows (created_at DESC);
+    ON feature_windows (tenant_id, created_at DESC);
 
 -- ---------------------------------------------------------------------------
 -- Schema lifecycle ledger

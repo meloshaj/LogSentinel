@@ -49,6 +49,7 @@ router = APIRouter(
 async def ingest_log_endpoint(
     request: Request,
     payload: IngestPayload | list[LogEntry],
+    tenant_id: str = Depends(require_ingestion_api_key),
 ) -> JSONResponse:
     """Accept log payloads asynchronously and enqueue them to Redis streams with approximate trimming."""
     if isinstance(payload, IngestPayload):
@@ -63,6 +64,9 @@ async def ingest_log_endpoint(
             "environment": "development",
             "logs": logs_list,
         }
+    
+    # Enforce authoritative multitenancy
+    normalized_payload["tenant_id"] = tenant_id
 
     try:
         redis: Redis = getattr(request.app.state, "redis", None)

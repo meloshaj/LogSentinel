@@ -194,6 +194,31 @@ BENCHMARK_DB_BATCH_DURATION = Gauge(
     "EMA of sink/database batch duration in milliseconds.",
 )
 
+ARCHIVE_JOBS_TOTAL = Counter(
+    "logsentinel_archive_jobs_total",
+    "Total archive jobs processed.",
+)
+ARCHIVE_FAILURES_TOTAL = Counter(
+    "logsentinel_archive_failures_total",
+    "Total archive jobs failed.",
+)
+ARCHIVE_BYTES_TOTAL = Counter(
+    "logsentinel_archive_bytes_total",
+    "Total bytes archived to S3.",
+)
+ARCHIVE_VERIFICATION_FAILURES = Counter(
+    "logsentinel_archive_verification_failures_total",
+    "Total verification failures for archived files.",
+)
+ARCHIVE_HOT_DELETE_FAILURES = Counter(
+    "logsentinel_archive_hot_delete_failures_total",
+    "Total failures dropping hot chunks.",
+)
+ARCHIVE_BACKLOG_SECONDS = Gauge(
+    "logsentinel_archive_backlog_seconds",
+    "Estimated backlog (oldest job age) for the archiver in seconds.",
+)
+
 
 # ---------------------------------------------------------------------------
 # Cached state and small conversion helpers

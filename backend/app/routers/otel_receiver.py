@@ -59,10 +59,11 @@ def extract_attributes(attributes: list) -> dict[str, Any]:
                 result[attr.key] = val
     return result
 
-@router.post("/logs", dependencies=[Depends(require_ingestion_api_key)])
+@router.post("/logs")
 async def ingest_logs(
     request: Request,
     redis_client: Annotated[Redis, Depends(get_redis_client)],
+    tenant_id: str = Depends(require_ingestion_api_key),
 ) -> JSONResponse:
     """
     Ingest OpenTelemetry logs natively.
@@ -130,6 +131,7 @@ async def ingest_logs(
                 canonical_log = {
                     "source": "otlp",
                     "environment": metadata.pop("deployment.environment", "production"), # common convention
+                    "tenant_id": tenant_id,
                     "logs": [{
                         "timestamp": parse_otel_time(record.time_unix_nano, record.observed_time_unix_nano),
                         "service_name": service_name,

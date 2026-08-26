@@ -34,7 +34,7 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 
-FROM nginx:1.27-alpine AS production
+FROM caddy:2-alpine AS production
 
 WORKDIR /app
 
@@ -42,16 +42,15 @@ WORKDIR /app
 RUN addgroup -g 10001 -S appuser && \
     adduser -u 10001 -S appuser -G appuser
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY --from=build /app/dist /app/dist
+COPY deploy/caddy/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/dist /usr/share/caddy/html
 
-# Set appropriate ownership on /app and nginx runtime paths
-RUN touch /var/run/nginx.pid && \
-    chown -R appuser:appuser /app /usr/share/nginx/html /var/run/nginx.pid /var/cache/nginx /var/log/nginx /etc/nginx/conf.d
+# Set appropriate ownership on /app and caddy runtime paths
+RUN mkdir -p /data /config && \
+    chown -R appuser:appuser /app /usr/share/caddy/html /etc/caddy/Caddyfile /data /config
 
 USER appuser
 
-EXPOSE 80
+EXPOSE 80 443
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

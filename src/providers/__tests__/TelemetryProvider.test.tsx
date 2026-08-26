@@ -184,7 +184,7 @@ describe("TelemetryProvider", () => {
 
     expect(mockWsInstances).toHaveLength(1);
     const socketUrl = new URL(mockWsInstances[0].url);
-    expect(socketUrl.searchParams.get("token")).toBe("test-token");
+    expect(socketUrl.searchParams.has("token")).toBe(false);
     expect(mockWsInstances[0].url).not.toContain("Bearer");
   });
 

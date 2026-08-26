@@ -295,6 +295,16 @@ async def _connect() -> asyncpg.Connection:
 
 
 async def _run(mode: str) -> dict[str, Any] | list[str]:
+    if mode == "validate":
+        manifest = load_manifest()
+        result = {"schema_id": manifest["schema_id"], "active_migrations": []}
+        for migration, path in active_migration_files(manifest):
+            result["active_migrations"].append({
+                "version": migration["version"],
+                "checksum": _sha256(path),
+            })
+        return result
+
     connection = await _connect()
     try:
         if mode == "bootstrap":
@@ -305,7 +315,6 @@ async def _run(mode: str) -> dict[str, Any] | list[str]:
             result = await apply_migrations(connection)
             await validate_schema(connection)
             return result
-        return await validate_schema(connection)
     finally:
         await connection.close()
 

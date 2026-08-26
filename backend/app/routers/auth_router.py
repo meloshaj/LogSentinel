@@ -217,8 +217,7 @@ async def google_login(
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                "https://www.googleapis.com/oauth2/v3/userinfo",
-                headers={"Authorization": f"Bearer {payload.credential}"}
+                f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.credential}"
             )
             if resp.status_code != 200:
                 raise HTTPException(
@@ -226,6 +225,11 @@ async def google_login(
                     detail="Invalid Google credential",
                 )
             idinfo = resp.json()
+            if idinfo.get("aud") != GOOGLE_CLIENT_ID:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Google credential audience mismatch",
+                )
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -303,7 +307,9 @@ async def google_login(
 # ─── Forgot Password ────────────────────────────────────────────────────────
 
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
+@limiter.limit("3/minute")
 async def forgot_password(
+    request: Request,
     payload: ForgotPasswordRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSessionDep,
@@ -564,13 +570,15 @@ async def github_login_redirect(request: Request):
             detail="GitHub SSO is not configured.",
         )
 
-    # Capture the frontend origin so we can redirect back to the correct port
+    # Validate the frontend origin to prevent redirect URL poisoning
+    allowed_origins = [o.strip() for o in os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")]
     referer = request.headers.get("referer")
+    frontend_origin = allowed_origins[0]
     if referer:
         parsed = urllib.parse.urlparse(referer)
-        frontend_origin = f"{parsed.scheme}://{parsed.netloc}"
-    else:
-        frontend_origin = os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")[0].strip()
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if origin in allowed_origins:
+            frontend_origin = origin
 
     state = secrets.token_urlsafe(32)
     github_auth_url = "https://github.com/login/oauth/authorize"
@@ -721,7 +729,11 @@ async def github_login_callback(
             
         logger.info("Auto-created user via GitHub SSO: %s", primary_email)
 
-    # 5. Issue session token and redirect
+    # 5. Issue session token and redirect using URL fragment to avoid access log leakage
     token = create_access_token(data={"sub": user.email, "full_name": user.full_name or ""})
-    frontend_url = request.cookies.get("github_oauth_origin") or os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")[-1].strip()
-    return RedirectResponse(f"{frontend_url}/login?token={token}", status_code=303)
+    
+    allowed_origins = [o.strip() for o in os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")]
+    cookie_origin = request.cookies.get("github_oauth_origin")
+    frontend_url = cookie_origin if cookie_origin in allowed_origins else allowed_origins[0]
+    
+    return RedirectResponse(f"{frontend_url}/login#token={token}", status_code=303)

@@ -54,6 +54,7 @@ class TrackingRepository:
 
     async def persist_tracking_loop(
         self,
+        tenant_id: str,
         window_id: str,
         anomaly_score: float,
         status: str = "ACTIVE",
@@ -63,6 +64,7 @@ class TrackingRepository:
         now = datetime.now(timezone.utc)
 
         row = {
+            "tenant_id": tenant_id,
             "window_id": window_id,
             "anomaly_score": anomaly_score,
             "status": status,
@@ -78,11 +80,16 @@ class TrackingRepository:
         except Exception:
             logger.exception("Failed to persist tracking loop for window_id=%s", window_id)
 
-    async def get_tracking_loop_by_id(self, tracking_loop_id: int) -> dict | None:
+    async def get_tracking_loop_by_id(self, tenant_id: str, tracking_loop_id: int) -> dict | None:
         """Return one tracking-loop row by primary key without mutating it."""
         stmt = (
             select(tracking_loops_table)
-            .where(tracking_loops_table.c.id == tracking_loop_id)
+            .where(
+                and_(
+                    tracking_loops_table.c.tenant_id == tenant_id,
+                    tracking_loops_table.c.id == tracking_loop_id
+                )
+            )
             .limit(1)
         )
 
@@ -92,11 +99,16 @@ class TrackingRepository:
 
         return dict(row) if row is not None else None
 
-    async def get_active_tracking_loops(self, limit: int = 100) -> list[dict]:
+    async def get_active_tracking_loops(self, tenant_id: str, limit: int = 100) -> list[dict]:
         """Return all tracking loops with ACTIVE status, newest first."""
         stmt = (
             select(tracking_loops_table)
-            .where(tracking_loops_table.c.status == "ACTIVE")
+            .where(
+                and_(
+                    tracking_loops_table.c.tenant_id == tenant_id,
+                    tracking_loops_table.c.status == "ACTIVE"
+                )
+            )
             .order_by(tracking_loops_table.c.created_at.desc())
             .limit(limit)
         )

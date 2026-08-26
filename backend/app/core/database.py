@@ -175,7 +175,7 @@ async def verify_schema_ready() -> None:
                             EXISTS (
                                 SELECT 1
                                 FROM schema_migrations
-                                WHERE version = '20260822_0001_schema_reconciliation'
+                                WHERE version = '20260826_0001_multitenant_partitioning'
                             ) AS current_migration,
                             EXISTS (
                                 SELECT 1

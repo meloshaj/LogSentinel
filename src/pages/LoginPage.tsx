@@ -148,25 +148,41 @@ export function LoginPage() {
   const isLoading = operation !== null;
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    const errorMsg = params.get("error");
+    // Check hash for OAuth tokens
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    const hashToken = hashParams.get("token");
+    const hashErrorMsg = hashParams.get("error");
+    
+    // Check search for other tokens (legacy or fallback)
+    const searchParams = new URLSearchParams(window.location.search);
+    const searchToken = searchParams.get("token");
+    const searchErrorMsg = searchParams.get("error");
+
+    const token = hashToken || searchToken;
+    const errorMsg = hashErrorMsg || searchErrorMsg;
+
     if (token) {
       setAuthToken(token, rememberMe);
       setSuccess(true);
       navigationTimerRef.current = window.setTimeout(() => {
         navigate("/");
       }, 1500);
-      // Clean up URL
-      window.history.replaceState({}, document.title, window.location.pathname);
+      // Clean up URL including hash
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      if (hashToken) {
+        window.location.hash = ""; // Clear the hash specifically to remove it from browser bar
+      }
     } else if (errorMsg) {
       if (errorMsg.includes("different provider")) {
         setErrors({ conflict: decodeURIComponent(errorMsg) });
       } else {
         setErrors({ submit: decodeURIComponent(errorMsg) });
       }
-      // Clean up URL
-      window.history.replaceState({}, document.title, window.location.pathname);
+      // Clean up URL including hash
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      if (hashErrorMsg) {
+        window.location.hash = ""; // Clear the hash specifically to remove it from browser bar
+      }
     }
 
     return () => {

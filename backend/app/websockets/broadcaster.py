@@ -67,7 +67,6 @@ class HighLoadBroadcaster:
                 self._listener_task = None
 
     async def connect(self, websocket: WebSocket) -> None:
-        await websocket.accept()
         async with self._lock:
             self._connections.add(websocket)
             
