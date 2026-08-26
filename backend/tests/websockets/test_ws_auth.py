@@ -12,7 +12,10 @@ client = TestClient(app)
 def test_websocket_handshake_timeout():
     """Connect an unauthenticated WebSocket client without sending auth frame."""
     start = time.time()
-    with pytest.raises(WebSocketDisconnect) as exc, client.websocket_connect("/ws/telemetry") as websocket:
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        client.websocket_connect("/ws/telemetry") as websocket,
+    ):
         # We don't send anything. Just try to receive.
         # The server waits 5.0 seconds for an auth frame and then closes.
         websocket.receive_text()
@@ -25,7 +28,10 @@ def test_websocket_handshake_timeout():
 
 def test_websocket_invalid_jwt_disconnect():
     """Connect a client that sends an invalid or expired JWT."""
-    with pytest.raises(WebSocketDisconnect) as exc, client.websocket_connect("/ws/telemetry") as websocket:
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        client.websocket_connect("/ws/telemetry") as websocket,
+    ):
         websocket.send_json({"type": "auth", "token": "invalid_jwt_string"})
         websocket.receive_text()
 
