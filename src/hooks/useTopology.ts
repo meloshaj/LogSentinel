@@ -34,17 +34,10 @@ export interface TopologyPayload {
 
 const POLL_INTERVAL_MS = 30_000;
 const TOPOLOGY_PATH = "/api/v1/topology";
-const FALLBACK_URL = "http://localhost:8000/api/v1/topology";
 
 function buildTopologyUrls(): string[] {
-  const candidates = [
-    import.meta.env.VITE_API_URL
-      ? `${import.meta.env.VITE_API_URL}${TOPOLOGY_PATH}`
-      : null,
-    `${window.location.protocol}//${window.location.host}${TOPOLOGY_PATH}`,
-    FALLBACK_URL,
-  ];
-  return candidates.filter((c): c is string => Boolean(c));
+  const apiUrl = import.meta.env.VITE_API_URL || '';
+  return [`${apiUrl.replace(/\/$/, "")}${TOPOLOGY_PATH}`];
 }
 
 const VALID_NODE_TYPES = new Set<NodeType>(["service", "database", "cache", "queue", "gateway"]);

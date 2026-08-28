@@ -213,7 +213,7 @@ export function useMicrosoftAuth() {
         }
 
         const apiBase = (
-          import.meta.env.VITE_API_URL || "http://localhost:8000"
+          import.meta.env.VITE_API_URL || ""
         ).replace(/\/+$/, "");
         const response = await fetch(`${apiBase}/api/auth/microsoft`, {
           method: "POST",

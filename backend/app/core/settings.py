@@ -14,6 +14,37 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.engine import make_url
 
 
+class CoreSettings(BaseModel):
+    """Core environment and domain configuration."""
+
+    environment: str = Field(
+        default="development",
+        description="Deployment environment (env: ENVIRONMENT)"
+    )
+    domain_name: str | None = Field(
+        default=None,
+        description="Primary domain name (env: DOMAIN_NAME)"
+    )
+    frontend_url: tuple[str, ...] = Field(
+        default_factory=tuple,
+        description="Allowed frontend URLs (env: FRONTEND_URL)"
+    )
+
+def _split_csv(value: str | None) -> tuple[str, ...]:
+    """Split a comma-separated env value into a tuple of trimmed non-empty strings."""
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+def get_core_settings() -> CoreSettings:
+    """Construct core settings from the current environment."""
+    return CoreSettings(
+        environment=os.getenv("ENVIRONMENT", "development"),
+        domain_name=os.getenv("DOMAIN_NAME"),
+        frontend_url=_split_csv(os.getenv("FRONTEND_URL", "http://localhost:5173,http://localhost:8080")),
+    )
+
+
 class SMTPSettings(BaseModel):
     """SMTP configuration for transactional emails."""
 
@@ -493,7 +524,7 @@ class MicrosoftAuthSettings(BaseModel):
         return f"https://login.microsoftonline.com/{self.tenant_id}/discovery/v2.0/keys"
 
 
-def _split_csv(value: str | None) -> tuple[str, ...]:
+def _split_csv_existing(value: str | None) -> tuple[str, ...]:
     """Split a comma-separated env value into a tuple of trimmed non-empty strings."""
     if not value:
         return ()
@@ -506,7 +537,7 @@ def get_microsoft_auth_settings() -> MicrosoftAuthSettings:
         client_id=os.getenv("AZURE_CLIENT_ID", ""),
         tenant_id=os.getenv("AZURE_TENANT_ID", ""),
         required_scope=os.getenv("AZURE_REQUIRED_SCOPE", "access_as_user"),
-        allowed_tenants=_split_csv(os.getenv("AZURE_ALLOWED_TENANTS")),
+        allowed_tenants=_split_csv_existing(os.getenv("AZURE_ALLOWED_TENANTS")),
         jwks_timeout_seconds=float(os.getenv("AZURE_JWKS_TIMEOUT", "5.0")),
         jwks_cache_ttl_seconds=int(os.getenv("AZURE_JWKS_CACHE_TTL", "3600")),
     )
@@ -533,46 +564,50 @@ def get_benchmarking_settings() -> BenchmarkingSettings:
 class ArchiveSettings(BaseModel):
     """Configuration for S3 Hot/Cold Storage Archive."""
 
-    s3_bucket: str = Field(
+    s3_bucket_name: str = Field(
         default="logsentinel-archive",
-        description="S3 bucket for cold storage (env: ARCHIVE_S3_BUCKET)",
+        description="S3 bucket for cold storage (env: S3_BUCKET_NAME)",
+    )
+    s3_backup_bucket: str | None = Field(
+        default=None,
+        description="S3 backup bucket (env: S3_BACKUP_BUCKET)",
     )
     s3_endpoint_url: str | None = Field(
         default=None,
-        description="S3 endpoint URL, usually for local/MinIO (env: ARCHIVE_S3_ENDPOINT_URL)",
+        description="S3 endpoint URL, usually for local/MinIO (env: S3_ENDPOINT_URL)",
     )
     s3_region: str = Field(
         default="us-east-1",
-        description="AWS/S3 region (env: ARCHIVE_S3_REGION)",
+        description="AWS/S3 region (env: S3_REGION)",
     )
-    s3_access_key: str | None = Field(
+    s3_access_key_id: str | None = Field(
         default=None,
-        description="S3 Access Key ID (env: ARCHIVE_S3_ACCESS_KEY)",
+        description="S3 Access Key ID (env: S3_ACCESS_KEY_ID)",
     )
-    s3_secret_key: str | None = Field(
+    s3_secret_access_key: str | None = Field(
         default=None,
-        description="S3 Secret Access Key (env: ARCHIVE_S3_SECRET_KEY)",
+        description="S3 Secret Access Key (env: S3_SECRET_ACCESS_KEY)",
     )
-    archive_retention_days: int = Field(
+    archive_hot_retention_days: int = Field(
         default=30,
         gt=0,
-        description="Number of days to keep data in hot storage before archiving (env: ARCHIVE_RETENTION_DAYS)",
+        description="Number of days to keep data in hot storage before archiving (env: ARCHIVE_HOT_RETENTION_DAYS)",
     )
-    staging_row_limit: int = Field(
-        default=1_000_000,
-        gt=0,
-        description="Maximum rows to rehydrate into temporary staging tables (env: ARCHIVE_STAGING_ROW_LIMIT)",
+    archive_lateness_grace_hours: int = Field(
+        default=2,
+        ge=0,
+        description="Grace period for late arriving logs before archiving (env: ARCHIVE_LATENESS_GRACE_HOURS)",
     )
-
 
 def get_archive_settings() -> ArchiveSettings:
     """Construct Archive settings from the current environment."""
     return ArchiveSettings(
-        s3_bucket=os.getenv("ARCHIVE_S3_BUCKET", "logsentinel-archive"),
-        s3_endpoint_url=os.getenv("ARCHIVE_S3_ENDPOINT_URL"),
-        s3_region=os.getenv("ARCHIVE_S3_REGION", "us-east-1"),
-        s3_access_key=os.getenv("ARCHIVE_S3_ACCESS_KEY"),
-        s3_secret_key=os.getenv("ARCHIVE_S3_SECRET_KEY"),
-        archive_retention_days=int(os.getenv("ARCHIVE_RETENTION_DAYS", "30")),
-        staging_row_limit=int(os.getenv("ARCHIVE_STAGING_ROW_LIMIT", "1000000")),
+        s3_bucket_name=os.getenv("S3_BUCKET_NAME", "logsentinel-archive"),
+        s3_backup_bucket=os.getenv("S3_BACKUP_BUCKET"),
+        s3_endpoint_url=os.getenv("S3_ENDPOINT_URL"),
+        s3_region=os.getenv("S3_REGION", "us-east-1"),
+        s3_access_key_id=os.getenv("S3_ACCESS_KEY_ID"),
+        s3_secret_access_key=os.getenv("S3_SECRET_ACCESS_KEY"),
+        archive_hot_retention_days=int(os.getenv("ARCHIVE_HOT_RETENTION_DAYS", "30")),
+        archive_lateness_grace_hours=int(os.getenv("ARCHIVE_LATENESS_GRACE_HOURS", "2")),
     )
