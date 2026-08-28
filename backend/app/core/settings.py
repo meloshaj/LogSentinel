@@ -599,6 +599,10 @@ class ArchiveSettings(BaseModel):
         ge=0,
         description="Grace period for late arriving logs before archiving (env: ARCHIVE_LATENESS_GRACE_HOURS)",
     )
+    staging_row_limit: int = Field(
+        default=100000,
+        description="Maximum number of rows allowed during rehydration (env: ARCHIVE_STAGING_ROW_LIMIT)",
+    )
 
 
 def get_archive_settings() -> ArchiveSettings:
@@ -614,4 +618,5 @@ def get_archive_settings() -> ArchiveSettings:
         archive_lateness_grace_hours=int(
             os.getenv("ARCHIVE_LATENESS_GRACE_HOURS", "2")
         ),
+        staging_row_limit=int(os.getenv("ARCHIVE_STAGING_ROW_LIMIT", "100000")),
     )
