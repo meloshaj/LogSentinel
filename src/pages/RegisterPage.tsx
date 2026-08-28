@@ -155,7 +155,7 @@ export function RegisterPage() {
     setLoading(true);
     try {
       const apiBase = (
-        import.meta.env.VITE_API_URL || "http://localhost:8000"
+        import.meta.env.VITE_API_URL || ""
       ).replace(/\/+$/, "");
       const response = await fetch(`${apiBase}/api/auth/register`, {
         method: "POST",
@@ -229,7 +229,7 @@ export function RegisterPage() {
 
       try {
         const apiBase = (
-          import.meta.env.VITE_API_URL || "http://localhost:8000"
+          import.meta.env.VITE_API_URL || ""
         ).replace(/\/+$/, "");
         const response = await fetch(`${apiBase}/api/auth/google`, {
           method: "POST",
@@ -564,7 +564,7 @@ export function RegisterPage() {
                       label: "Continue with GitHub",
                       icon: <GitHubIcon />,
                       onLogin: () => {
-                        const apiBase = (import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+                        const apiBase = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
                         window.location.href = `${apiBase}/api/auth/github`;
                       },
                       disabled: loading,

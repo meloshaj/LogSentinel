@@ -61,7 +61,7 @@ class ArchiveWorker:
         """Find hot chunks older than retention period and create manifest records in HOT state."""
         engine = get_engine()
         retention_threshold = datetime.now(timezone.utc) - timedelta(
-            days=self.settings.archive_retention_days
+            days=self.settings.archive_hot_retention_days
         )
 
         query = text("""

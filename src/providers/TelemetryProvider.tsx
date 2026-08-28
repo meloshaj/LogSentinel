@@ -52,7 +52,6 @@ import {
 // ---------------------------------------------------------------------------
 
 const SOCKET_PATH = "/ws/telemetry";
-const BACKUP_SOCKET_URL = "ws://localhost:8000/ws/telemetry";
 const MAX_LOGS = 500;
 const MAX_RECENT_EVENTS = 30;
 const NEW_LOG_HIGHLIGHT_MS = 2000;
@@ -61,7 +60,6 @@ const RECONNECT_DELAY_MS = 3000;
 const WS_FLUSH_INTERVAL_MS = 100;
 /** REST backfill endpoint. */
 const BACKFILL_URL = "/api/v1/logs/recent?limit=500";
-const BACKFILL_FALLBACK_URL = "http://localhost:8000/api/v1/logs/recent?limit=500";
 
 // ---------------------------------------------------------------------------
 // Telemetry Stream Types (from useTelemetryStream)
@@ -158,12 +156,8 @@ function normalizeLevel(level: unknown): LogLevel {
 }
 
 function buildSocketCandidates(): string[] {
-  const candidates = [
-    import.meta.env.VITE_WS_URL?.trim(),
-    `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}${SOCKET_PATH}`,
-    BACKUP_SOCKET_URL,
-  ];
-  return candidates.filter((c): c is string => Boolean(c));
+  const wsUrl = import.meta.env.VITE_WS_URL || (window.location.protocol === 'https:' ? 'wss://' : 'ws://') + window.location.host + '/ws/telemetry';
+  return [wsUrl];
 }
 
 /**
@@ -171,27 +165,13 @@ function buildSocketCandidates(): string[] {
  * logic used for the WebSocket connection.
  */
 function buildBackfillUrls(): string[] {
-  const candidates = [
-    import.meta.env.VITE_API_URL
-      ? `${import.meta.env.VITE_API_URL.replace(/\/$/, "")}/api/v1/logs/recent?limit=500`
-      : undefined,
-    `${window.location.origin}${BACKFILL_URL}`,
-    BACKFILL_FALLBACK_URL,
-  ];
-  return candidates.filter((c): c is string => Boolean(c));
+  const apiUrl = import.meta.env.VITE_API_URL || '';
+  return [`${apiUrl.replace(/\/$/, "")}/api/v1/logs/recent?limit=500`];
 }
 
 function buildTrackingLoopsBackfillUrls(): string[] {
-  const BACKFILL_TRACKING_LOOPS_URL = "/api/v1/tracking-loops?limit=100";
-  const BACKFILL_TRACKING_LOOPS_FALLBACK_URL = "http://localhost:8000/api/v1/tracking-loops?limit=100";
-  const candidates = [
-    import.meta.env.VITE_API_URL
-      ? `${import.meta.env.VITE_API_URL.replace(/\/$/, "")}/api/v1/tracking-loops?limit=100`
-      : undefined,
-    `${window.location.origin}${BACKFILL_TRACKING_LOOPS_URL}`,
-    BACKFILL_TRACKING_LOOPS_FALLBACK_URL,
-  ];
-  return candidates.filter((c): c is string => Boolean(c));
+  const apiUrl = import.meta.env.VITE_API_URL || '';
+  return [`${apiUrl.replace(/\/$/, "")}/api/v1/tracking-loops?limit=100`];
 }
 
 // NOTE: The legacy `logKey()` composite hashing function has been removed.

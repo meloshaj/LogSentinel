@@ -150,9 +150,9 @@ def get_s3_client() -> S3StorageClient:
 
     settings = get_archive_settings()
     return Boto3StorageClient(
-        bucket=settings.s3_bucket,
+        bucket=settings.s3_bucket_name,
         endpoint_url=settings.s3_endpoint_url,
         region=settings.s3_region,
-        access_key=settings.s3_access_key,
-        secret_key=settings.s3_secret_key,
+        access_key=settings.s3_access_key_id,
+        secret_key=settings.s3_secret_access_key,
     )

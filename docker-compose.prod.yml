@@ -76,7 +76,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
       - REDIS_URL=redis://valkey:6379/0
-      - INGEST_API_KEY=${INGEST_API_KEY:?INGEST_API_KEY must be set}
+      - INGEST_API_KEYS=${INGEST_API_KEYS:?INGEST_API_KEYS must be set}
       - LOG_STREAM_NAME=logs:stream
       - LOG_WORKERS_GROUP=log_workers
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in production}
@@ -146,6 +146,7 @@ services:
       - "443:443"
     environment:
       - DOMAIN_NAME=${DOMAIN_NAME:-logsentinel.example.com}
+      - FRONTEND_URL=${FRONTEND_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}
     volumes:
       - caddy_data:/data
       - caddy_config:/config

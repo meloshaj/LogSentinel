@@ -1,68 +1,36 @@
-{
-    # Global options
-    admin off
-}
-
-{$DOMAIN_NAME:localhost} {
-    # Security headers
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss: https:;"
-    }
-
-    # Block external access to internal metrics and OpenAPI docs
+{$DOMAIN_NAME} {
+    # Block internal routes from external access
     @internal {
-        remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1/8 ::1
+        path /metrics /readiness /docs* /redoc* /openapi.json
     }
-    
-    @external_blocked {
-        not remote_ip 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.1/8 ::1
-        path /metrics /readiness /health /docs /redoc /openapi.json
-    }
-    
-    respond @external_blocked 403
+    respond @internal 403
 
-    # Proxy API and WebSockets to backend
-    handle /api/* {
-        reverse_proxy backend:8000
+    # Add CORS handling for API paths
+    @api {
+        path /api/* /ingest-log /v1/* /ws/*
     }
-    
-    handle /v1/* {
-        reverse_proxy backend:8000
-    }
+    header @api Access-Control-Allow-Origin "{$FRONTEND_URL}"
+    header @api Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    header @api Access-Control-Allow-Headers "Content-Type, Authorization"
 
-    handle /ingest-log {
-        reverse_proxy backend:8000
+    # Handle preflight OPTIONS requests
+    @options {
+        method OPTIONS
+        path /api/* /ingest-log /v1/* /ws/*
     }
-    
-    handle /ws/* {
-        reverse_proxy backend:8000
-    }
-    
-    # Internal routes (if accessed directly, but we handled the block above)
-    handle /metrics {
-        reverse_proxy backend:8000
-    }
-    handle /readiness {
-        reverse_proxy backend:8000
-    }
-    handle /health {
-        reverse_proxy backend:8000
-    }
-    handle /docs {
-        reverse_proxy backend:8000
-    }
-    handle /redoc {
-        reverse_proxy backend:8000
-    }
-    handle /openapi.json {
-        reverse_proxy backend:8000
-    }
+    respond @options 204
 
-    # Serve static SPA files
+    # Reverse proxy API and ingest traffic to backend
+    reverse_proxy /api/* backend:8000
+    reverse_proxy /ingest-log backend:8000
+    reverse_proxy /v1/* backend:8000
+    
+    # Reverse proxy WebSockets to backend
+    # Caddy natively supports WebSockets and passes Connection/Upgrade headers
+    reverse_proxy /ws/* backend:8000
+
+    # Serve static frontend files (SPA)
     root * /usr/share/caddy/html
-    try_files {path} /index.html
     file_server
+    try_files {path} /index.html
 }

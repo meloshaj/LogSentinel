@@ -63,9 +63,6 @@ export function isTrustedBackendUrl(value: string | URL): boolean {
     if (pageOrigin) allowedOrigins.add(pageOrigin);
   }
 
-  // The local fallback is part of the supported native-development contract.
-  allowedOrigins.add("http://localhost:8000");
-
   for (const configured of [import.meta.env.VITE_API_URL, import.meta.env.VITE_WS_URL]) {
     if (configured) {
       const configuredOrigin = normalizedOrigin(configured);
