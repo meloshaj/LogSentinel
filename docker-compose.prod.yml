@@ -56,6 +56,7 @@ services:
       - POSTGRES_HOST=timescaledb
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
     volumes:
       - .:/repo:ro
     working_dir: /repo
@@ -142,8 +143,8 @@ services:
     image: logsentinel-dashboard:prod
     container_name: logsentinel_caddy
     ports:
-      - "80:80"
-      - "443:443"
+      - "8080:80"
+      - "8443:443"
     environment:
       - DOMAIN_NAME=${DOMAIN_NAME:-logsentinel.example.com}
       - FRONTEND_URL=${FRONTEND_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}

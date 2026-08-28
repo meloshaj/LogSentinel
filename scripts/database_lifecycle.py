@@ -245,9 +245,12 @@ async def validate_schema(connection: asyncpg.Connection) -> dict[str, Any]:
 
     hypertable = await connection.fetchrow(
         """
-        SELECT hypertable_schema, hypertable_name, chunk_time_interval
-        FROM timescaledb_information.hypertables
-        WHERE hypertable_schema = 'public' AND hypertable_name = 'logs'
+        SELECT h.hypertable_schema, h.hypertable_name, d.time_interval as chunk_time_interval
+        FROM timescaledb_information.hypertables h
+        JOIN timescaledb_information.dimensions d
+          ON h.hypertable_schema = d.hypertable_schema
+         AND h.hypertable_name = d.hypertable_name
+        WHERE h.hypertable_schema = 'public' AND h.hypertable_name = 'logs'
         """
     )
     if hypertable is None:

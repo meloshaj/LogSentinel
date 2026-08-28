@@ -384,4 +384,12 @@ VALUES (
 )
 ON CONFLICT (version) DO NOTHING;
 
+INSERT INTO schema_migrations (version, checksum, description)
+VALUES (
+    '20260826_0001_multitenant_partitioning',
+    NULL,
+    'Included in the canonical bootstrap; retained as the forward step for older canonical volumes.'
+)
+ON CONFLICT (version) DO NOTHING;
+
 COMMIT;
