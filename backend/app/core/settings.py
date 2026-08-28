@@ -18,17 +18,15 @@ class CoreSettings(BaseModel):
     """Core environment and domain configuration."""
 
     environment: str = Field(
-        default="development",
-        description="Deployment environment (env: ENVIRONMENT)"
+        default="development", description="Deployment environment (env: ENVIRONMENT)"
     )
     domain_name: str | None = Field(
-        default=None,
-        description="Primary domain name (env: DOMAIN_NAME)"
+        default=None, description="Primary domain name (env: DOMAIN_NAME)"
     )
     frontend_url: tuple[str, ...] = Field(
-        default_factory=tuple,
-        description="Allowed frontend URLs (env: FRONTEND_URL)"
+        default_factory=tuple, description="Allowed frontend URLs (env: FRONTEND_URL)"
     )
+
 
 def _split_csv(value: str | None) -> tuple[str, ...]:
     """Split a comma-separated env value into a tuple of trimmed non-empty strings."""
@@ -36,12 +34,15 @@ def _split_csv(value: str | None) -> tuple[str, ...]:
         return ()
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
+
 def get_core_settings() -> CoreSettings:
     """Construct core settings from the current environment."""
     return CoreSettings(
         environment=os.getenv("ENVIRONMENT", "development"),
         domain_name=os.getenv("DOMAIN_NAME"),
-        frontend_url=_split_csv(os.getenv("FRONTEND_URL", "http://localhost:5173,http://localhost:8080")),
+        frontend_url=_split_csv(
+            os.getenv("FRONTEND_URL", "http://localhost:5173,http://localhost:8080")
+        ),
     )
 
 
@@ -599,6 +600,7 @@ class ArchiveSettings(BaseModel):
         description="Grace period for late arriving logs before archiving (env: ARCHIVE_LATENESS_GRACE_HOURS)",
     )
 
+
 def get_archive_settings() -> ArchiveSettings:
     """Construct Archive settings from the current environment."""
     return ArchiveSettings(
@@ -609,5 +611,7 @@ def get_archive_settings() -> ArchiveSettings:
         s3_access_key_id=os.getenv("S3_ACCESS_KEY_ID"),
         s3_secret_access_key=os.getenv("S3_SECRET_ACCESS_KEY"),
         archive_hot_retention_days=int(os.getenv("ARCHIVE_HOT_RETENTION_DAYS", "30")),
-        archive_lateness_grace_hours=int(os.getenv("ARCHIVE_LATENESS_GRACE_HOURS", "2")),
+        archive_lateness_grace_hours=int(
+            os.getenv("ARCHIVE_LATENESS_GRACE_HOURS", "2")
+        ),
     )
