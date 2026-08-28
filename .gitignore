@@ -1,3 +1,8 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -148,7 +153,6 @@ activemq-data/
 *.sage.py
 
 # Environments
-.env
 .envrc
 .venv
 env/
@@ -200,8 +204,17 @@ cython_debug/
 #   and can be added to the global gitignore or merged into this file. However, if you prefer, 
 #   you could uncomment the following to ignore the entire vscode folder
 # .vscode/
+.vs/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
+
+# Node / frontend dependencies
+node_modules/
+.pnpm-store/
+
+# Runtime parser state
+state/
+backend/state/
 
 # Ruff stuff:
 .ruff_cache/
@@ -216,3 +229,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SSL certificates (generated locally for dev)
+docker/nginx/ssl/*.crt
+docker/nginx/ssl/*.key
+
+# Binaries and test artifacts
+windows-amd64/
+helm.zip
+helm_test.yaml
+bash.exe.stackdump
+
+# Local audit and validation artifacts
+temporary-report/

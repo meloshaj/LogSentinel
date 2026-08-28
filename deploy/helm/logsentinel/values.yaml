@@ -1,0 +1,83 @@
+replicaCount:
+  api: 2
+  drainWorker: 2
+  eventWorker: 1
+
+image:
+  repository: logsentinel-backend
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+resources:
+  api:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  drainWorker:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+  eventWorker:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+
+probes:
+  api:
+    liveness:
+      path: /health
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      path: /health
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 2
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  hosts:
+    - host: logsentinel.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls:
+    - secretName: logsentinel-tls
+      hosts:
+        - logsentinel.local
+
+env:
+  redisHost: "logsentinel-redis"
+  redisPort: 6379
+  postgresHost: "logsentinel-postgresql"
+  postgresPort: 5432
+  dbUser: "logsentinel"
+  dbName: "logsentinel_db"
+  # Capacity & Performance Tuning Knobs
+  postgresPoolSize: 20
+  postgresMaxOverflow: 10
+  drain3BatchSize: 500
+  drain3FlushIntervalSeconds: "2.0"
+  drain3QueueDrainTimeoutSeconds: "30.0"
+
+secret:
+  jwtSecretKey: "change-me-in-production"
+  postgresPassword: "logsentinel_secret"

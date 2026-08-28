@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "logsentinel.fullname" . }}-event-worker
+spec:
+  replicas: {{ .Values.replicaCount.eventWorker | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "logsentinel.name" . }}-event-worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "logsentinel.name" . }}-event-worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: event-worker
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+          {{- if .Values.resources.eventWorker }}
+          resources:
+            {{- toYaml .Values.resources.eventWorker | nindent 12 }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "logsentinel.fullname" . }}-config
+            - secretRef:
+                name: {{ include "logsentinel.fullname" . }}-secret

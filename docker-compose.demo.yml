@@ -1,0 +1,220 @@
+services:
+  postgres:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: demo_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-logsentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logsentinel_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-logsentinel_db}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - demo_pgdata:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "synchronous_commit=on"
+      - "-c"
+      - "wal_buffers=64MB"
+      - "-c"
+      - "max_wal_size=16GB"
+      - "-c"
+      - "min_wal_size=4GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "checkpoint_timeout=20min"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=8"
+      - "-c"
+      - "max_parallel_workers_per_gather=2"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logsentinel} -d ${POSTGRES_DB:-logsentinel_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8.0-alpine
+    container_name: demo_valkey
+    command: ["valkey-server", "--save", "60", "1", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - demo_valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  logsentinel:
+    build:
+      context: .
+      target: production
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
+        VITE_ENABLE_BENCHMARKING: ${VITE_ENABLE_BENCHMARKING:-false}
+    image: logsentinel-dashboard:demo
+    container_name: demo_dashboard
+    ports:
+      - "8080:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  db-migrator:
+    build:
+      context: ./backend
+    image: logsentinel-backend:demo
+    container_name: demo_db_migrator
+    command: ["python", "/repo/scripts/database_lifecycle.py", "--apply"]
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+    volumes:
+      - .:/repo:ro
+    working_dir: /repo
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+    image: logsentinel-backend:demo
+    container_name: demo_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+      - REDIS_HOST=valkey
+      - INGEST_API_KEYS=ls_live_demo_key_123,dev-local-key
+      - GRAPH_SCORING_LOOKBACK_SECONDS=${GRAPH_SCORING_LOOKBACK_SECONDS:-180}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-demo_secret_key_12345}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+      - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-migrator:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:latest
+    container_name: demo_nginx
+    ports:
+      - "8081:80"
+      - "8443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  fluent-bit:
+    image: fluent/fluent-bit:latest
+    container_name: demo_fluent_bit
+    volumes:
+      - ./demo/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - mock_logs:/var/log/mock-services:ro
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: ./backend
+    image: logsentinel-backend:demo
+    container_name: demo_auth_service
+    command: ["uvicorn", "demo.mock_microservice:app", "--host", "0.0.0.0", "--port", "9001"]
+    ports:
+      - "9001:9001"
+    environment:
+      - SERVICE_NAME=auth-service
+    volumes:
+      - ./demo:/app/demo:ro
+      - mock_logs:/var/log/mock-services
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  order-service:
+    build:
+      context: ./backend
+    image: logsentinel-backend:demo
+    container_name: demo_order_service
+    command: ["uvicorn", "demo.mock_microservice:app", "--host", "0.0.0.0", "--port", "9002"]
+    ports:
+      - "9002:9002"
+    environment:
+      - SERVICE_NAME=order-service
+    volumes:
+      - ./demo:/app/demo:ro
+      - mock_logs:/var/log/mock-services
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  payment-gateway:
+    build:
+      context: ./backend
+    image: logsentinel-backend:demo
+    container_name: demo_payment_gateway
+    command: ["uvicorn", "demo.mock_microservice:app", "--host", "0.0.0.0", "--port", "9003"]
+    ports:
+      - "9003:9003"
+    environment:
+      - SERVICE_NAME=payment-gateway
+    volumes:
+      - ./demo:/app/demo:ro
+      - mock_logs:/var/log/mock-services
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  demo_pgdata:
+    driver: local
+  demo_valkey_data:
+    driver: local
+  mock_logs:
+    driver: local

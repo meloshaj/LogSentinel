@@ -1,0 +1,121 @@
+/* ---------------------------------------------------------------------------
+ * Topology Graph CSS — keyframe animations for status overlays.
+ * Kept in vanilla CSS so canvas/SVG mutations can toggle classes without
+ * triggering React re-renders.
+ * -------------------------------------------------------------------------- */
+
+/* ---- Node pulse glows ---- */
+
+@keyframes topology-pulse-amber {
+  0%, 100% { filter: drop-shadow(0 0 4px rgba(210, 153, 34, 0.3)); }
+  50%      { filter: drop-shadow(0 0 12px rgba(210, 153, 34, 0.7)); }
+}
+
+@keyframes topology-pulse-red {
+  0%, 100% { filter: drop-shadow(0 0 6px rgba(248, 81, 73, 0.35)); }
+  50%      { filter: drop-shadow(0 0 18px rgba(248, 81, 73, 0.85)); }
+}
+
+@keyframes topology-pulse-green {
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(63, 185, 80, 0.15)); }
+  50%      { filter: drop-shadow(0 0 6px rgba(63, 185, 80, 0.35)); }
+}
+
+.topo-node--healthy {
+  animation: topology-pulse-green 3s ease-in-out infinite;
+}
+
+.topo-node--degraded {
+  animation: topology-pulse-amber 1.5s ease-in-out infinite;
+}
+
+.topo-node--critical {
+  animation: topology-pulse-red 1s ease-in-out infinite;
+}
+
+/* ---- Edge dash animations ---- */
+
+@keyframes topology-dash-flow {
+  to { stroke-dashoffset: -20; }
+}
+
+.topo-edge--stressed {
+  stroke-dasharray: 6 4;
+  animation: topology-dash-flow 1.5s linear infinite;
+}
+
+.topo-edge--failing {
+  stroke-dasharray: 8 4;
+  animation: topology-dash-flow 0.6s linear infinite;
+}
+
+/* ---- Blast radius root marker ---- */
+
+@keyframes blast-radius-ring {
+  0%   { r: 22; opacity: 0.8; }
+  100% { r: 34; opacity: 0; }
+}
+
+.topo-blast-ring {
+  animation: blast-radius-ring 1.8s ease-out infinite;
+}
+
+/* ---- Graph container ---- */
+
+.topology-graph-container {
+  background: #060c18;
+  border: 1px solid #21262d;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+.topology-graph-container svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---- Node hover ---- */
+.topo-node-group {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.topo-node-group:hover {
+  transform: scale(1.08);
+}
+
+/* ---- Type icons inside nodes ---- */
+
+.topo-node-icon {
+  fill: #484f58;
+  transition: fill 0.2s ease;
+}
+
+.topo-node--degraded .topo-node-icon { fill: #d29922; }
+.topo-node--critical .topo-node-icon { fill: #f85149; }
+
+/* ---- Error alert ---- */
+
+.topology-error-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.25);
+  color: #f85149;
+  font-size: 12px;
+}
+
+/* ---- Compact mode (OverviewPage) ---- */
+
+.topology-graph--compact .topo-node-label {
+  font-size: 9px;
+}
+
+.topology-graph--compact .topo-node-sublabel {
+  display: none;
+}

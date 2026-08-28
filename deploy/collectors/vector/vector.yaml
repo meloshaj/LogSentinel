@@ -1,0 +1,61 @@
+sources:
+  docker_logs:
+    type: "docker_logs"
+    include_containers:
+      - "*"
+    # Ignore vector's own logs to prevent feedback loops
+    exclude_containers:
+      - "vector"
+
+transforms:
+  normalize_logs:
+    type: "remap"
+    inputs:
+      - "docker_logs"
+    source: |
+      # Map container name to LogSentinel service_name
+      .service_name = .container.name
+      if !exists(.service_name) || .service_name == "" {
+        .service_name = "unknown-container"
+      }
+      
+      # Ensure timestamp exists
+      .timestamp = .timestamp || now()
+      
+      # Parse embedded JSON if available, otherwise just use standard fields
+      parsed_json, err = parse_json(.message)
+      if err == null {
+        .message = parsed_json.message || .message
+        .level = parsed_json.level || "INFO"
+        .trace_id = parsed_json.trace_id
+        .span_id = parsed_json.span_id
+        
+        # Keep everything else in metadata
+        del(parsed_json.message)
+        del(parsed_json.level)
+        del(parsed_json.trace_id)
+        del(parsed_json.span_id)
+        .metadata = parsed_json
+      } else {
+        .level = "INFO"
+        .metadata = {}
+      }
+
+sinks:
+  logsentinel_backend:
+    type: "http"
+    inputs:
+      - "normalize_logs"
+    uri: "http://${LOGSENTINEL_HOST:-localhost}:8000/api/v1/ingest/bulk"
+    method: "post"
+    auth:
+      type: "none"
+    request:
+      headers:
+        X-API-Key: "${LOGSENTINEL_API_KEY:-change_me}"
+    encoding:
+      codec: "ndjson"
+    compression: "gzip"
+    batch:
+      max_events: 500
+      timeout_secs: 1.0

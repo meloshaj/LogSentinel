@@ -1,0 +1,56 @@
+FROM node:22-alpine AS build
+
+WORKDIR /app
+
+ARG VITE_GOOGLE_CLIENT_ID=""
+ARG VITE_API_URL=""
+ARG VITE_ENABLE_BENCHMARKING=""
+ARG VITE_MICROSOFT_AUTH_ENABLED=""
+ARG VITE_MICROSOFT_SPA_CLIENT_ID=""
+ARG VITE_MICROSOFT_AUTHORITY=""
+ARG VITE_MICROSOFT_API_SCOPE=""
+ARG VITE_MICROSOFT_REDIRECT_URI=""
+ARG VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI=""
+ARG VITE_GOOGLE_AUTH_ENABLED=""
+ARG VITE_FEATURE_ENABLE_GITHUB_AUTH=""
+
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_ENABLE_BENCHMARKING=$VITE_ENABLE_BENCHMARKING
+ENV VITE_MICROSOFT_AUTH_ENABLED=$VITE_MICROSOFT_AUTH_ENABLED
+ENV VITE_MICROSOFT_SPA_CLIENT_ID=$VITE_MICROSOFT_SPA_CLIENT_ID
+ENV VITE_MICROSOFT_AUTHORITY=$VITE_MICROSOFT_AUTHORITY
+ENV VITE_MICROSOFT_API_SCOPE=$VITE_MICROSOFT_API_SCOPE
+ENV VITE_MICROSOFT_REDIRECT_URI=$VITE_MICROSOFT_REDIRECT_URI
+ENV VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI=$VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI
+ENV VITE_GOOGLE_AUTH_ENABLED=$VITE_GOOGLE_AUTH_ENABLED
+ENV VITE_FEATURE_ENABLE_GITHUB_AUTH=$VITE_FEATURE_ENABLE_GITHUB_AUTH
+
+RUN corepack enable
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY . .
+RUN pnpm build
+
+FROM caddy:2-alpine AS production
+
+WORKDIR /app
+
+# Create non-root group and user appuser (UID 10001)
+RUN addgroup -g 10001 -S appuser && \
+    adduser -u 10001 -S appuser -G appuser
+
+COPY deploy/caddy/Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/dist /usr/share/caddy/html
+
+# Set appropriate ownership on /app and caddy runtime paths
+RUN mkdir -p /data /config && \
+    chown -R appuser:appuser /app /usr/share/caddy/html /etc/caddy/Caddyfile /data /config
+
+USER appuser
+
+EXPOSE 80 443
+
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

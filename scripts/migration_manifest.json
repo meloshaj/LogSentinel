@@ -1,0 +1,73 @@
+{
+  "lifecycle_version": "20260822.1",
+  "schema_id": "logsentinel-timescale-v1",
+  "canonical_bootstrap": {
+    "version": "0000_canonical_init",
+    "path": "scripts/init.sql",
+    "execution": "empty-database-only"
+  },
+  "active_migrations": [
+    {
+      "version": "20260822_0001_schema_reconciliation",
+      "path": "scripts/migrations/20260822_0001_schema_reconciliation.sql",
+      "description": "Add ORM/auth tables and additive indexes/columns missing from older clean volumes."
+    },
+    {
+      "version": "20260826_0001_multitenant_partitioning",
+      "path": "scripts/migrations/20260826_0001_multitenant_partitioning.sql",
+      "description": "Implement authoritative multi-tenancy and switch hypertable partitioning to ingestion time."
+    },
+    {
+      "version": "20260826_0002_archive_manifest",
+      "path": "scripts/migrations/20260826_0002_archive_manifest.sql",
+      "description": "Create archive_manifest table for Cold Storage architecture."
+    }
+  ],
+  "legacy_migrations": [
+    {
+      "path": "scripts/migrations/20260724_add_tracking_loop_blast_radius.sql",
+      "status": "SUPERSEDED_BY_CANONICAL_BOOTSTRAP",
+      "reason": "Its additive change is included in init.sql and the active reconciliation migration."
+    },
+    {
+      "path": "scripts/migrations/20260731_add_external_identities.sql",
+      "status": "SUPERSEDED_BY_CANONICAL_BOOTSTRAP",
+      "reason": "Its table is included in init.sql and the active reconciliation migration."
+    },
+    {
+      "path": "scripts/migrations/20260805_add_ulid_to_logs.sql",
+      "status": "BLOCKED",
+      "reason": "Assumes an older integer logs.id, drops the current key/column, and conflicts with canonical (created_at, id) on the Timescale hypertable."
+    },
+    {
+      "path": "scripts/migrations/20260806_safe_drop_procedure.sql",
+      "status": "BLOCKED",
+      "reason": "Creates a competing custom retention job without an idempotent job guard; canonical init uses the standard retention policy."
+    },
+    {
+      "path": "scripts/migrations/20260806_timescaledb_logs.sql",
+      "status": "BLOCKED",
+      "reason": "Drops the logs primary key with CASCADE and is not safe against the canonical bootstrap."
+    },
+    {
+      "path": "scripts/migrations/20260806_timescaledb_compression_retention.sql",
+      "status": "BLOCKED",
+      "reason": "Conflicts with canonical seven-day compression settings and is not a fail-fast deterministic lifecycle step."
+    },
+    {
+      "path": "scripts/migrations/20260810_compound_indexes.sql",
+      "status": "SUPERSEDED_BY_CANONICAL_BOOTSTRAP",
+      "reason": "Its additive indexes are included in init.sql."
+    },
+    {
+      "path": "scripts/migrations/20260820_timescaledb_caggs.sql",
+      "status": "BLOCKED",
+      "reason": "Reconciles policies and deletes a custom job based on unknown history; the CAGG is defined in canonical init.sql."
+    },
+    {
+      "path": "scripts/migrations/retention_policies.sql",
+      "status": "BLOCKED",
+      "reason": "Applies retention to feature_windows even though the canonical table is a regular PostgreSQL table, not a hypertable, and changes logs retention to seven days."
+    }
+  ]
+}

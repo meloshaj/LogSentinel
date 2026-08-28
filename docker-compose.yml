@@ -1,0 +1,173 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: logsentinel_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-logsentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logsentinel_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-logsentinel_db}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - logsentinel_pgdata:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "synchronous_commit=on"
+      - "-c"
+      - "wal_buffers=64MB"
+      - "-c"
+      - "max_wal_size=16GB"
+      - "-c"
+      - "min_wal_size=4GB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "checkpoint_timeout=20min"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_worker_processes=8"
+      - "-c"
+      - "max_parallel_workers_per_gather=2"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logsentinel} -d ${POSTGRES_DB:-logsentinel_db}"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8.0-alpine
+    container_name: logsentinel_valkey
+    command: ["valkey-server", "--save", "60", "1", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+      start_period: 2s
+    restart: unless-stopped
+
+  logsentinel:
+    build:
+      context: .
+      target: production
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8080}
+        VITE_ENABLE_BENCHMARKING: ${VITE_ENABLE_BENCHMARKING:-false}
+        VITE_MICROSOFT_AUTH_ENABLED: ${VITE_MICROSOFT_AUTH_ENABLED:-false}
+        VITE_MICROSOFT_SPA_CLIENT_ID: ${VITE_MICROSOFT_SPA_CLIENT_ID:-}
+        VITE_MICROSOFT_AUTHORITY: ${VITE_MICROSOFT_AUTHORITY:-}
+        VITE_MICROSOFT_API_SCOPE: ${VITE_MICROSOFT_API_SCOPE:-}
+        VITE_MICROSOFT_REDIRECT_URI: ${VITE_MICROSOFT_REDIRECT_URI:-}
+        VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI: ${VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI:-}
+        VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED:-false}
+        VITE_FEATURE_ENABLE_GITHUB_AUTH: ${VITE_FEATURE_ENABLE_GITHUB_AUTH:-false}
+    image: logsentinel-dashboard:local
+    ports:
+      - "8080:80"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+  db-migrator:
+    build:
+      context: ./backend
+    image: logsentinel-backend:local
+    command: ["python", "/repo/scripts/database_lifecycle.py", "--apply"]
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+    volumes:
+      - .:/repo:ro
+    working_dir: /repo
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: ./backend
+    image: logsentinel-backend:local
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_HOST=timescaledb
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD:-logsentinel_secret}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
+      - REDIS_HOST=valkey
+      - REDIS_URL=redis://valkey:6379/0
+      - INGEST_API_KEY=${INGEST_API_KEY:-dev-local-key}
+      - LOG_STREAM_NAME=logs:stream
+      - LOG_WORKERS_GROUP=log_workers
+      - GRAPH_SCORING_LOOKBACK_SECONDS=${GRAPH_SCORING_LOOKBACK_SECONDS:-180}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set to a strong random value}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
+      - AZURE_REQUIRED_SCOPE=${AZURE_REQUIRED_SCOPE:-access_as_user}
+      - AZURE_ALLOWED_TENANTS=${AZURE_ALLOWED_TENANTS:-}
+      - AZURE_JWKS_TIMEOUT=${AZURE_JWKS_TIMEOUT:-5.0}
+      - AZURE_JWKS_CACHE_TTL=${AZURE_JWKS_CACHE_TTL:-3600}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      db-migrator:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:latest
+    container_name: logsentinel_nginx
+    ports:
+      - "8081:80"
+      - "8443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl
+      - ./docker/nginx/entrypoint.sh:/docker-entrypoint-custom.sh:ro
+    entrypoint: ["/bin/sh", "/docker-entrypoint-custom.sh"]
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  logsentinel_pgdata:
+    driver: local
+  valkey_data:
+    driver: local
