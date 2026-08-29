@@ -12,7 +12,7 @@ on:
 
 jobs:
   backend-checks:
-    name: Backend Lint, Type Check & Test
+    name: Backend Lint & Test
     runs-on: ubuntu-latest
     
     # Provision required backend dependencies
@@ -82,7 +82,7 @@ jobs:
           pytest backend/tests/ -v
 
   frontend-checks:
-    name: Frontend Build, Type Check & Test
+    name: Frontend Build & Type Check
     runs-on: ubuntu-latest
 
     steps:
