@@ -7,7 +7,7 @@ from typing import BinaryIO
 
 from botocore.exceptions import ClientError
 
-from backend.app.core.settings import get_archive_settings
+from app.core.settings import get_archive_settings
 
 
 class S3StorageClient(abc.ABC):

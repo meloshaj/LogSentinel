@@ -218,6 +218,14 @@ async def get_my_profile(
     return UserResponse.model_validate(current_user)
 
 
+@router.get("/api-key")
+async def get_my_api_key(
+    current_user: Annotated[UserRecord, Depends(get_current_user)],
+) -> dict:
+    """Return a mock API key for the authenticated user for the frontend to display."""
+    return {"api_key": "lsn_test_sk_mock_fetched_from_backend"}
+
+
 # ─── Google SSO ──────────────────────────────────────────────────────────────
 
 

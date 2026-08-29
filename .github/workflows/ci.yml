@@ -12,7 +12,7 @@ on:
 
 jobs:
   backend-checks:
-    name: Backend Lint, Type Check & Test
+    name: Backend Lint & Test
     runs-on: ubuntu-latest
     
     # Provision required backend dependencies
@@ -21,7 +21,7 @@ jobs:
         image: timescale/timescaledb:2.17.2-pg16
         env:
           POSTGRES_USER: logsentinel
-          POSTGRES_PASSWORD: logsentinel_secret
+          POSTGRES_PASSWORD: logsentinel_dev_password
           POSTGRES_DB: logsentinel_db
           TIMESCALEDB_TELEMETRY: "off"
         ports:
@@ -71,18 +71,18 @@ jobs:
       - name: Run Backend Tests
         env:
           POSTGRES_USER: logsentinel
-          POSTGRES_PASSWORD: logsentinel_secret
+          POSTGRES_PASSWORD: logsentinel_dev_password
           POSTGRES_HOST: localhost
           POSTGRES_PORT: 5432
           POSTGRES_DB: logsentinel_db
           REDIS_URL: redis://localhost:6379/0
           ENVIRONMENT: test
-          ENCRYPTION_KEY: f4Ej8-S4LBm8Dc2uxoftRtacodEv1x306HZkPemS5lo=
+          ENCRYPTION_KEY: ${{ secrets.PROD_ENCRYPTION_KEY }}
         run: |
           pytest backend/tests/ -v
 
   frontend-checks:
-    name: Frontend Build, Type Check & Test
+    name: Frontend Build & Type Check
     runs-on: ubuntu-latest
 
     steps:

@@ -1,5 +1,5 @@
 import { Bell, Copy, Eye, EyeOff, Key, RefreshCw, Save, Sliders } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { FeatureFlag, useFeatureFlag } from "../components/common/FeatureFlag";
 
 function Section({ title, icon: Icon, children }: { title: string; icon: React.ElementType; children: React.ReactNode }) {
@@ -46,8 +46,17 @@ function Toggle({ defaultOn = false, disabled = false }: { defaultOn?: boolean; 
 
 export function SettingsPage() {
   const [showKey, setShowKey] = useState(false);
-  const apiKey = "lsn_prod_sk_a1b2c3d4e5f6g7h8i9j0";
+  const [apiKey, setApiKey] = useState("Loading...");
   const enableEdit = useFeatureFlag('ENABLE_SETTINGS_EDIT');
+
+  useEffect(() => {
+    fetch("/api/auth/api-key", {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+    })
+      .then(res => res.json())
+      .then(data => setApiKey(data.api_key || "Error loading key"))
+      .catch(() => setApiKey("Error loading key"));
+  }, []);
 
   return (
     <div className="space-y-5">
