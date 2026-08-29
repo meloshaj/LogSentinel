@@ -139,7 +139,16 @@ services:
       context: .
       target: production
       args:
-        VITE_API_URL: https://${DOMAIN_NAME:-logsentinel.example.com}
+        VITE_API_URL: ${VITE_API_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_MICROSOFT_SPA_CLIENT_ID: ${VITE_MICROSOFT_SPA_CLIENT_ID:-}
+        VITE_MICROSOFT_AUTHORITY: ${VITE_MICROSOFT_AUTHORITY:-}
+        VITE_MICROSOFT_API_SCOPE: ${VITE_MICROSOFT_API_SCOPE:-}
+        VITE_MICROSOFT_REDIRECT_URI: ${VITE_MICROSOFT_REDIRECT_URI:-}
+        VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI: ${VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI:-}
+        VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED:-true}
+        VITE_MICROSOFT_AUTH_ENABLED: ${VITE_MICROSOFT_AUTH_ENABLED:-true}
+        VITE_FEATURE_ENABLE_GITHUB_AUTH: ${VITE_FEATURE_ENABLE_GITHUB_AUTH:-true}
     image: logsentinel-dashboard:prod
     container_name: logsentinel_caddy
     ports:

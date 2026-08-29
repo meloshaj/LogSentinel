@@ -330,11 +330,14 @@ async def _observability_loop(app: FastAPI) -> None:
         await asyncio.sleep(5.0)
 
 
-_JWT_DEV_DEFAULTS = frozenset(
+_INSECURE_SECRETS = frozenset(
     {
         "logsentinel_jwt_secret_key_change_me_in_prod",
         "change_me",
         "secret",
+        "postgres",
+        "logsentinel_secret",
+        "changeme",
         "",
     }
 )
@@ -342,32 +345,27 @@ _JWT_DEV_DEFAULTS = frozenset(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    # --- Startup: production environment guardrails ---
-    environment = os.getenv("ENVIRONMENT", os.getenv("NODE_ENV", "development")).lower()
+    # --- Startup: environment guardrails ---
     from .security.auth import (
         JWT_SECRET_KEY,
     )
 
-    if environment == "production":
-        if not JWT_SECRET_KEY or JWT_SECRET_KEY in _JWT_DEV_DEFAULTS:
-            raise RuntimeError(
-                "FATAL: JWT_SECRET_KEY is missing or set to an insecure development "
-                "default. Set a strong, unique secret via the JWT_SECRET_KEY environment "
-                "variable before starting in production."
-            )
-        postgres_password = os.getenv("POSTGRES_PASSWORD", "")
-        if postgres_password in {"postgres", "logsentinel_secret", "changeme", ""}:
-            raise RuntimeError(
-                "FATAL: POSTGRES_PASSWORD is missing or set to an insecure default. "
-                "Set a strong password in production."
-            )
-        logger.info("Production guardrails passed — secrets are configured.")
-    else:
-        if JWT_SECRET_KEY in _JWT_DEV_DEFAULTS:
-            logger.warning(
-                "JWT_SECRET_KEY is set to a development default. "
-                "Do NOT deploy to production without changing it."
-            )
+    if not JWT_SECRET_KEY or JWT_SECRET_KEY in _INSECURE_SECRETS:
+        raise RuntimeError(
+            "FATAL: JWT_SECRET_KEY is missing or set to an insecure value. "
+            "Run `python scripts/generate_secrets.py` to generate secure credentials "
+            "and add them to your .env file."
+        )
+
+    postgres_password = os.getenv("POSTGRES_PASSWORD", "")
+    if not postgres_password or postgres_password in _INSECURE_SECRETS:
+        raise RuntimeError(
+            "FATAL: POSTGRES_PASSWORD is missing or set to an insecure default. "
+            "Run `python scripts/generate_secrets.py` to generate secure credentials "
+            "and add them to your .env file."
+        )
+
+    logger.info("Guardrails passed — secrets are securely configured.")
 
     # --- Startup: initialize the Redis connection pool (with exponential backoff) ---
     app.state.redis = await init_redis_pool()

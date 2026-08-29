@@ -359,6 +359,7 @@ sinks:
 
 function PythonSdkTab({ apiKey, showKey }: { apiKey: string; showKey: boolean }) {
   const displayKey = showKey ? apiKey : maskKey(apiKey);
+  const apiBase = (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/+$/, "");
 
   const installSnippet = `# Copy the handler into your project
 cp sdk/python/logsentinel_logger.py your_service/`;
@@ -369,7 +370,7 @@ from logsentinel_logger import LogSentinelHandler
 handler = LogSentinelHandler(
     api_key="${displayKey}",
     service_name="payment-gateway",
-    endpoint="http://localhost:8000/api/v1/ingest/bulk",
+    endpoint="${apiBase}/api/v1/ingest/bulk",
     batch_size=100,
     flush_interval_seconds=1.0,
 )
@@ -416,8 +417,9 @@ logger.info("Order processed", extra={
 
 function CurlTab({ apiKey, showKey }: { apiKey: string; showKey: boolean }) {
   const displayKey = showKey ? apiKey : maskKey(apiKey);
+  const apiBase = (import.meta.env.VITE_API_URL || window.location.origin).replace(/\/+$/, "");
 
-  const curlSnippet = `curl -X POST http://localhost:8000/api/v1/ingest/bulk \\
+  const curlSnippet = `curl -X POST ${apiBase}/api/v1/ingest/bulk \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: ${displayKey}" \\
   -d '{
@@ -439,7 +441,7 @@ function CurlTab({ apiKey, showKey }: { apiKey: string; showKey: boolean }) {
     ]
   }'`;
 
-  const ndjsonSnippet = `curl -X POST http://localhost:8000/api/v1/ingest/bulk \\
+  const ndjsonSnippet = `curl -X POST ${apiBase}/api/v1/ingest/bulk \\
   -H "Content-Type: application/x-ndjson" \\
   -H "X-API-Key: ${displayKey}" \\
   -d '{"service_name":"auth-svc","level":"INFO","message":"User login succeeded"}

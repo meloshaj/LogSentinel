@@ -21,9 +21,7 @@ from ..core.database import get_async_session
 from ..core.orm import UserRecord
 
 # JWT Configuration
-JWT_SECRET_KEY = os.getenv(
-    "JWT_SECRET_KEY", "logsentinel_jwt_secret_key_change_me_in_prod"
-)
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
