@@ -7,12 +7,12 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import text
 
-from backend.app.archive.manifest import generate_sidecar_manifest
-from backend.app.archive.s3_client import get_s3_client
-from backend.app.archive.serializer import async_serialize_to_parquet
-from backend.app.archive.verifier import ArchiveVerifier
-from backend.app.core.database import get_engine
-from backend.app.core.settings import get_archive_settings
+from app.archive.manifest import generate_sidecar_manifest
+from app.archive.s3_client import get_s3_client
+from app.archive.serializer import async_serialize_to_parquet
+from app.archive.verifier import ArchiveVerifier
+from app.core.database import get_engine
+from app.core.settings import get_archive_settings
 
 logger = logging.getLogger("logsentinel.archive.worker")
 
@@ -263,8 +263,8 @@ class ArchiveWorker:
 
 async def standalone_main():
     """Standalone entrypoint for running the archive worker out-of-process."""
-    from backend.app.core.database import dispose_engine, init_engine
-    from backend.app.core.settings import get_database_settings
+    from app.core.database import dispose_engine, init_engine
+    from app.core.settings import get_database_settings
 
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"

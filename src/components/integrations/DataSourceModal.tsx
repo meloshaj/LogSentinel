@@ -479,14 +479,22 @@ function CurlTab({ apiKey, showKey }: { apiKey: string; showKey: boolean }) {
 interface DataSourceModalProps {
   isOpen: boolean;
   onClose: () => void;
-  apiKey?: string;
 }
 
 export function DataSourceModal({
   isOpen,
   onClose,
-  apiKey = "ls_live_k8s_prod_example_key",
 }: DataSourceModalProps) {
+  const [apiKey, setApiKey] = useState("Loading...");
+
+  useEffect(() => {
+    fetch("/api/auth/api-key", {
+      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+    })
+      .then(res => res.json())
+      .then(data => setApiKey(data.api_key || "Error loading key"))
+      .catch(() => setApiKey("Error loading key"));
+  }, []);
   const [activeTab, setActiveTab] = useState<TabId>("fluent-bit");
   const [showKey, setShowKey] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
