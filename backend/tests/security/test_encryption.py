@@ -22,5 +22,5 @@ def test_encryption_key_crash_on_invalid(monkeypatch):
         importlib.reload(orm)
 
     # Restore valid state for other tests
-    monkeypatch.setenv("ENCRYPTION_KEY", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=")
+    monkeypatch.setenv("ENCRYPTION_KEY", "dGVzdF9lbmNyeXB0aW9uX2tleV9mb3JfY2lfdGVzdHM=")
     importlib.reload(orm)

@@ -485,7 +485,7 @@ interface DataSourceModalProps {
 export function DataSourceModal({
   isOpen,
   onClose,
-  apiKey = "ls_live_k8s_prod_a1b2c3d4e5f6",
+  apiKey = "ls_live_k8s_prod_example_key",
 }: DataSourceModalProps) {
   const [activeTab, setActiveTab] = useState<TabId>("fluent-bit");
   const [showKey, setShowKey] = useState(false);

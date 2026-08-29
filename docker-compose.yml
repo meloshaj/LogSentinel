@@ -4,7 +4,7 @@ services:
     container_name: logsentinel_postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-logsentinel}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logsentinel_secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logsentinel_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-logsentinel_db}
     ports:
       - "127.0.0.1:5432:5432"
@@ -98,7 +98,7 @@ services:
     command: ["python", "/repo/scripts/database_lifecycle.py", "--apply"]
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_dev_password}
       - POSTGRES_HOST=timescaledb
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
@@ -117,11 +117,11 @@ services:
       - "8000:8000"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_dev_password}
       - POSTGRES_HOST=timescaledb
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD:-logsentinel_secret}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD:-logsentinel_dev_password}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
       - REDIS_HOST=valkey
       - REDIS_URL=redis://valkey:6379/0
       - INGEST_API_KEY=${INGEST_API_KEY:-dev-local-key}
@@ -133,7 +133,7 @@ services:
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set to a strong random value}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-dGVzdF9lbmNyeXB0aW9uX2tleV9mb3JfY2lfdGVzdHM=}
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
       - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
       - AZURE_REQUIRED_SCOPE=${AZURE_REQUIRED_SCOPE:-access_as_user}

@@ -46,7 +46,7 @@ function Toggle({ defaultOn = false, disabled = false }: { defaultOn?: boolean; 
 
 export function SettingsPage() {
   const [showKey, setShowKey] = useState(false);
-  const apiKey = "lsn_prod_sk_a1b2c3d4e5f6g7h8i9j0";
+  const apiKey = "lsn_test_sk_example_key_1234567890";
   const enableEdit = useFeatureFlag('ENABLE_SETTINGS_EDIT');
 
   return (
