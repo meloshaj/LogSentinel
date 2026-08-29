@@ -77,7 +77,7 @@ jobs:
           POSTGRES_DB: logsentinel_db
           REDIS_URL: redis://localhost:6379/0
           ENVIRONMENT: test
-          ENCRYPTION_KEY: dGVzdF9lbmNyeXB0aW9uX2tleV9mb3JfY2lfdGVzdHM=
+          ENCRYPTION_KEY: ${{ secrets.TEST_ENCRYPTION_KEY }}
         run: |
           pytest backend/tests/ -v
 
