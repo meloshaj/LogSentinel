@@ -99,7 +99,7 @@ class DatabaseSettings(BaseModel):
         description="PostgreSQL user name (env: POSTGRES_USER)",
     )
     password: str = Field(
-        default="logsentinel_secret",
+        default="",
         description="PostgreSQL password (env: POSTGRES_PASSWORD)",
     )
     host: str = Field(
@@ -217,7 +217,7 @@ def get_database_settings() -> DatabaseSettings:
     return DatabaseSettings(
         user=_database_env("POSTGRES_USER", "DB_USER", default="logsentinel"),
         password=_database_env(
-            "POSTGRES_PASSWORD", "DB_PASS", default="logsentinel_secret"
+            "POSTGRES_PASSWORD", "DB_PASS", default=""
         ),
         host=_database_env("POSTGRES_HOST", "DB_HOST", default="127.0.0.1"),
         port=int(_database_env("POSTGRES_PORT", "DB_PORT", default="5432")),
