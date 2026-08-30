@@ -1,36 +1,8 @@
-{$DOMAIN_NAME} {
-    # Block internal routes from external access
+138.2.152.189.sslip.io {
     @internal {
         path /metrics /readiness /docs* /redoc* /openapi.json
     }
     respond @internal 403
 
-    # Add CORS handling for API paths
-    @api {
-        path /api/* /ingest-log /v1/* /ws/*
-    }
-    header @api Access-Control-Allow-Origin "{$FRONTEND_URL}"
-    header @api Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-    header @api Access-Control-Allow-Headers "Content-Type, Authorization"
-
-    # Handle preflight OPTIONS requests
-    @options {
-        method OPTIONS
-        path /api/* /ingest-log /v1/* /ws/*
-    }
-    respond @options 204
-
-    # Reverse proxy API and ingest traffic to backend
-    reverse_proxy /api/* backend:8000
-    reverse_proxy /ingest-log backend:8000
-    reverse_proxy /v1/* backend:8000
-    
-    # Reverse proxy WebSockets to backend
-    # Caddy natively supports WebSockets and passes Connection/Upgrade headers
-    reverse_proxy /ws/* backend:8000
-
-    # Serve static frontend files (SPA)
-    root * /usr/share/caddy/html
-    file_server
-    try_files {path} /index.html
+    reverse_proxy backend:8000
 }
