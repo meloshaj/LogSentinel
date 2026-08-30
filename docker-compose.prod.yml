@@ -152,12 +152,13 @@ services:
     image: logsentinel-dashboard:prod
     container_name: logsentinel_caddy
     ports:
-      - "8080:80"
-      - "8443:443"
+      - "80:80"
+      - "443:443"
     environment:
       - DOMAIN_NAME=${DOMAIN_NAME:-logsentinel.example.com}
       - FRONTEND_URL=${FRONTEND_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}
     volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
