@@ -368,7 +368,6 @@ class TrackingLoopRecord(Base):
     )
     window_id: Mapped[str] = mapped_column(
         VARCHAR(128),
-        ForeignKey("feature_windows.window_id", ondelete="CASCADE"),
         nullable=False,
     )
     anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
@@ -386,4 +385,12 @@ class TrackingLoopRecord(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "window_id"],
+            ["feature_windows.tenant_id", "feature_windows.window_id"],
+            ondelete="CASCADE",
+        ),
     )
