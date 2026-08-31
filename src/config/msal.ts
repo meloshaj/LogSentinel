@@ -93,12 +93,12 @@ export const msalInstanceConfig: Configuration = {
 };
 
 export const loginRequest = {
-  scopes: ["openid", "profile", "email", "User.Read"],
+  scopes: msalConfig.apiScope ? [msalConfig.apiScope] : [],
 };
 
 export function isValidMicrosoftApiScope(scope: string): boolean {
-  if (scope.includes("openid") || scope.includes("User.Read")) return true;
-  return CUSTOM_API_SCOPE_RE.test(scope);
+  if (!scope) return false;
+  return CUSTOM_API_SCOPE_RE.test(scope.trim());
 }
 
 // Fail closed for disabled, partial, Graph/OIDC-only, cross-origin, or malformed config.

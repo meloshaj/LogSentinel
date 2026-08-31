@@ -10,10 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
-from app.archive.s3_client import get_s3_client
-from app.core.database import get_engine
-from app.core.settings import get_archive_settings
-from app.security.auth import get_current_user
+from ..core.database import get_engine
+from ..core.settings import get_archive_settings
+from ..security.auth import get_current_user
+from .s3_client import get_s3_client
 
 logger = logging.getLogger("logsentinel.archive.rehydration")
 

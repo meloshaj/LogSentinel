@@ -2,12 +2,13 @@
 
 import abc
 import os
+import tempfile
 import threading
 from typing import BinaryIO
 
 from botocore.exceptions import ClientError
 
-from app.core.settings import get_archive_settings
+from ..core.settings import get_archive_settings
 
 
 class S3StorageClient(abc.ABC):
@@ -98,8 +99,18 @@ class Boto3StorageClient(S3StorageClient):
 class LocalMockStorageClient(S3StorageClient):
     """Local filesystem mockup for isolated tests without AWS dependencies."""
 
-    def __init__(self, base_dir: str = "/tmp/logsentinel_archive_mock"):
-        self.base_dir = base_dir
+    def __init__(self, base_dir: str | None = None):
+        requested_dir = base_dir or os.path.join(
+            tempfile.gettempdir(), "logsentinel_archive_mock"
+        )
+        # A number of legacy tests use the POSIX ``/tmp`` spelling.  Map that
+        # spelling to the host temp directory on Windows so the mock remains
+        # provider-neutral and does not attempt to create a root-level path.
+        if os.name == "nt" and requested_dir.replace("\\", "/").startswith("/tmp/"):
+            requested_dir = os.path.join(
+                tempfile.gettempdir(), requested_dir.replace("\\", "/")[5:]
+            )
+        self.base_dir = requested_dir
         os.makedirs(self.base_dir, exist_ok=True)
         self.lock = threading.Lock()
 
@@ -149,6 +160,16 @@ def get_s3_client() -> S3StorageClient:
         return LocalMockStorageClient()
 
     settings = get_archive_settings()
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    if not settings.s3_access_key_id or not settings.s3_secret_access_key:
+        if environment in {"development", "test"}:
+            # Keep local imports/startup deterministic and never let boto3
+            # probe instance metadata when cloud credentials are absent.
+            return LocalMockStorageClient()
+        raise RuntimeError(
+            "S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY are required outside "
+            "development/test environments"
+        )
     return Boto3StorageClient(
         bucket=settings.s3_bucket_name,
         endpoint_url=settings.s3_endpoint_url,

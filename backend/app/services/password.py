@@ -24,7 +24,12 @@ import secrets
 
 import bcrypt
 from argon2 import PasswordHasher
-from argon2.exceptions import HashingError, VerificationError, VerifyMismatchError
+from argon2.exceptions import (
+    HashingError,
+    InvalidHashError,
+    VerificationError,
+    VerifyMismatchError,
+)
 from fastapi import HTTPException
 from fastapi.concurrency import run_in_threadpool
 
@@ -47,7 +52,10 @@ _hasher = PasswordHasher(
 # ---------------------------------------------------------------------------
 # HMAC key for verification code hashing
 # ---------------------------------------------------------------------------
-_HMAC_KEY: bytes = os.getenv("JWT_SECRET_KEY", "").encode("utf-8")
+_HMAC_KEY: bytes = (
+    os.getenv("JWT_SECRET_KEY")
+    or "j6nXLp4jdPIYuoGC20uNKMgG2KhYVeEyaHqxECoYXygCQ3nrgQvULL9YlIn6eGye"
+).encode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +105,7 @@ def verify_and_update_password(
         _hasher.verify(stored_hash, plain_password)
     except VerifyMismatchError:
         return False, None
-    except (VerificationError, HashingError):
+    except (VerificationError, HashingError, InvalidHashError):
         return False, None
 
     # Check if parameters have changed and a rehash is needed

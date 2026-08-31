@@ -72,6 +72,7 @@ describe("LoginPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    vi.stubEnv("VITE_API_URL", "http://localhost:8000");
     window.localStorage.clear();
     window.sessionStorage.clear();
     testState.microsoftStatus = "disabled";

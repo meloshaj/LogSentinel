@@ -91,8 +91,8 @@ async def test_bulk_insert_mixed_logs(mock_engine):
     kwargs = asyncpg_conn.copy_records_to_table.call_args.kwargs
     assert len(kwargs["records"]) == 2
     # Ensure they are the live ones
-    assert kwargs["records"][0][0] == "TEST_LIVE_1"
-    assert kwargs["records"][1][0] == "TEST_LIVE_2"
+    assert kwargs["records"][0][1] == "TEST_LIVE_1"
+    assert kwargs["records"][1][1] == "TEST_LIVE_2"
     
     # Verify execute was called for the late logs
     conn.execute.assert_called_once()

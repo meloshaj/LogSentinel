@@ -7,9 +7,11 @@ from cryptography.fernet import Fernet
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     Text,
     UniqueConstraint,
@@ -19,11 +21,11 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
 # Ensure key is a valid Fernet key. It must be 32 URL-safe base64-encoded bytes.
+# There is intentionally no development fallback: importing persistence models
+# without the deployment-managed key must fail closed.
 _secret = os.getenv("ENCRYPTION_KEY")
 if not _secret:
-    raise ValueError(
-        "ENCRYPTION_KEY environment variable is not set. It must be a 32-byte URL-safe base64-encoded string."
-    )
+    raise ValueError("ENCRYPTION_KEY environment variable is not set")
 _fernet = Fernet(_secret.encode("utf-8"))
 
 
@@ -67,6 +69,9 @@ class LogRecord(Base):
     __tablename__ = "logs"
 
     id: Mapped[str] = mapped_column(VARCHAR(26), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        VARCHAR(64), nullable=False, default="default"
+    )
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -97,6 +102,11 @@ class LogRecord(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +125,10 @@ class FeatureWindowRecord(Base):
     __tablename__ = "feature_windows"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    window_id: Mapped[str] = mapped_column(VARCHAR(128), nullable=False, unique=True)
+    tenant_id: Mapped[str] = mapped_column(
+        VARCHAR(64), nullable=False, default="default"
+    )
+    window_id: Mapped[str] = mapped_column(VARCHAR(128), nullable=False)
     start_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -140,7 +153,11 @@ class FeatureWindowRecord(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("window_id", name="uq_feature_windows_window_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "window_id",
+            name="uq_feature_windows_tenant_window_id",
+        ),
     )
 
 
@@ -160,9 +177,11 @@ class AnomalyEventRecord(Base):
     __tablename__ = "anomaly_events"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(
+        VARCHAR(64), nullable=False, default="default"
+    )
     window_id: Mapped[str] = mapped_column(
         VARCHAR(128),
-        ForeignKey("feature_windows.window_id", ondelete="CASCADE"),
         nullable=False,
     )
     event_type: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
@@ -174,6 +193,14 @@ class AnomalyEventRecord(Base):
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "window_id"],
+            ["feature_windows.tenant_id", "feature_windows.window_id"],
+            ondelete="CASCADE",
+        ),
     )
 
 
@@ -192,6 +219,9 @@ class UserRecord(Base):
     hashed_password: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     organization: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+    tenant_id: Mapped[str] = mapped_column(
+        VARCHAR(64), nullable=False, default="default", server_default="default"
+    )
     status: Mapped[str] = mapped_column(VARCHAR(32), nullable=False, default="active")
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
@@ -209,6 +239,13 @@ class UserRecord(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending_verification', 'active', 'suspended')",
+            name="ck_users_status",
+        ),
     )
 
 
@@ -326,9 +363,11 @@ class TrackingLoopRecord(Base):
     __tablename__ = "tracking_loops"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(
+        VARCHAR(64), nullable=False, default="default"
+    )
     window_id: Mapped[str] = mapped_column(
         VARCHAR(128),
-        ForeignKey("feature_windows.window_id", ondelete="CASCADE"),
         nullable=False,
     )
     anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
@@ -346,4 +385,12 @@ class TrackingLoopRecord(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "window_id"],
+            ["feature_windows.tenant_id", "feature_windows.window_id"],
+            ondelete="CASCADE",
+        ),
     )

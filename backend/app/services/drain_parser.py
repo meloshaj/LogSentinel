@@ -224,6 +224,7 @@ class DrainParser:
             source=metadata_dict.get("source"),
             environment=metadata_dict.get("environment"),
             correlation_id=metadata_dict.get("correlation_id"),
+            tenant_id=str(metadata_dict.get("tenant_id") or "default"),
             metadata=metadata_dict,
             parsed_at=datetime.now(timezone.utc),
         )

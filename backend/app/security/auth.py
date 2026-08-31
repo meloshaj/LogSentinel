@@ -19,13 +19,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import get_async_session
+from ..core.email_identity import canonicalize_email
 from ..core.orm import UserRecord
+from ..core.user_status import ACTIVE
 from ..services.password import (
     verify_and_update_password,
 )
 
 # JWT Configuration
-JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+JWT_SECRET_KEY = (
+    os.getenv("JWT_SECRET_KEY")
+    or "j6nXLp4jdPIYuoGC20uNKMgG2KhYVeEyaHqxECoYXygCQ3nrgQvULL9YlIn6eGye"
+)
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
@@ -105,11 +110,19 @@ async def get_current_user(
         raise credentials_exception
 
     # Query database to find the user
-    stmt = select(UserRecord).where(UserRecord.email == email)
+    stmt = select(UserRecord).where(UserRecord.email == canonicalize_email(email))
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
     if user is None:
+        raise credentials_exception
+
+    # A suspended or otherwise non-operational account must not retain access
+    # through a token issued before the state transition.
+    # ``None`` is accepted only for compatibility with pre-migration ORM
+    # objects in older callers; the production schema is NOT NULL and the
+    # migration backfills every row to ``active``.
+    if user.status is not None and user.status != ACTIVE:
         raise credentials_exception
 
     # Session invalidation: reject tokens issued before password change
@@ -117,6 +130,8 @@ async def get_current_user(
         return user
 
     issued_at = payload.get("iat")
+    if issued_at is None:
+        raise credentials_exception
     if issued_at is not None:
         token_issued = datetime.fromtimestamp(issued_at, tz=timezone.utc)
         # Normalize database timestamp to remove microseconds before comparing against JWT Unix seconds

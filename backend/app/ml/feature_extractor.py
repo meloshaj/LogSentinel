@@ -205,6 +205,7 @@ class SlidingWindowFeatureExtractor:
             timestamp=datetime.now(timezone.utc),
             window_start=window.start_time,
             window_end=window.end_time,
+            tenant_id=_tenant_id_for_logs(logs),
             log_count=log_count,
             unique_templates=unique_templates,
             error_count=error_count,
@@ -325,3 +326,9 @@ class SlidingWindowFeatureExtractor:
         for probability in probabilities:
             entropy -= probability * math.log2(probability)
         return entropy
+
+
+def _tenant_id_for_logs(logs: list[ParsedLog]) -> str:
+    """Return the tenant for a window after the worker has isolated buffers."""
+    tenants = {log.tenant_id for log in logs if log.tenant_id}
+    return next(iter(tenants), "default")

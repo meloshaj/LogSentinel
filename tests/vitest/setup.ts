@@ -1,6 +1,9 @@
 import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
+vi.stubEnv("VITE_API_URL", "http://localhost:8000");
+vi.stubEnv("VITE_WS_URL", "ws://localhost:8000/ws/telemetry");
+
 // Mock matchMedia if needed
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

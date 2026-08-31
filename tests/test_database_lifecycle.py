@@ -55,7 +55,7 @@ class TestDatabaseSettings:
     def test_defaults(self) -> None:
         settings = DatabaseSettings()
         assert settings.user == "logsentinel"
-        assert settings.password == "logsentinel_secret"
+        assert settings.password == ""
         assert settings.host == "127.0.0.1"
         assert settings.port == 5432
         assert settings.db_name == "logsentinel_db"

@@ -37,6 +37,7 @@ def valid_payload() -> dict:
 
 def test_lifespan_stops_drain_before_features_and_database(monkeypatch) -> None:
     events: list[str] = []
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test-postgres-password")
 
     class FakeConnection:
         async def run_sync(self, _operation) -> None:

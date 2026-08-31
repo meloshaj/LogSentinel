@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import os
 import random
 import time
 import uuid
@@ -7,7 +8,7 @@ from datetime import datetime, timezone
 import aiohttp
 
 API_URL = "http://localhost:8000/api/v1/ingest/bulk"
-API_KEY = "ls_live_demo_key_123"
+API_KEY = os.getenv("SMOKE_TEST_API_KEY", "")
 
 def generate_log_batch(batch_size):
     logs = []

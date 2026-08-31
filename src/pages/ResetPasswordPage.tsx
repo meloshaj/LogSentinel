@@ -53,7 +53,7 @@ export function ResetPasswordPage() {
       const response = await fetch(`${apiBase}/api/auth/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, new_password: password }),
+        body: JSON.stringify({ token, new_password: password, confirm_password: confirmPassword }),
       });
 
       if (!response.ok) {
@@ -69,7 +69,7 @@ export function ResetPasswordPage() {
 
       // Redirect to login after showing success
       setTimeout(() => {
-        navigate("/login");
+        navigate("/login", { replace: true });
       }, 3000);
     } catch {
       setErrors({ submit: "Unable to connect to the server" });
@@ -209,4 +209,3 @@ export function ResetPasswordPage() {
     </motion.div>
   );
 }
-

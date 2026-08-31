@@ -79,6 +79,11 @@ class ParsedLog(BaseModel):
         None,
         description="Distributed trace correlation identifier",
     )
+    tenant_id: str = Field(
+        default="default",
+        min_length=1,
+        description="Authoritative tenant assigned by the ingestion gateway",
+    )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional structured metadata",
@@ -187,12 +192,17 @@ class FeatureVector(BaseModel):
         description="Feature vector creation timestamp",
     )
     window_start: datetime | None = Field(
-        None,
+        default=None,
         description="Inclusive start of the source window",
     )
     window_end: datetime | None = Field(
-        None,
+        default=None,
         description="Exclusive end of the source window",
+    )
+    tenant_id: str = Field(
+        default="default",
+        min_length=1,
+        description="Tenant whose logs produced this feature window",
     )
 
     # Statistical features
@@ -223,7 +233,7 @@ class FeatureVector(BaseModel):
         description="Normalized frequency of each template ID",
     )
     template_entropy: float | None = Field(
-        None,
+        default=None,
         ge=0.0,
         description="Shannon entropy of template distribution",
     )
@@ -236,22 +246,22 @@ class FeatureVector(BaseModel):
 
     # Temporal features
     logs_per_second: float | None = Field(
-        None,
+        default=None,
         ge=0.0,
         description="Average log rate in this window",
     )
 
     # Raw feature array for ML models
     feature_array: list[float] | None = Field(
-        None,
+        default=None,
         description="Flattened numerical feature array for ML models",
     )
     feature_names: list[str] | None = Field(
-        None,
+        default=None,
         description="Names corresponding to feature_array elements",
     )
     anomaly_prediction: dict[str, Any] | None = Field(
-        None,
+        default=None,
         description="Structured anomaly detection output for this feature vector",
     )
     features: dict[str, Any] = Field(

@@ -35,7 +35,9 @@ class Colors:
 # Configuration
 API_URL = "http://localhost:8000/api/v1"
 WS_URL = "ws://localhost:8000/ws/telemetry"
-API_KEY = "ls_live_demo_key_123"
+API_KEY = os.getenv("SMOKE_TEST_API_KEY", "").strip()
+if not API_KEY:
+    raise RuntimeError("Set SMOKE_TEST_API_KEY before running the smoke test")
 POSTGRES_DSN = get_database_settings().url.replace("+asyncpg", "").split("?")[0]
 REDIS_URL = "redis://localhost:6379/0"
 

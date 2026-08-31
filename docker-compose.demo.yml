@@ -4,7 +4,7 @@ services:
     container_name: demo_postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-logsentinel}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-logsentinel_secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a strong random value}
       POSTGRES_DB: ${POSTGRES_DB:-logsentinel_db}
     ports:
       - "127.0.0.1:5432:5432"
@@ -92,7 +92,7 @@ services:
     command: ["python", "/repo/scripts/database_lifecycle.py", "--apply"]
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a strong random value}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
@@ -112,15 +112,15 @@ services:
       - "8000:8000"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-logsentinel_secret}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a strong random value}
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
       - REDIS_HOST=valkey
-      - INGEST_API_KEYS=ls_live_demo_key_123,dev-local-key
+      - INGEST_API_KEYS=${INGEST_API_KEYS:?INGEST_API_KEYS must be set to tenant-scoped random keys}
       - GRAPH_SCORING_LOOKBACK_SECONDS=${GRAPH_SCORING_LOOKBACK_SECONDS:-180}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-demo_secret_key_12345}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set to a strong random value}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set to a 32-byte base64 string}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
     depends_on:
@@ -152,6 +152,8 @@ services:
     volumes:
       - ./demo/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
       - mock_logs:/var/log/mock-services:ro
+    environment:
+      - SMOKE_TEST_API_KEY=${SMOKE_TEST_API_KEY:?SMOKE_TEST_API_KEY must be set}
     depends_on:
       backend:
         condition: service_started

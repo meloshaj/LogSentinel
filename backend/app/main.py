@@ -19,7 +19,7 @@ from fastapi import (
 )
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from prometheus_client import Counter, Gauge
+from prometheus_client import REGISTRY, Counter, Gauge
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field, ValidationError
 from slowapi import _rate_limit_exceeded_handler
@@ -28,16 +28,64 @@ from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
-ingest_request_rate = Counter(
+
+def _get_or_create_metric(
+    metric_type: type[Counter] | type[Gauge],
+    name: str,
+    documentation: str,
+    labelnames: list[str] | tuple[str, ...] = (),
+) -> Counter | Gauge:
+    """Reuse an identically-defined process metric across module reloads.
+
+    Prometheus' Counter collector registers ``name`` plus ``_total`` and
+    ``_created`` series, while its internal ``_name`` is the base name.  The
+    previous lookup checked only that internal name against the public
+    ``*_total`` name and therefore still attempted duplicate registration.
+    A conflicting type or label contract is an operator error and must not be
+    hidden by this helper.
+    """
+    expected_labels = tuple(labelnames)
+    public_names = {name}
+    if name.endswith("_total"):
+        public_names.add(name.removesuffix("_total"))
+
+    for collector, registered_names in list(REGISTRY._collector_to_names.items()):
+        if not public_names.intersection(registered_names):
+            continue
+        if not isinstance(collector, metric_type):
+            raise TypeError(f"Prometheus metric {name!r} has a conflicting type")
+        actual_labels = tuple(getattr(collector, "_labelnames", ()))
+        if actual_labels != expected_labels:
+            raise RuntimeError(
+                f"Prometheus metric {name!r} has a conflicting label contract: "
+                f"expected {expected_labels!r}, found {actual_labels!r}"
+            )
+        return collector
+
+    return metric_type(name, documentation, labelnames)
+
+
+def _get_or_create_gauge(
+    name: str, documentation: str, labelnames: list[str] | tuple[str, ...] = ()
+) -> Gauge:
+    return _get_or_create_metric(Gauge, name, documentation, labelnames)  # type: ignore[return-value]
+
+
+ingest_request_rate = _get_or_create_metric(
+    Counter,
     "logsentinel_ingest_requests_total",
     "Total ingestion requests",
     ["endpoint", "status"],
 )
-batch_ingestion_size = Counter(
-    "logsentinel_batch_ingestion_size_total", "Total logs ingested", ["endpoint"]
+batch_ingestion_size = _get_or_create_metric(
+    Counter,
+    "logsentinel_batch_ingestion_size_total",
+    "Total logs ingested",
+    ["endpoint"],
 )
-active_websocket_connections = Gauge(
-    "logsentinel_active_websocket_connections", "Number of active WebSocket connections"
+active_websocket_connections = _get_or_create_gauge(
+    "logsentinel_active_websocket_connections",
+    "Number of active WebSocket connections",
 )
 
 from .core import (
@@ -339,6 +387,8 @@ _INSECURE_SECRETS = frozenset(
         "logsentinel_secret",
         "changeme",
         "",
+        "j6nXLp4jdPIYuoGC20uNKMgG2KhYVeEyaHqxECoYXygCQ3nrgQvULL9YlIn6eGye",
+        "bvVYnjx7L9I_sx-PW9PfR1E_e1xLHqgej5-SL3_nut8=",
     }
 )
 
@@ -346,16 +396,28 @@ _INSECURE_SECRETS = frozenset(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # --- Startup: environment guardrails ---
-    from .security.auth import (
-        JWT_SECRET_KEY,
-    )
+    from .core.settings import validate_auth_email_configuration
 
-    if not JWT_SECRET_KEY or JWT_SECRET_KEY in _INSECURE_SECRETS:
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    configured_jwt_secret = os.getenv("JWT_SECRET_KEY", "")
+    configured_encryption_key = os.getenv("ENCRYPTION_KEY", "")
+    if environment == "production" and (
+        not configured_jwt_secret or configured_jwt_secret in _INSECURE_SECRETS
+    ):
         raise RuntimeError(
             "FATAL: JWT_SECRET_KEY is missing or set to an insecure value. "
             "Run `python scripts/generate_secrets.py` to generate secure credentials "
             "and add them to your .env file."
         )
+    if environment == "production" and (
+        not configured_encryption_key or configured_encryption_key in _INSECURE_SECRETS
+    ):
+        raise RuntimeError(
+            "FATAL: ENCRYPTION_KEY is missing or insecure in production. "
+            "Run `python scripts/generate_secrets.py` to generate secure credentials."
+        )
+
+    validate_auth_email_configuration()
 
     postgres_password = os.getenv("POSTGRES_PASSWORD", "")
     if not postgres_password or postgres_password in _INSECURE_SECRETS:
@@ -570,15 +632,30 @@ if benchmarking_settings.enable_benchmarking_endpoints:
     )
 
 
+def _tenant_id(current_user: Any) -> str:
+    """Resolve the authenticated user's tenant without trusting request input."""
+    value = (
+        current_user.get("tenant_id")
+        if isinstance(current_user, dict)
+        else getattr(current_user, "tenant_id", None)
+    )
+    return value.strip() if isinstance(value, str) and value.strip() else "default"
+
+
 @app.get(
     "/api/v1/logs/recent",
     tags=["Logs"],
     summary="Get Recent Logs",
     dependencies=[Depends(get_current_user)],
 )
-async def get_recent_logs(limit: int = Query(500, le=1000)):
+async def get_recent_logs(
+    limit: int = Query(500, le=1000),
+    current_user: Any = Depends(get_current_user),  # noqa: B008
+):
     """Fetch recent logs for dashboard backfill."""
-    logs = await log_repository.get_recent_logs(limit=limit)  # type: ignore
+    logs = await log_repository.get_recent_logs(  # type: ignore
+        tenant_id=_tenant_id(current_user), limit=limit
+    )
     return {"logs": logs}
 
 
@@ -593,10 +670,15 @@ async def get_logs_paginated(
     limit: int = Query(50, le=200),
     service: str | None = None,
     level: str | None = None,
+    current_user: Any = Depends(get_current_user),  # noqa: B008
 ):
     """Fetch paginated logs with optional filters."""
     return await log_repository.get_logs_paginated(  # type: ignore
-        page=page, limit=limit, service=service, level=level
+        tenant_id=_tenant_id(current_user),
+        page=page,
+        limit=limit,
+        service=service,
+        level=level,
     )
 
 
@@ -636,9 +718,12 @@ async def get_topology() -> TopologyResponse:
 )
 async def get_tracking_loop_blast_radius(
     tracking_loop_id: int,
+    current_user: Any = Depends(get_current_user),  # noqa: B008
 ) -> BlastRadiusRetrievalResponse:
     """Return a persisted blast-radius analysis for one tracking-loop record."""
-    row = await tracking_repository.get_tracking_loop_by_id(tracking_loop_id)  # type: ignore
+    row = await tracking_repository.get_tracking_loop_by_id(  # type: ignore
+        tenant_id=_tenant_id(current_user), tracking_loop_id=tracking_loop_id
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="Tracking loop not found")
 
@@ -694,9 +779,12 @@ def _derive_severity(anomaly_score: float) -> str:
 )
 async def list_active_tracking_loops(
     limit: int = 100,
+    current_user: Any = Depends(get_current_user),  # noqa: B008
 ) -> list[dict]:
     """Return all active tracking loops for frontend backfill."""
-    rows = await tracking_repository.get_active_tracking_loops(limit=min(limit, 500))  # type: ignore
+    rows = await tracking_repository.get_active_tracking_loops(  # type: ignore
+        tenant_id=_tenant_id(current_user), limit=min(limit, 500)
+    )
     results = []
     for row in rows:
         score = row.get("anomaly_score", 0.0)

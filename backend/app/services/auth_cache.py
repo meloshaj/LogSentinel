@@ -12,9 +12,11 @@ Key namespace:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
+import uuid
 
 import redis.exceptions
 from redis.asyncio import Redis
@@ -36,7 +38,9 @@ def catch_redis_errors(func):
             return await func(*args, **kwargs)
         except redis.exceptions.RedisError as e:
             logger.error(
-                "Valkey cache connection failed during %s: %s", func.__name__, e
+                "Valkey cache connection failed during %s (%s)",
+                func.__name__,
+                type(e).__name__,
             )
             raise AuthCacheUnavailableError(
                 "Authentication cache temporarily unavailable"
@@ -75,6 +79,21 @@ redis.call('DEL', KEYS[1])
 return data
 """
 
+# Sliding-window admission and recording in one Redis transaction.  Keeping
+# the count check and event insert together prevents concurrent resend calls
+# from bypassing the per-email hourly limit.
+_RESERVE_EMAIL_SEND_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window_start = now - tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+redis.call('ZREMRANGEBYSCORE', key, '-inf', window_start)
+if redis.call('ZCARD', key) >= limit then return 0 end
+redis.call('ZADD', key, now, ARGV[4])
+redis.call('EXPIRE', key, tonumber(ARGV[2]))
+return 1
+"""
+
 
 class AuthCacheManager:
     """Manages authentication state in Valkey with atomic Lua operations."""
@@ -83,6 +102,7 @@ class AuthCacheManager:
         self._redis = redis
         self._verify_script: object | None = None
         self._consume_reset_script: object | None = None
+        self._reserve_email_send_script: object | None = None
 
     # ------------------------------------------------------------------
     # Script registration (lazy)
@@ -99,6 +119,13 @@ class AuthCacheManager:
                 _CONSUME_RESET_TOKEN_LUA
             )
         return self._consume_reset_script
+
+    async def _get_reserve_email_send_script(self):
+        if self._reserve_email_send_script is None:
+            self._reserve_email_send_script = self._redis.register_script(
+                _RESERVE_EMAIL_SEND_LUA
+            )
+        return self._reserve_email_send_script
 
     # ------------------------------------------------------------------
     # Email Verification
@@ -126,7 +153,10 @@ class AuthCacheManager:
             }
         )
         await self._redis.set(key, payload, ex=ttl_seconds)
-        logger.debug("Stored verification code for email hash=%s", hash(email))
+        logger.debug(
+            "Stored verification code for email fingerprint=%s",
+            hashlib.sha256(email.strip().lower().encode()).hexdigest()[:12],
+        )
 
     @catch_redis_errors
     async def verify_code(
@@ -240,3 +270,43 @@ class AuthCacheManager:
         now = time.time()
         await self._redis.zadd(key, {f"{now}:{uuid.uuid4()}": now})
         await self._redis.expire(key, window_seconds)
+
+    @catch_redis_errors
+    async def reserve_email_send(
+        self,
+        email: str,
+        limit: int = 5,
+        window_seconds: int = 3600,
+    ) -> bool:
+        """Atomically admit and record one email send in a sliding window."""
+        key = f"email_verify_rate:{email.strip().lower()}"
+        script = await self._get_reserve_email_send_script()
+        now = time.time()
+        result = await script(
+            keys=[key],
+            args=[now, window_seconds, limit, f"{now}:{uuid.uuid4()}"],
+        )
+        return bool(int(result))
+
+    @catch_redis_errors
+    async def reserve_email_action(
+        self,
+        email: str,
+        action: str,
+        limit: int = 3,
+        window_seconds: int = 3600,
+    ) -> bool:
+        """Atomically rate-limit a sensitive email-keyed auth action.
+
+        The email fingerprint is used in this generic limiter key so forgot
+        password requests do not put another PII-bearing identifier in Redis.
+        """
+        fingerprint = hashlib.sha256(email.strip().lower().encode()).hexdigest()
+        key = f"auth_rate:{action}:{fingerprint}"
+        script = await self._get_reserve_email_send_script()
+        now = time.time()
+        result = await script(
+            keys=[key],
+            args=[now, window_seconds, limit, f"{now}:{uuid.uuid4()}"],
+        )
+        return bool(int(result))

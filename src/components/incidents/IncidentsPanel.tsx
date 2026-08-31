@@ -1,6 +1,7 @@
 import type { Incident } from "../../types/monitoring";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { Bell, CheckCircle, Clock, Flame, XCircle } from "lucide-react";
+import { resolveRootService } from "../../utils/incident";
 
 const SEVERITY_CONFIG = {
   critical: { label: "CRITICAL", color: "#f85149", bg: "bg-[#da3633]/15", border: "border-[#da3633]/30", icon: Flame },
@@ -59,7 +60,7 @@ export function IncidentsPanel() {
   const incidents: Incident[] = [
     ...activeTrackingLoops.map(loop => ({
       id: loop.window_id,
-      service: loop.suspected_root_service || "multiple-services",
+       service: resolveRootService(loop) || "Root cause unavailable",
       severity: (loop.severity === "medium" || loop.severity === "low" || loop.severity === "high" || loop.severity === "critical" ? loop.severity : "medium") as any,
       timestamp: new Date().toLocaleTimeString(),
       description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(0)}`,

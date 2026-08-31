@@ -6,7 +6,7 @@ import logging
 
 import pyarrow.parquet as pq
 
-from app.archive.s3_client import S3StorageClient
+from .s3_client import S3StorageClient
 
 logger = logging.getLogger("logsentinel.archive.verifier")
 
