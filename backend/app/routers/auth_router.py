@@ -629,12 +629,25 @@ async def google_login(
     full_name: str | None = idinfo.get("name")
 
     # Find or create user
+    iss = idinfo.get("iss", "https://accounts.google.com")
     ext_identity = await ExternalIdentityRepository.get_by_provider_identity(
         db,
         provider="google",
-        issuer="https://accounts.google.com",
+        issuer=iss,
         subject=idinfo.get("sub", ""),
     )
+    if ext_identity is None:
+        alt_iss = (
+            "accounts.google.com"
+            if iss == "https://accounts.google.com"
+            else "https://accounts.google.com"
+        )
+        ext_identity = await ExternalIdentityRepository.get_by_provider_identity(
+            db,
+            provider="google",
+            issuer=alt_iss,
+            subject=idinfo.get("sub", ""),
+        )
 
     if ext_identity is not None:
         user = await UserRepository.get_user_by_id(db, ext_identity.user_id)
@@ -666,7 +679,7 @@ async def google_login(
                     db=db,
                     user_id=user.id,
                     provider="google",
-                    issuer=idinfo.get("iss", "accounts.google.com"),
+                    issuer=idinfo.get("iss", "https://accounts.google.com"),
                     subject=idinfo.get("sub", ""),
                     email=email,
                     display_name=full_name,
