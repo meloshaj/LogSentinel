@@ -245,6 +245,14 @@ class EventManager:
                     self.benchmarking_collector.get_health_metrics()
                 )
 
+            if not payload.get("suspected_root_service"):
+                service_dist = feature_vector.service_distribution
+                payload["suspected_root_service"] = (
+                    max(service_dist.items(), key=lambda x: x[1])[0]
+                    if service_dist
+                    else "multiple-services"
+                )
+
             await self.telemetry_broadcaster.broadcast(
                 telemetry_event(
                     "infrastructure.tracking_loop.triggered",
@@ -264,7 +272,7 @@ class EventManager:
                 redis = Redis(connection_pool=redis_state._redis_pool)
 
             if redis is not None:
-                service_dist = feature_vector.features.get("service_distribution", {})
+                service_dist = feature_vector.service_distribution
                 dominant_service = (
                     max(service_dist.items(), key=lambda x: x[1])[0]
                     if service_dist

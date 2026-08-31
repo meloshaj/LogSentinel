@@ -38,10 +38,6 @@ function Header() {
           />
         </div>
         <AddDataSourceButton variant="compact" />
-        <button aria-label="View notifications" className="relative flex items-center justify-center w-8 h-8 rounded-lg bg-[#161b22] border border-[#21262d] text-[#7d8590] hover:text-[#e6edf3] transition-colors">
-          <Bell className="w-4 h-4" />
-          <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-[#f85149]" />
-        </button>
         <button aria-label="Refresh dashboard" className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#161b22] border border-[#21262d] text-[#7d8590] hover:text-[#e6edf3] transition-colors">
           <RefreshCw className="w-4 h-4" />
         </button>

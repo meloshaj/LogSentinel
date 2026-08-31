@@ -45,7 +45,7 @@ export function OverviewPage() {
   
   const openIncidents = visibleLoops.map((loop) => ({
     id: loop.window_id,
-    service: loop.suspected_root_service || "unknown",
+    service: loop.suspected_root_service || "multiple-services",
     timestamp: new Date().toLocaleTimeString(),
     description: `Anomaly detected with score ${loop.anomaly_score.toFixed(2)}`,
     ...loop,

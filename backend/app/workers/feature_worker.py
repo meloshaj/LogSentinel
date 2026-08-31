@@ -293,6 +293,12 @@ class FeatureExtractionWorker:
 
         prediction = feature_vector.anomaly_prediction
         if isinstance(prediction, dict) and prediction.get("is_anomaly") is True:
+            service_dist = feature_vector.service_distribution
+            dominant_service = (
+                max(service_dist.items(), key=lambda x: x[1])[0]
+                if service_dist
+                else None
+            )
             self._schedule_telemetry_event(
                 telemetry_event(
                     "anomaly.detected",
@@ -301,6 +307,7 @@ class FeatureExtractionWorker:
                         "anomaly_score": prediction.get("anomaly_score"),
                         "severity": prediction.get("severity"),
                         "model_version": prediction.get("model_version"),
+                        "service": dominant_service,
                     },
                 )
             )
@@ -319,7 +326,7 @@ class FeatureExtractionWorker:
             return
         try:
             asyncio.create_task(
-                self._feature_repository.persist_feature_vector(feature_vector)  # type: ignore
+                self._feature_repository.persist_feature_vector("default", feature_vector)  # type: ignore
             )
         except RuntimeError:
             logger.debug("No running event loop available for feature persistence")
