@@ -66,7 +66,7 @@ def _get_or_create_metric(
 
 
 def _get_or_create_gauge(
-    name: str, documentation: str, labelnames: list[str] = ()
+    name: str, documentation: str, labelnames: list[str] | tuple[str, ...] = ()
 ) -> Gauge:
     return _get_or_create_metric(Gauge, name, documentation, labelnames)  # type: ignore[return-value]
 
