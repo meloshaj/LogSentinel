@@ -264,11 +264,11 @@ async def google_login(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="Google credential audience mismatch",
                     )
-                
+
                 # Fetch user profile using the access token
                 user_resp = await client.get(
                     "https://www.googleapis.com/oauth2/v3/userinfo",
-                    headers={"Authorization": f"Bearer {payload.credential}"}
+                    headers={"Authorization": f"Bearer {payload.credential}"},
                 )
                 if user_resp.status_code != 200:
                     raise HTTPException(
