@@ -163,7 +163,7 @@ async def test_get_current_user_timestamp_collision(db_session: AsyncSession):
 
     # Simulate DB returning a timestamp with microseconds (e.g., .999)
     # This might happen if the code is bypassed, or before the date_trunc patch
-    fake_changed_at = datetime(2026, 8, 31, 10, 0, 0, 999000, tzinfo=timezone.utc)
+    fake_changed_at = datetime.now(timezone.utc).replace(microsecond=999000)
     user.password_changed_at = fake_changed_at
     await db_session.commit()
 
