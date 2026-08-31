@@ -459,6 +459,7 @@ export function RegisterPage() {
                     I agree to the{" "}
                     <button
                       type="button"
+                      onClick={() => navigate("/terms-of-service")}
                       className="text-sky-600 hover:text-sky-700 font-semibold transition-colors underline-offset-2 hover:underline select-none cursor-pointer"
                     >
                       Terms of Service
@@ -466,6 +467,7 @@ export function RegisterPage() {
                     and{" "}
                     <button
                       type="button"
+                      onClick={() => navigate("/privacy-policy")}
                       className="text-sky-600 hover:text-sky-700 font-semibold transition-colors underline-offset-2 hover:underline select-none cursor-pointer"
                     >
                       Privacy Policy

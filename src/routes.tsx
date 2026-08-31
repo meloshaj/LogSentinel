@@ -56,6 +56,14 @@ export const router = createBrowserRouter([
         path: "reset-password",
         lazy: async () => ({ Component: (await import("./pages/ResetPasswordPage")).ResetPasswordPage }),
       },
+      {
+        path: "terms-of-service",
+        lazy: async () => ({ Component: (await import("./pages/TermsOfServicePage")).TermsOfServicePage }),
+      },
+      {
+        path: "privacy-policy",
+        lazy: async () => ({ Component: (await import("./pages/PrivacyPolicyPage")).PrivacyPolicyPage }),
+      },
     ],
   },
   // ── Dashboard routes (guarded, with sidebar) ──────────────────
