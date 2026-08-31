@@ -637,7 +637,11 @@ async def google_login(
         subject=idinfo.get("sub", ""),
     )
     if ext_identity is None:
-        alt_iss = "accounts.google.com" if iss == "https://accounts.google.com" else "https://accounts.google.com"
+        alt_iss = (
+            "accounts.google.com"
+            if iss == "https://accounts.google.com"
+            else "https://accounts.google.com"
+        )
         ext_identity = await ExternalIdentityRepository.get_by_provider_identity(
             db,
             provider="google",

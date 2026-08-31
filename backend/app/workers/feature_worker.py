@@ -326,7 +326,9 @@ class FeatureExtractionWorker:
             return
         try:
             asyncio.create_task(
-                self._feature_repository.persist_feature_vector("default", feature_vector)  # type: ignore
+                self._feature_repository.persist_feature_vector(
+                    "default", feature_vector
+                )  # type: ignore
             )
         except RuntimeError:
             logger.debug("No running event loop available for feature persistence")
