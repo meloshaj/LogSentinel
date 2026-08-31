@@ -2,8 +2,8 @@
 
 import abc
 import os
-import threading
 import tempfile
+import threading
 from typing import BinaryIO
 
 from botocore.exceptions import ClientError

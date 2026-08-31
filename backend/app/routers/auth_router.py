@@ -194,7 +194,7 @@ class ResetPasswordRequest(BaseModel):
     )
 
     @model_validator(mode="after")
-    def passwords_match(self) -> "ResetPasswordRequest":
+    def passwords_match(self) -> ResetPasswordRequest:
         if self.new_password != self.confirm_password:
             raise ValueError("Passwords do not match")
         return self

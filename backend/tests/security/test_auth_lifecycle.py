@@ -1026,7 +1026,6 @@ class TestPhase7SecurityFixes:
             forgot_password,
         )
         from fastapi import BackgroundTasks, Request
-        from fastapi import HTTPException
 
         mock_db = AsyncMock()
         mock_db.execute.return_value.scalar_one_or_none.return_value = (

@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.orm import UserRecord
 from ..core.email_identity import canonicalize_email
+from ..core.orm import UserRecord
 from ..core.user_status import ACTIVE, PENDING_VERIFICATION
 
 logger = logging.getLogger("logsentinel.user_repository")

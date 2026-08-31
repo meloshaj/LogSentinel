@@ -23,7 +23,6 @@ from ..core.email_identity import canonicalize_email
 from ..core.orm import UserRecord
 from ..core.user_status import ACTIVE
 from ..services.password import (
-    hash_password,
     verify_and_update_password,
 )
 

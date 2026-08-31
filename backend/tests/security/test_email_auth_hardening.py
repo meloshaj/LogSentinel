@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
 from email.message import EmailMessage
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException, Request
-
 from backend.app.core.email_identity import canonicalize_email
 from backend.app.core.settings import SMTPSettings, validate_auth_email_configuration
 from backend.app.core.user_status import SUSPENDED
 from backend.app.routers.auth_router import UserLoginRequest, login_user
 from backend.app.services import auth_cache, email
+from fastapi import HTTPException, Request
 
 
 def test_email_identity_is_canonical_at_every_boundary() -> None:
@@ -124,13 +123,13 @@ async def test_suspended_password_login_never_issues_a_token() -> None:
             new=AsyncMock(),
         ),
         patch("backend.app.routers.auth_router.create_access_token") as create_token,
+        pytest.raises(HTTPException) as exc,
     ):
-        with pytest.raises(HTTPException) as exc:
-            await login_user(
-                request,
-                UserLoginRequest(email=" Alice@Example.COM ", password="password"),
-                AsyncMock(),
-            )
+        await login_user(
+            request,
+            UserLoginRequest(email=" Alice@Example.COM ", password="password"),
+            AsyncMock(),
+        )
     assert exc.value.status_code == 403
     create_token.assert_not_called()
 

@@ -8,8 +8,8 @@ backed and stateless for machine-to-machine log ingestion.
 from __future__ import annotations
 
 import os
-from uuid import UUID
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.engine import make_url

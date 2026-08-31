@@ -53,7 +53,7 @@ def _get_or_create_metric(
         if not public_names.intersection(registered_names):
             continue
         if not isinstance(collector, metric_type):
-            raise RuntimeError(f"Prometheus metric {name!r} has a conflicting type")
+            raise TypeError(f"Prometheus metric {name!r} has a conflicting type")
         actual_labels = tuple(getattr(collector, "_labelnames", ()))
         if actual_labels != expected_labels:
             raise RuntimeError(
@@ -396,9 +396,6 @@ _INSECURE_SECRETS = frozenset(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # --- Startup: environment guardrails ---
-    from .security.auth import (
-        JWT_SECRET_KEY,
-    )
     from .core.settings import validate_auth_email_configuration
 
     environment = os.getenv("ENVIRONMENT", "development").strip().lower()
@@ -653,7 +650,7 @@ def _tenant_id(current_user: Any) -> str:
 )
 async def get_recent_logs(
     limit: int = Query(500, le=1000),
-    current_user: Any = Depends(get_current_user),
+    current_user: Any = Depends(get_current_user),  # noqa: B008
 ):
     """Fetch recent logs for dashboard backfill."""
     logs = await log_repository.get_recent_logs(  # type: ignore
@@ -673,7 +670,7 @@ async def get_logs_paginated(
     limit: int = Query(50, le=200),
     service: str | None = None,
     level: str | None = None,
-    current_user: Any = Depends(get_current_user),
+    current_user: Any = Depends(get_current_user),  # noqa: B008
 ):
     """Fetch paginated logs with optional filters."""
     return await log_repository.get_logs_paginated(  # type: ignore
@@ -721,7 +718,7 @@ async def get_topology() -> TopologyResponse:
 )
 async def get_tracking_loop_blast_radius(
     tracking_loop_id: int,
-    current_user: Any = Depends(get_current_user),
+    current_user: Any = Depends(get_current_user),  # noqa: B008
 ) -> BlastRadiusRetrievalResponse:
     """Return a persisted blast-radius analysis for one tracking-loop record."""
     row = await tracking_repository.get_tracking_loop_by_id(  # type: ignore
@@ -782,7 +779,7 @@ def _derive_severity(anomaly_score: float) -> str:
 )
 async def list_active_tracking_loops(
     limit: int = 100,
-    current_user: Any = Depends(get_current_user),
+    current_user: Any = Depends(get_current_user),  # noqa: B008
 ) -> list[dict]:
     """Return all active tracking loops for frontend backfill."""
     rows = await tracking_repository.get_active_tracking_loops(  # type: ignore
