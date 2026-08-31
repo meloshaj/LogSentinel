@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     Text,
     UniqueConstraint,
@@ -181,7 +182,6 @@ class AnomalyEventRecord(Base):
     )
     window_id: Mapped[str] = mapped_column(
         VARCHAR(128),
-        ForeignKey("feature_windows.window_id", ondelete="CASCADE"),
         nullable=False,
     )
     event_type: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
@@ -193,6 +193,14 @@ class AnomalyEventRecord(Base):
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "window_id"],
+            ["feature_windows.tenant_id", "feature_windows.window_id"],
+            ondelete="CASCADE",
+        ),
     )
 
 
