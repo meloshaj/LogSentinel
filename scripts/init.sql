@@ -282,12 +282,31 @@ CREATE TABLE IF NOT EXISTS users (
     hashed_password VARCHAR(255)    NULL,
     full_name       VARCHAR(255)    NULL,
     organization    VARCHAR(255)    NULL,
+    tenant_id       VARCHAR(64)     NOT NULL DEFAULT 'default',
+    status          VARCHAR(32)     NOT NULL DEFAULT 'active',
+    email_verified_at TIMESTAMPTZ   NULL,
+    password_changed_at TIMESTAMPTZ NULL,
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW()
+    updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_users_status CHECK (status IN ('pending_verification', 'active', 'suspended'))
 );
 
 -- Ensure hashed_password allows NULL for Google SSO users on pre-existing DB volumes
 ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'active';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ NULL;
+UPDATE users SET email_verified_at = created_at WHERE status = 'active' AND email_verified_at IS NULL;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'ck_users_status'
+    ) THEN
+        ALTER TABLE users ADD CONSTRAINT ck_users_status
+            CHECK (status IN ('pending_verification', 'active', 'suspended'));
+    END IF;
+END $$;
 
 -- Accelerates user lookups by email
 CREATE INDEX IF NOT EXISTS idx_users_email

@@ -39,13 +39,18 @@ const nodeIcons: Record<NodeType, typeof Server> = {
   queue: Radio,
 };
 
-function RadarNode({ data }: NodeProps<Node<RadarNodeData>>) {
-  const Icon = nodeIcons[data.node.type];
+export function RadarNode({ data }: NodeProps<Node<RadarNodeData>>) {
+  const Icon = nodeIcons[data.node.type] || Server;
   const root = data.status === "root";
   const affected = data.status === "affected";
   const accent = root ? "#EF4444" : affected ? "#F59E0B" : "#334155";
-  const latency = data.node.metrics?.latency_p95_ms ?? (root ? 5120 : affected ? 860 : 24);
-  const errorRate = data.node.metrics?.error_rate_pct ?? (root ? 8.4 : affected ? 2.1 : 0);
+  const latency = data.node.metrics?.latency_p95_ms;
+  const errorRate = data.node.metrics?.error_rate_pct;
+  const serviceName = data.node.name || data.node.id;
+  const metricText = (value: unknown, digits: number, suffix: string) =>
+    typeof value === "number" && Number.isFinite(value)
+      ? `${value.toFixed(digits)}${suffix}`
+      : "unavailable";
 
   return (
     <div className="relative flex h-[138px] w-[138px] items-center justify-center">
@@ -54,26 +59,26 @@ function RadarNode({ data }: NodeProps<Node<RadarNodeData>>) {
       <button
         type="button"
         onClick={() => data.onSelect(data.node.id)}
-        title={`Inspect ${data.node.name}`}
+        title={`Inspect ${serviceName}`}
         className="relative flex h-[118px] w-[118px] flex-col items-center justify-center rounded-full border bg-[#111827] px-2 text-center shadow-lg transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-[#388bfd]"
         style={{ borderColor: accent, boxShadow: root ? "0 0 28px rgba(239,68,68,0.7)" : affected ? "0 0 18px rgba(245,158,11,0.45)" : "none" }}
       >
         <span className="flex h-7 w-7 items-center justify-center rounded-full" style={{ backgroundColor: `${accent}22`, color: accent }}>
           {root ? <AlertTriangle className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
         </span>
-        <span className="mt-1 max-w-[100px] truncate font-mono text-[10px] font-bold text-[#e6edf3]">{data.node.name}</span>
+        <span className="mt-1 max-w-[100px] truncate font-mono text-[10px] font-bold text-[#e6edf3]">{serviceName}</span>
         <span className="mt-0.5 text-[8px] font-bold uppercase tracking-wide" style={{ color: accent }}>
           {root ? "Root cause" : affected ? "Cascade" : "Nominal"}
         </span>
         <div className="flex flex-col items-center mt-1 text-[8px] font-mono text-[#94a3b8]">
             <div className="flex justify-between w-full">
               <span className="text-[#8b949e]">Latency</span>
-              <span>{data.node.metrics.latency_p95_ms.toFixed(1)}ms</span>
+              <span>{metricText(latency, 1, "ms")}</span>
             </div>
             <div className="flex justify-between w-full">
               <span className="text-[#8b949e]">Error Rate</span>
-              <span className={data.node.metrics.error_rate_pct > 5 ? 'text-[#ef4444]' : 'text-[#3fb950]'}>
-                {(data.node.metrics.error_rate_pct).toFixed(2)}%
+              <span className={typeof errorRate === "number" && errorRate > 5 ? 'text-[#ef4444]' : 'text-[#94a3b8]'}>
+                {metricText(errorRate, 2, "%")}
               </span>
             </div>
         </div>
@@ -113,7 +118,7 @@ function AutoCenter({ rootId }: { rootId: string }) {
   return null;
 }
 
-export function IncidentBlastRadiusMap({ rootCause, affectedServices, onSelect }: { rootCause: string; affectedServices: string[]; onSelect: (id: string) => void }) {
+export function IncidentBlastRadiusMap({ rootCause, affectedServices, onSelect }: { rootCause: string | null; affectedServices: string[]; onSelect: (id: string) => void }) {
   const { nodes: topologyNodes, edges: topologyEdges } = useTopology();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<RadarNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<RadarEdgeData>>([]);
@@ -121,27 +126,27 @@ export function IncidentBlastRadiusMap({ rootCause, affectedServices, onSelect }
   const affected = useMemo(() => new Set(affectedServices.filter((service) => service !== rootCause)), [affectedServices, rootCause]);
 
   useEffect(() => {
-    const rootNode = topologyNodes.find((node) => node.id === rootCause) ?? {
-      id: rootCause,
-      name: rootCause,
-      type: "service" as const,
-      status: "critical" as const,
-      metrics: { latency_p95_ms: 0, error_rate_pct: 0, throughput_rps: 0 },
-      active_anomaly_id: null,
-      is_root_cause: true
-    };
-    const otherNodes = topologyNodes.filter((node) => node.id !== rootNode.id);
+    const rootNode = rootCause
+      ? topologyNodes.find((node) => node.id === rootCause)
+      : undefined;
     const center = { x: 420, y: 215 };
     const radius = 205;
     const nextNodes: Node<RadarNodeData>[] = [
-      { id: rootNode.id, type: "radar", position: center, data: { node: rootNode, status: "root", onSelect } },
-      ...otherNodes.map((node, index) => {
-        const angle = (Math.PI * 2 * index) / Math.max(otherNodes.length, 1) - Math.PI / 2;
+      ...topologyNodes.map((node, index) => {
+        const angle = (Math.PI * 2 * index) / Math.max(topologyNodes.length, 1) - Math.PI / 2;
         return {
           id: node.id,
           type: "radar",
-          position: { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius },
-          data: { node, status: affected.has(node.id) ? ("affected" as const) : ("nominal" as const), onSelect },
+          position: rootNode?.id === node.id
+            ? center
+            : { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius },
+          data: {
+            node,
+            status: rootNode?.id === node.id
+              ? ("root" as const)
+              : affected.has(node.id) ? ("affected" as const) : ("nominal" as const),
+            onSelect,
+          },
         };
       }),
     ];
@@ -149,7 +154,7 @@ export function IncidentBlastRadiusMap({ rootCause, affectedServices, onSelect }
     const nextEdges = topologyEdges
       .filter((edge) => knownIds.has(edge.source) && knownIds.has(edge.target))
       .map((edge) => {
-        const isCascade = edge.source === rootNode.id || edge.target === rootNode.id || (affected.has(edge.source) && affected.has(edge.target));
+        const isCascade = edge.source === rootNode?.id || edge.target === rootNode?.id || (affected.has(edge.source) && affected.has(edge.target));
         return {
           id: edge.id,
           source: edge.source,
@@ -179,7 +184,7 @@ export function IncidentBlastRadiusMap({ rootCause, affectedServices, onSelect }
         panOnDrag
         proOptions={{ hideAttribution: true }}
       >
-        <AutoCenter rootId={rootCause} />
+        {rootCause && topologyNodes.some((node) => node.id === rootCause) && <AutoCenter rootId={rootCause} />}
         <Background color="#1e293b" gap={22} size={1} />
         <Controls showInteractive={false} className="!border-[#334155] !bg-[#111827] [&>button]:!border-[#334155] [&>button]:!bg-[#111827] [&>button]:!fill-[#cbd5e1]" />
       </ReactFlow>

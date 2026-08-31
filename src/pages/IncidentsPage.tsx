@@ -5,6 +5,7 @@ import { IncidentBlastRadiusMap } from "../components/topology/IncidentBlastRadi
 import { Bell, CheckCircle, Clock, Flame, XCircle, AlertTriangle, ChevronRight, X, Filter, Activity, Network, Target, ShieldAlert, Cpu, Layers } from "lucide-react";
 import { useState, useMemo } from "react";
 import { EmptyState } from "../components/common/EmptyState";
+import { resolveRootService } from "../utils/incident";
 import { AnomalyDrawer } from "../components/dashboard/AnomalyDrawer";
 
 const SEVERITY_CONFIG = {
@@ -68,29 +69,49 @@ export function IncidentsPage() {
   // Derive incidents from live tracking loops and performance alerts
   const incidents: any[] = useMemo(() => {
     const list: any[] = [
-      ...activeTrackingLoops.map(loop => ({
-        ...loop,
-        id: loop.window_id,
-        service: loop.suspected_root_service || "multiple-services",
-        severity: (loop.severity === "medium" || loop.severity === "low" || loop.severity === "high" || loop.severity === "critical" ? loop.severity : "medium"),
-        timestamp: (loop as any).created_at ? new Date((loop as any).created_at).toLocaleTimeString() : new Date().toLocaleTimeString(),
-        description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(2)} across dependency cascade.`,
-        status: (loop.status === "open" || loop.status === "investigating" || loop.status === "resolved" ? loop.status : "open")
-      })),
-      ...latestPerformanceEvents.map(event => ({
+      ...activeTrackingLoops.map((loop) => {
+        const rootService = resolveRootService(loop);
+        return {
+          ...loop,
+          id: loop.window_id,
+          service: rootService || "Root cause unavailable",
+          severity:
+            loop.severity === "medium" || loop.severity === "low" || loop.severity === "high" || loop.severity === "critical"
+              ? loop.severity
+              : "medium",
+          timestamp: (loop as any).created_at
+            ? new Date((loop as any).created_at).toLocaleTimeString()
+            : new Date().toLocaleTimeString(),
+          description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(2)} across dependency cascade.`,
+          status:
+            loop.status === "open" || loop.status === "investigating" || loop.status === "resolved"
+              ? loop.status
+              : "open",
+        };
+      }),
+      ...latestPerformanceEvents.map((event) => ({
         id: event.metric_name,
         service: "infrastructure",
-        severity: (event.severity === "medium" || event.severity === "low" || event.severity === "high" || event.severity === "critical" ? event.severity : "medium"),
+        severity:
+          event.severity === "medium" || event.severity === "low" || event.severity === "high" || event.severity === "critical"
+            ? event.severity
+            : "medium",
         timestamp: new Date().toLocaleTimeString(),
         description: `Performance alert: ${event.metric_name} is ${event.current_value.toFixed(0)} (threshold ${event.threshold})`,
-        status: "open"
-      }))
+        status: "open",
+      })),
     ];
     return list;
   }, [activeTrackingLoops, latestPerformanceEvents]);
 
   const filteredIncidents = selectedServiceFilter
-    ? incidents.filter((i) => i.service === selectedServiceFilter)
+    ? incidents.filter(
+        (i) =>
+          i.service === selectedServiceFilter ||
+          (i.blast_radius &&
+            Array.isArray(i.blast_radius) &&
+            i.blast_radius.some((b: any) => b.service_name === selectedServiceFilter)),
+      )
     : incidents;
 
   const open = filteredIncidents.filter((i) => i.status !== "resolved");
@@ -98,16 +119,31 @@ export function IncidentsPage() {
 
   // Primary active incident summary for HUD overlay
   const primaryLoop = activeTrackingLoops[0];
-  const primaryRootCause = primaryLoop?.suspected_root_service || (open[0]?.service !== "multiple-services" ? open[0]?.service : null);
-  const blastNodes = (primaryLoop?.blast_radius && Array.isArray(primaryLoop.blast_radius)) ? primaryLoop.blast_radius : [];
-  const confidenceScore = primaryLoop?.anomaly_score ? Math.min(99, Math.round(primaryLoop.anomaly_score > 1 ? primaryLoop.anomaly_score : primaryLoop.anomaly_score * 100)) : 94;
-  const fleetImpactPercent = blastNodes.length > 0 ? Math.min(100, Math.round((blastNodes.length / 5) * 100)) : (primaryRootCause ? 20 : 0);
+  const blastNodes =
+    primaryLoop?.blast_radius && Array.isArray(primaryLoop.blast_radius) ? primaryLoop.blast_radius : [];
+  const primaryRootCause =
+    (primaryLoop ? resolveRootService(primaryLoop) : null) ||
+    blastNodes.find((b: any) => b.impact_classification === "root")?.service_name ||
+    blastNodes[0]?.service_name ||
+    (open[0]?.service !== "Root cause unavailable" ? open[0]?.service : null);
+  const confidenceScore = primaryLoop?.anomaly_score
+    ? Math.min(99, Math.round(primaryLoop.anomaly_score > 1 ? primaryLoop.anomaly_score : primaryLoop.anomaly_score * 100))
+    : 94;
+  const fleetImpactPercent =
+    blastNodes.length > 0 ? Math.min(100, Math.round((blastNodes.length / 5) * 100)) : primaryRootCause ? 20 : 0;
 
   // Filtered service logs for inspector panel
   const inspectedLogs = useMemo(() => {
     if (!selectedServiceFilter) return [];
-    return filteredLogs.filter(l => l.service === selectedServiceFilter).slice(-8).reverse();
-  }, [filteredLogs, selectedServiceFilter]);
+    return filteredLogs
+      .filter(
+        (l) =>
+          l.service === selectedServiceFilter ||
+          blastNodes.some((b: any) => b.service_name === l.service),
+      )
+      .slice(-8)
+      .reverse();
+  }, [blastNodes, filteredLogs, selectedServiceFilter]);
 
   if (incidents.length === 0) {
     return (
@@ -226,7 +262,7 @@ export function IncidentsPage() {
 
         <div className="h-[480px] w-full relative bg-[#0d1117]">
           <IncidentBlastRadiusMap
-            rootCause={primaryRootCause || "api-gateway"}
+            rootCause={primaryRootCause || null}
             affectedServices={blastNodes.map((node) => node.service_name)}
             onSelect={setSelectedServiceFilter}
           />

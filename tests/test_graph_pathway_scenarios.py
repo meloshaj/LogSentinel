@@ -95,7 +95,9 @@ class CapturingTrackingRepository:
             "created_at": BASE_TIME,
         }
 
-    async def get_tracking_loop_by_id(self, tracking_loop_id: int) -> dict[str, Any] | None:
+    async def get_tracking_loop_by_id(
+        self, tracking_loop_id: int, tenant_id: str = "default"
+    ) -> dict[str, Any] | None:
         return self.rows.get(tracking_loop_id)
 
 

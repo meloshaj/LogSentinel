@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import json
+import os
 import time
 import uuid
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ import websockets
 
 API_URL = "http://localhost:8000/api/v1/ingest/bulk"
 WS_URL = "ws://localhost:8000/ws/telemetry"
-API_KEY = "ls_live_demo_key_123"
+API_KEY = os.getenv("SMOKE_TEST_API_KEY", "")
 
 class LatencyProbe:
     def __init__(self, duration: int, probe_interval: float):

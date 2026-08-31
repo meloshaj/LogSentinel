@@ -57,6 +57,12 @@ class FeatureExtractionWorker:
         self.extraction_interval_seconds = extraction_interval_seconds
 
         self.extractor = SlidingWindowExtractor(self.window_config)
+        # A single process can consume records for multiple tenants. Keep a
+        # separate time-window state per tenant so evidence and anomaly scores
+        # can never be built from another tenant's logs.
+        self._extractors: dict[str, SlidingWindowExtractor] = {
+            "default": self.extractor
+        }
         self.anomaly_model_path = (
             Path(anomaly_model_path) if anomaly_model_path is not None else None
         )
@@ -130,17 +136,24 @@ class FeatureExtractionWorker:
             List of extracted FeatureVector objects
         """
         try:
-            # Get all windows ready for feature extraction
-            windows = self.extractor.get_pending_windows(current_time=current_time)
+            windows_by_tenant = {
+                tenant_id: extractor.get_pending_windows(current_time=current_time)
+                for tenant_id, extractor in self._extractors.items()
+            }
+            pending_windows = [
+                (tenant_id, window)
+                for tenant_id, windows in windows_by_tenant.items()
+                for window in windows
+            ]
 
-            if not windows:
+            if not pending_windows:
                 return []
 
             features: list[FeatureVector] = []
 
-            for window in windows:
+            for tenant_id, window in pending_windows:
                 try:
-                    feature_vector = self.extractor.extract_features(window)
+                    feature_vector = self._extractors[tenant_id].extract_features(window)
                     try:
                         if (
                             self.anomaly_detector is not None
@@ -175,7 +188,7 @@ class FeatureExtractionWorker:
                 logger.info(
                     "Extracted %d feature vectors from %d windows",
                     len(features),
-                    len(windows),
+                    len(pending_windows),
                 )
 
             return features
@@ -190,11 +203,17 @@ class FeatureExtractionWorker:
 
         This is the main integration point with the Drain3 pipeline.
         """
-        self.extractor.add_log(log)
+        tenant_id = log.tenant_id or "default"
+        extractor = self._extractors.get(tenant_id)
+        if extractor is None:
+            extractor = SlidingWindowExtractor(self.window_config)
+            self._extractors[tenant_id] = extractor
+        extractor.add_log(log)
 
     def add_parsed_logs(self, logs: list[ParsedLog]) -> None:
         """Add multiple parsed logs to the buffer."""
-        self.extractor.add_logs(logs)
+        for log in logs:
+            self.add_parsed_log(log)
 
     def get_recent_features(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent feature vectors as dicts, newest first."""
@@ -238,7 +257,7 @@ class FeatureExtractionWorker:
 
     def clear_buffers(self) -> dict[str, int]:
         """Clear all internal buffers (for testing/debugging)."""
-        logs_removed = self.extractor.clear_buffer()
+        logs_removed = sum(extractor.clear_buffer() for extractor in self._extractors.values())
         features_removed = len(self._feature_buffer)
         self._feature_buffer.clear()
 
@@ -327,7 +346,7 @@ class FeatureExtractionWorker:
         try:
             asyncio.create_task(
                 self._feature_repository.persist_feature_vector(
-                    "default", feature_vector
+                    feature_vector.tenant_id, feature_vector
                 )  # type: ignore
             )
         except RuntimeError:

@@ -32,6 +32,7 @@ tracking_loops_table = Table(
     "tracking_loops",
     metadata,
     Column("id", Integer, primary_key=True),
+    Column("tenant_id", VARCHAR(64), nullable=False),
     Column("window_id", VARCHAR(128), nullable=False),
     Column("anomaly_score", Float, nullable=False),
     Column("status", VARCHAR(32), nullable=False, server_default="'ACTIVE'"),

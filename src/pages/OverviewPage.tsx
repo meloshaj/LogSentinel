@@ -9,6 +9,7 @@ import { useNavigate } from "react-router";
 import { EmptyState } from "../components/common/EmptyState";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { AddDataSourceButton } from "../components/integrations/DataSourceModal";
+import { resolveRootService } from "../utils/incident";
 
 const BenchmarkingHUD = import.meta.env.VITE_ENABLE_BENCHMARKING === 'true'
   ? React.lazy(() => import("../components/dashboard/BenchmarkingHUD").then(m => ({ default: m.BenchmarkingHUD })))
@@ -45,7 +46,7 @@ export function OverviewPage() {
   
   const openIncidents = visibleLoops.map((loop) => ({
     id: loop.window_id,
-    service: loop.suspected_root_service || "multiple-services",
+    service: resolveRootService(loop) || "Root cause unavailable",
     timestamp: new Date().toLocaleTimeString(),
     description: `Anomaly detected with score ${loop.anomaly_score.toFixed(2)}`,
     ...loop,

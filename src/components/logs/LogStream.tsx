@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Circle, Pause, Play, Terminal } from "lucide-react";
 import { LOG_LEVEL_COLORS, SERVICE_TEXT_COLORS } from "../../constants/statusConfig";
 import { useLiveLogs } from "../../hooks/useLiveLogs";
+import { filterLogEntries } from "../../utils/logFilters";
 import type { LogEntry } from "../../types/monitoring";
 
 const LOG_FILTERS = ["ALL", "ERROR", "WARN", "INFO", "DEBUG"] as const;
@@ -35,9 +36,17 @@ function LogRow({ entry, isNew }: { entry: LogEntry; isNew: boolean }) {
   );
 }
 
-export function LogStream() {
+export interface LogStreamProps {
+  serviceFilter?: string;
+  searchQuery?: string;
+}
+
+export function LogStream({ serviceFilter = "All Services", searchQuery = "" }: LogStreamProps) {
   const { connectionState, connectionUrl, filter, filteredLogs, newIds, paused, setFilter, setPaused } = useLiveLogs();
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const displayedLogs = filterLogEntries(filteredLogs, serviceFilter, searchQuery);
+
   const connectionLabel =
     connectionState === "connected" ? "CONNECTED" : connectionState === "connecting" ? "CONNECTING" : connectionState === "disconnected" ? "DISCONNECTED" : "ERROR";
   const connectionTone = connectionState === "connected" ? "text-[#3fb950]" : connectionState === "connecting" ? "text-[#d29922]" : "text-[#f85149]";
@@ -46,7 +55,7 @@ export function LogStream() {
     if (!paused && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [filteredLogs, paused]);
+  }, [displayedLogs, paused]);
 
   return (
     <div className="flex flex-col h-full rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden">
@@ -96,14 +105,14 @@ export function LogStream() {
         style={{ scrollBehavior: "smooth" }}
         aria-live={paused ? "off" : "polite"}
       >
-        {filteredLogs.map((entry) => (
+        {displayedLogs.map((entry) => (
           <LogRow key={entry.id} entry={entry} isNew={newIds.has(entry.id)} />
         ))}
       </div>
 
       <div className="flex items-center justify-between px-4 py-2 border-t border-[#21262d] shrink-0">
         <span className="text-[#484f58]" style={{ fontSize: "10px" }}>
-          {filteredLogs.length} entries - auto-scroll {paused ? "paused" : "enabled"}
+          {displayedLogs.length} entries - auto-scroll {paused ? "paused" : "enabled"}
         </span>
         <span className="text-[#484f58]" style={{ fontSize: "10px" }}>
           Backend stream

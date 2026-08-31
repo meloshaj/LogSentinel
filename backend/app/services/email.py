@@ -8,17 +8,22 @@ Security invariants:
     * Plaintext codes and tokens are NEVER logged.
     * Recipient email addresses are logged as truncated hashes.
     * SMTP failures are caught and logged — they never crash the caller.
-    * Each function retries up to 3 times with exponential backoff.
+    * Transient transport failures retry up to 3 times with exponential
+      backoff; permanent SMTP/configuration failures stop immediately.
 """
 
 from __future__ import annotations
 
 import hashlib
+import html
 import logging
 import os
 import smtplib
+import socket
+import ssl
 import time
 from email.message import EmailMessage
+from email.utils import formataddr
 
 from ..core.settings import get_smtp_settings
 
@@ -34,9 +39,49 @@ def _email_hash(email: str) -> str:
 
 
 def _frontend_url() -> str:
-    """Return the primary frontend URL from environment."""
+    """Return a validated trusted frontend origin for reset links."""
     urls = os.getenv("FRONTEND_URL", "http://localhost:8080")
-    return urls.split(",")[0].strip()
+    candidate = urls.split(",")[0].strip().rstrip("/")
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(candidate)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("FRONTEND_URL is not a valid trusted origin")
+    if (
+        os.getenv("ENVIRONMENT", "development").strip().lower() == "production"
+        and parsed.scheme != "https"
+    ):
+        raise ValueError("FRONTEND_URL must use HTTPS in production")
+    return candidate
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Retry transport failures, but stop immediately on permanent errors."""
+    if isinstance(
+        exc,
+        (
+            smtplib.SMTPAuthenticationError,
+            smtplib.SMTPNotSupportedError,
+            smtplib.SMTPHeloError,
+            smtplib.SMTPRecipientsRefused,
+            ValueError,
+        ),
+    ):
+        return False
+    if isinstance(exc, smtplib.SMTPResponseException) and exc.smtp_code >= 500:
+        return False
+    return isinstance(
+        exc,
+        (smtplib.SMTPException, OSError, socket.timeout, TimeoutError, ssl.SSLError),
+    )
 
 
 def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> None:
@@ -46,8 +91,6 @@ def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> None:
     thread (via FastAPI BackgroundTasks).
     """
     settings = get_smtp_settings()
-    last_error: Exception | None = None
-
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
             with smtplib.SMTP(settings.host, settings.port, timeout=10) as server:
@@ -65,26 +108,24 @@ def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> None:
                 )
                 return
         except Exception as exc:
-            last_error = exc
-            delay = _BACKOFF_BASE**attempt
             logger.warning(
-                "Email dispatch attempt %d/%d failed for %s… (%s: %s). "
-                "Retrying in %ds.",
+                "Email dispatch attempt %d/%d failed for recipient=%s (%s; retryable=%s)",
                 attempt,
                 _MAX_RETRIES,
                 recipient_hash,
                 type(exc).__name__,
-                exc,
-                delay,
+                _is_retryable(exc),
             )
-            if attempt < _MAX_RETRIES:
+            if _is_retryable(exc) and attempt < _MAX_RETRIES:
+                delay = _BACKOFF_BASE**attempt
                 time.sleep(delay)
+            else:
+                break
 
     logger.error(
-        "Failed to send email to %s… after %d attempts. Last error: %s",
+        "Failed to send email to recipient=%s after %d attempts",
         recipient_hash,
-        _MAX_RETRIES,
-        last_error,
+        attempt,
     )
 
 
@@ -126,7 +167,7 @@ def send_verification_email(email_to: str, code: str) -> None:
 
     msg = EmailMessage()
     msg["Subject"] = "LogSentinel — Verify your email address"
-    msg["From"] = settings.emails_from_email
+    msg["From"] = formataddr((settings.emails_from_name, settings.emails_from_email))
     msg["To"] = email_to
     msg.set_content(plain_body)
     msg.add_alternative(html_body, subtype="html")
@@ -148,7 +189,10 @@ def send_password_reset_email(email_to: str, token: str) -> None:
     settings = get_smtp_settings()
     recipient_hash = _email_hash(email_to)
     frontend = _frontend_url()
-    reset_url = f"{frontend}/reset-password?token={token}"
+    from urllib.parse import quote
+
+    reset_url = f"{frontend}/reset-password?token={quote(token, safe='')}"
+    escaped_reset_url = html.escape(reset_url, quote=True)
 
     plain_body = (
         f"You have requested a password reset for your LogSentinel account.\n\n"
@@ -165,7 +209,7 @@ def send_password_reset_email(email_to: str, token: str) -> None:
   <h2 style="color: #1a1a2e;">Password Reset Request</h2>
   <p>You have requested a password reset for your LogSentinel account.</p>
   <div style="text-align: center; margin: 24px 0;">
-    <a href="{reset_url}" style="background: #4f46e5; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Reset Password</a>
+  <a href="{escaped_reset_url}" style="background: #4f46e5; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Reset Password</a>
   </div>
   <p style="color: #666; font-size: 14px;">This link expires in <strong>15 minutes</strong> and can only be used once.</p>
   <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
@@ -176,7 +220,7 @@ def send_password_reset_email(email_to: str, token: str) -> None:
 
     msg = EmailMessage()
     msg["Subject"] = "LogSentinel — Password Reset Request"
-    msg["From"] = settings.emails_from_email
+    msg["From"] = formataddr((settings.emails_from_name, settings.emails_from_email))
     msg["To"] = email_to
     msg.set_content(plain_body)
     msg.add_alternative(html_body, subtype="html")
@@ -223,7 +267,7 @@ def send_password_changed_notification(email_to: str) -> None:
 
     msg = EmailMessage()
     msg["Subject"] = "LogSentinel — Your password was changed"
-    msg["From"] = settings.emails_from_email
+    msg["From"] = formataddr((settings.emails_from_name, settings.emails_from_email))
     msg["To"] = email_to
     msg.set_content(plain_body)
     msg.add_alternative(html_body, subtype="html")

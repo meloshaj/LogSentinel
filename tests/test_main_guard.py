@@ -13,6 +13,6 @@ async def test_production_jwt_guard(monkeypatch):
     
     app = FastAPI()
     
-    with pytest.raises(RuntimeError, match="FATAL: JWT_SECRET_KEY is missing or set to an insecure development"):
+    with pytest.raises(RuntimeError, match="FATAL: JWT_SECRET_KEY is missing or set to an insecure value"):
         async with lifespan(app):
             pass

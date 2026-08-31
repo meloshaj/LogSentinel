@@ -182,40 +182,10 @@ export function RegisterPage() {
         return;
       }
 
-      // Auto-authenticate user after successful registration
-      const loginResponse = await fetch(`${apiBase}/api/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!loginResponse.ok) {
-        setErrors({
-          submit: await getAuthErrorMessage(
-            loginResponse,
-            "Account created, but automatic sign-in failed. Please sign in.",
-          ),
-        });
-        setLoading(false);
-        return;
-      }
-
-      const loginData = await loginResponse.json();
-      if (typeof loginData.access_token !== "string" || !loginData.access_token) {
-        setErrors({
-          submit: "Account created, but the authentication server returned an invalid token. Please sign in.",
-        });
-        setLoading(false);
-        return;
-      }
-
-      setAuthToken(loginData.access_token);
       setLoading(false);
-      setSuccess(true);
-
-      setTimeout(() => {
-        navigate("/");
-      }, 1000);
+      navigate(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`, {
+        replace: true,
+      });
     } catch {
       setErrors({ submit: "Unable to connect to authentication server" });
       setLoading(false);
@@ -599,4 +569,3 @@ export function RegisterPage() {
     </motion.div>
   );
 }
-

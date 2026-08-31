@@ -17,9 +17,9 @@ _backend_dir = _worker_dir.parents[1]
 if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
-from app.core.settings import get_database_settings
-from app.ml.anomaly_detector import IsolationForestAnomalyDetector
-from app.models import FeatureVector
+from ..core.settings import get_database_settings
+from ..ml.anomaly_detector import IsolationForestAnomalyDetector
+from ..models import FeatureVector
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"

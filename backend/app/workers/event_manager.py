@@ -199,6 +199,7 @@ class EventManager:
         # Persist to database
         try:
             await self.tracking_repository.persist_tracking_loop(  # type: ignore
+                tenant_id=feature_vector.tenant_id,
                 window_id=feature_vector.window_id,
                 anomaly_score=anomaly_score,
                 status="ACTIVE",
@@ -243,14 +244,6 @@ class EventManager:
             if self.benchmarking_collector:
                 payload["system_health"] = (
                     self.benchmarking_collector.get_health_metrics()
-                )
-
-            if not payload.get("suspected_root_service"):
-                service_dist = feature_vector.service_distribution
-                payload["suspected_root_service"] = (
-                    max(service_dist.items(), key=lambda x: x[1])[0]
-                    if service_dist
-                    else "multiple-services"
                 )
 
             await self.telemetry_broadcaster.broadcast(

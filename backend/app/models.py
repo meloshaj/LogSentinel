@@ -79,6 +79,11 @@ class ParsedLog(BaseModel):
         None,
         description="Distributed trace correlation identifier",
     )
+    tenant_id: str = Field(
+        default="default",
+        min_length=1,
+        description="Authoritative tenant assigned by the ingestion gateway",
+    )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional structured metadata",
@@ -193,6 +198,11 @@ class FeatureVector(BaseModel):
     window_end: datetime | None = Field(
         None,
         description="Exclusive end of the source window",
+    )
+    tenant_id: str = Field(
+        default="default",
+        min_length=1,
+        description="Tenant whose logs produced this feature window",
     )
 
     # Statistical features

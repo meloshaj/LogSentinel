@@ -34,8 +34,11 @@ from backend.app.security.auth import get_current_user
 @pytest.fixture(scope="module")
 def postgres_url():
     """Spin up a Postgres container and yield the async connection URL."""
-    container = PostgresContainer("postgres:15-alpine")
-    container.start()
+    try:
+        container = PostgresContainer("postgres:15-alpine")
+        container.start()
+    except Exception as exc:
+        pytest.skip(f"Docker is unavailable for PostgreSQL integration tests: {exc}")
 
     # Generate the async connection URL
     url = container.get_connection_url().replace(

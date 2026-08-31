@@ -1,6 +1,7 @@
 import asyncio
 import asyncpg
 import json
+import os
 import time
 import random
 import uuid
@@ -8,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Tuple, Any
 
 # Connection Settings
-DB_DSN = "postgres://logsentinel:logsentinel_secret@localhost:5432/logsentinel_db"
+DB_DSN = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_DSN", "")
 
 # Benchmark Settings
 CONCURRENCY = 10
@@ -54,8 +55,9 @@ def generate_batch(count: int, historical: bool = False) -> List[Tuple[Any, ...]
         template_text = None
         
         batch.append((
-            log_id, ts, service, raw_message, template_id, template_text, PARAMS_JSON,
-            level, "stress-test", "benchmark", f"corr-{random.randint(1, 10000)}", metadata, ts, ts
+            "default", log_id, ts, service, raw_message, template_id, template_text,
+            PARAMS_JSON, level, "stress-test", "benchmark",
+            f"corr-{random.randint(1, 10000)}", metadata, ts, ts, ts
         ))
     return batch
 
@@ -70,9 +72,10 @@ async def producer_task(pool: asyncpg.Pool, num_batches: int):
                     "logs",
                     records=batch,
                     columns=[
-                        "id", "timestamp", "service", "raw_message", "template_id", 
-                        "template_text", "parameters", "level", "source", "environment", 
-                        "correlation_id", "metadata", "parsed_at", "created_at"
+                        "tenant_id", "id", "timestamp", "service", "raw_message",
+                        "template_id", "template_text", "parameters", "level", "source",
+                        "environment", "correlation_id", "metadata", "parsed_at",
+                        "created_at", "ingested_at"
                     ]
                 )
             
@@ -95,9 +98,10 @@ async def background_retention_task(pool: asyncpg.Pool):
                 "logs",
                 records=historical_batch,
                 columns=[
-                    "id", "timestamp", "service", "raw_message", "template_id", 
-                    "template_text", "parameters", "level", "source", "environment", 
-                    "correlation_id", "metadata", "parsed_at", "created_at"
+                    "tenant_id", "id", "timestamp", "service", "raw_message",
+                    "template_id", "template_text", "parameters", "level", "source",
+                    "environment", "correlation_id", "metadata", "parsed_at",
+                    "created_at", "ingested_at"
                 ]
             )
         print("[Retention Task] Inserted historical logs. Chunk created.")
@@ -120,6 +124,9 @@ async def background_retention_task(pool: asyncpg.Pool):
         print(f"[Retention Task] Failed to drop chunks: {e}")
 
 async def run_benchmark():
+    if not DB_DSN:
+        raise RuntimeError("Set DATABASE_URL or POSTGRES_DSN before running the benchmark")
+
     print("Connecting to PostgreSQL/TimescaleDB...")
     pool = await asyncpg.create_pool(dsn=DB_DSN, min_size=CONCURRENCY+2, max_size=CONCURRENCY+5)
     

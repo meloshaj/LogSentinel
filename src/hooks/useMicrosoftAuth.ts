@@ -152,7 +152,7 @@ export function useMicrosoftAuth() {
               ...loginRequest,
               account,
             });
-            microsoftAccessToken = silentResponse.idToken;
+            microsoftAccessToken = silentResponse.accessToken || "";
           } catch (silentError) {
             if (!(silentError instanceof InteractionRequiredAuthError)) {
               throw silentError;
@@ -162,7 +162,7 @@ export function useMicrosoftAuth() {
               ...loginRequest,
               account,
             });
-            microsoftAccessToken = popupResponse.idToken;
+            microsoftAccessToken = popupResponse.accessToken || "";
             instance.setActiveAccount(popupResponse.account ?? account);
           }
         } else {
@@ -179,7 +179,7 @@ export function useMicrosoftAuth() {
           }
 
           instance.setActiveAccount(loginResponse.account);
-          microsoftAccessToken = loginResponse.idToken;
+          microsoftAccessToken = loginResponse.accessToken || "";
 
           if (!microsoftAccessToken) {
             try {
@@ -187,7 +187,7 @@ export function useMicrosoftAuth() {
                 ...loginRequest,
                 account: loginResponse.account,
               });
-              microsoftAccessToken = silentResponse.idToken;
+              microsoftAccessToken = silentResponse.accessToken || "";
             } catch (silentError) {
               if (!(silentError instanceof InteractionRequiredAuthError)) {
                 throw silentError;
@@ -197,7 +197,7 @@ export function useMicrosoftAuth() {
                 ...loginRequest,
                 account: loginResponse.account,
               });
-              microsoftAccessToken = popupResponse.idToken;
+              microsoftAccessToken = popupResponse.accessToken || "";
               instance.setActiveAccount(
                 popupResponse.account ?? loginResponse.account,
               );
@@ -213,7 +213,7 @@ export function useMicrosoftAuth() {
         }
 
         const apiBase = (
-          import.meta.env.VITE_API_URL || ""
+          import.meta.env.VITE_API_URL || "http://localhost:8000"
         ).replace(/\/+$/, "");
         const response = await fetch(`${apiBase}/api/auth/microsoft`, {
           method: "POST",

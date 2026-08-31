@@ -34,6 +34,7 @@ async def test_connected_client_receives_broadcast_event() -> None:
     websocket = FakeWebSocket()
     event = telemetry_event("log.parsed", {"service": "api-gateway"})
 
+    await websocket.accept()
     await manager.connect(websocket)  # type: ignore[arg-type]
     await manager.broadcast(event)
     

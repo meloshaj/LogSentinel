@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from uuid import UUID
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.engine import make_url
@@ -59,6 +60,10 @@ class SMTPSettings(BaseModel):
         default="noreply@logsentinel.local",
         description="Sender email address (env: EMAILS_FROM_EMAIL)",
     )
+    emails_from_name: str = Field(
+        default="LogSentinel",
+        description="Sender display name (env: EMAILS_FROM_NAME)",
+    )
 
 
 def get_smtp_settings() -> SMTPSettings:
@@ -68,7 +73,42 @@ def get_smtp_settings() -> SMTPSettings:
         user=os.getenv("SMTP_USER", ""),
         password=os.getenv("SMTP_PASSWORD", ""),
         emails_from_email=os.getenv("EMAILS_FROM_EMAIL", "noreply@logsentinel.local"),
+        emails_from_name=os.getenv("EMAILS_FROM_NAME", "LogSentinel"),
     )
+
+
+def validate_auth_email_configuration() -> None:
+    """Fail closed when production email/reset-link configuration is unsafe."""
+    environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+    if environment != "production":
+        return
+
+    frontend_urls = get_core_settings().frontend_url
+    if not frontend_urls:
+        raise RuntimeError("FRONTEND_URL must be configured in production")
+    for value in frontend_urls:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "https"
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+        ):
+            raise RuntimeError("FRONTEND_URL must contain HTTPS origins only in production")
+
+    smtp = get_smtp_settings()
+    if (
+        not smtp.host.strip()
+        or smtp.host.strip().lower() in {"localhost", "127.0.0.1", "::1"}
+        or smtp.port == 1025
+        or not smtp.user.strip()
+        or not smtp.password
+        or not smtp.emails_from_email.strip()
+    ):
+        raise RuntimeError(
+            "SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, and EMAILS_FROM_EMAIL "
+            "must be configured for production email authentication"
+        )
 
 
 def _database_env(primary: str, *aliases: str, default: str) -> str:

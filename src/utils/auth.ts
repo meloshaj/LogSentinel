@@ -60,7 +60,22 @@ export function isTrustedBackendUrl(value: string | URL): boolean {
   const allowedOrigins = new Set<string>();
   if (typeof window !== "undefined") {
     const pageOrigin = normalizedOrigin(window.location.origin);
-    if (pageOrigin) allowedOrigins.add(pageOrigin);
+    if (pageOrigin) {
+      allowedOrigins.add(pageOrigin);
+      try {
+        const parsed = new URL(window.location.origin);
+        if (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") {
+          allowedOrigins.add("http://localhost:8000");
+          allowedOrigins.add("http://127.0.0.1:8000");
+          allowedOrigins.add("http://localhost:3000");
+          allowedOrigins.add("http://127.0.0.1:3000");
+          allowedOrigins.add("http://localhost:5173");
+          allowedOrigins.add("http://127.0.0.1:5173");
+        }
+      } catch {
+        /* ignore parsing error */
+      }
+    }
   }
 
   for (const configured of [import.meta.env.VITE_API_URL, import.meta.env.VITE_WS_URL]) {

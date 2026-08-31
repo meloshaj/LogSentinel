@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.orm import UserRecord
+from ..core.email_identity import canonicalize_email
 from ..core.user_status import ACTIVE, PENDING_VERIFICATION
 
 logger = logging.getLogger("logsentinel.user_repository")
@@ -24,7 +25,7 @@ class UserRepository:
     @staticmethod
     async def get_user_by_email(db: AsyncSession, email: str) -> UserRecord | None:
         """Retrieve a user by their unique email address."""
-        stmt = select(UserRecord).where(UserRecord.email == email)
+        stmt = select(UserRecord).where(UserRecord.email == canonicalize_email(email))
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -33,7 +34,11 @@ class UserRepository:
         db: AsyncSession, email: str
     ) -> UserRecord | None:
         """Retrieve a user by their unique email address with a row-level lock."""
-        stmt = select(UserRecord).where(UserRecord.email == email).with_for_update()
+        stmt = (
+            select(UserRecord)
+            .where(UserRecord.email == canonicalize_email(email))
+            .with_for_update()
+        )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -51,16 +56,18 @@ class UserRepository:
         hashed_password: str | None = None,
         full_name: str | None = None,
         organization: str | None = None,
+        tenant_id: str = "default",
         status: str = ACTIVE,
         commit: bool = True,
     ) -> UserRecord:
         """Persist a user, optionally leaving commit control to the caller."""
         now = datetime.now(timezone.utc)
         new_user = UserRecord(
-            email=email.strip().lower(),
+            email=canonicalize_email(email),
             hashed_password=hashed_password,
             full_name=full_name,
             organization=organization,
+            tenant_id=tenant_id,
             status=status,
             email_verified_at=now if status == ACTIVE else None,
         )
@@ -85,7 +92,7 @@ class UserRepository:
         user.hashed_password = hashed_password
         await db.commit()
         await db.refresh(user)
-        logger.info("Password updated for user: %s", user.email)
+        logger.info("Password updated for user_id=%s", user.id)
         return user
 
     @staticmethod
@@ -94,11 +101,14 @@ class UserRepository:
 
         Sets ``status = 'active'`` and records ``email_verified_at``.
         """
+        if user.status != PENDING_VERIFICATION:
+            raise ValueError("Only pending-verification users can be activated")
+
         user.status = ACTIVE
         user.email_verified_at = datetime.now(timezone.utc).replace(microsecond=0)
         await db.commit()
         await db.refresh(user)
-        logger.info("User activated: id=%s email=%s", user.id, user.email)
+        logger.info("User activated: id=%s", user.id)
         return user
 
     @staticmethod

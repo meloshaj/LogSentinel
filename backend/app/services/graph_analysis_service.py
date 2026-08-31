@@ -112,6 +112,7 @@ class GraphAnalysisService:
         calculated = _normalize_datetime(calculated_at or observed_at)
         lookback_start = observed_at - timedelta(seconds=self.settings.lookback_seconds)
         anomaly_contexts = await self.feature_repository.get_recent_anomaly_contexts(  # type: ignore
+            tenant_id=feature_vector.tenant_id,
             start_time=lookback_start,
             end_time=observed_at,
             limit=self.settings.max_anomaly_events,
@@ -122,6 +123,7 @@ class GraphAnalysisService:
             contexts=contexts,
             start_time=lookback_start,
             end_time=observed_at,
+            tenant_id=feature_vector.tenant_id,
         )
         if not evidence:
             logger.debug("Graph analysis skipped: no anomaly evidence")
@@ -150,6 +152,7 @@ class GraphAnalysisService:
         contexts: Sequence[Mapping[str, Any]],
         start_time: datetime,
         end_time: datetime,
+        tenant_id: str = "default",
     ) -> list[ServiceAnomalyEvidence]:
         """Build one normalized evidence record per service."""
         accumulators: dict[str, _ServiceEvidenceAccumulator] = {}
@@ -186,6 +189,7 @@ class GraphAnalysisService:
 
         correlation_ids = _correlation_ids_from_contexts(contexts)
         log_rows = await self.log_repository.get_recent_correlation_evidence(  # type: ignore
+            tenant_id=tenant_id,
             start_time=start_time,
             end_time=end_time,
             services=sorted(service_names),

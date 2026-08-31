@@ -20,14 +20,14 @@ import asyncio
 import hashlib
 import logging
 import os
-import random
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError, model_validator
 from sqlalchemy.exc import IntegrityError
 
 from ..core.database import AsyncSessionDep
+from ..core.email_identity import canonicalize_email
 from ..core.orm import UserRecord
 from ..core.settings import (
     get_email_verification_settings,
@@ -35,7 +35,7 @@ from ..core.settings import (
     get_microsoft_auth_settings,
     get_password_reset_settings,
 )
-from ..core.user_status import ACTIVE, PENDING_VERIFICATION
+from ..core.user_status import ACTIVE, PENDING_VERIFICATION, SUSPENDED
 from ..repositories.account_repository import AccountRepository
 from ..repositories.external_identity_repository import ExternalIdentityRepository
 from ..repositories.user_repository import UserRepository
@@ -95,6 +95,15 @@ def _get_auth_cache() -> AuthCacheManager:
             )
         _auth_cache = AuthCacheManager(Redis(connection_pool=_redis_pool))
     return _auth_cache
+
+
+def _ensure_user_can_authenticate(user: UserRecord) -> None:
+    """Reject lifecycle states that must not receive a new session token."""
+    if user.status is not None and user.status != ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is unavailable.",
+        )
 
 
 # ─── Request/Response Schemas ────────────────────────────────────────────────
@@ -169,10 +178,19 @@ class MicrosoftLoginRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     """Schema for resetting the password with a valid token."""
 
-    token: str
+    token: str = Field(..., min_length=32, max_length=512)
     new_password: str = Field(
         ..., min_length=8, description="New password must be at least 8 characters long"
     )
+    confirm_password: str = Field(
+        ..., min_length=8, description="Must match new_password"
+    )
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> "ResetPasswordRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
 
 
 class VerifyEmailRequest(BaseModel):
@@ -223,7 +241,7 @@ async def register_user(
     6-digit verification code stored in Valkey, and dispatches a
     verification email asynchronously.
     """
-    normalized_email = payload.email.strip().lower()
+    normalized_email = canonicalize_email(payload.email)
 
     # Use row-level lock to prevent TOCTOU race condition
     existing_user = await UserRepository.get_user_by_email_for_update(
@@ -288,14 +306,24 @@ async def register_user(
 
         # New user
         hashed = await bounded_hash_password(payload.password)
-        user = await UserRepository.create_user(
-            db=db,
-            email=normalized_email,
-            hashed_password=hashed,
-            full_name=payload.fullName,
-            organization=payload.organization,
-            status=PENDING_VERIFICATION,
-        )
+        try:
+            user = await UserRepository.create_user(
+                db=db,
+                email=normalized_email,
+                hashed_password=hashed,
+                full_name=payload.fullName,
+                organization=payload.organization,
+                status=PENDING_VERIFICATION,
+            )
+        except IntegrityError:
+            # The unique database constraint is the final concurrency gate
+            # when two requests observe no row at the same time.
+            await db.rollback()
+            await cache.delete_cooldown(normalized_email)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A user with this email address already exists",
+            )
         is_new_registration = True
 
     # Generate and store verification code
@@ -387,9 +415,22 @@ async def verify_email(
         )
 
     # Activate user
-    user = await UserRepository.activate_user(db, user)
+    if user.status != PENDING_VERIFICATION:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This verification code is no longer valid.",
+        )
+    try:
+        user = await UserRepository.activate_user(db, user)
+    except ValueError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This verification code is no longer valid.",
+        )
 
     # Issue JWT
+    _ensure_user_can_authenticate(user)
     token = create_access_token(
         data={"sub": user.email, "full_name": user.full_name or ""}
     )
@@ -405,23 +446,9 @@ async def resend_verification(
     db: AsyncSessionDep,
 ) -> dict:
     """Resend a verification code with cooldown and rate-limit enforcement."""
-    normalized_email = payload.email.strip().lower()
+    normalized_email = canonicalize_email(payload.email)
     settings = get_email_verification_settings()
     cache = _get_auth_cache()
-
-    # Cooldown check
-    if await cache.check_resend_cooldown(normalized_email):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Please wait before requesting another verification code.",
-        )
-
-    # Hourly rate check
-    if await cache.check_hourly_rate(normalized_email, settings.hourly_limit):
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Verification email limit reached. Please try again later.",
-        )
 
     # Verify user exists and is pending
     user = await UserRepository.get_user_by_email(db, normalized_email)
@@ -431,19 +458,37 @@ async def resend_verification(
             "message": "If a pending account exists, a new verification code has been sent."
         }
 
+    # Both limits are reservations, not check-then-set sequences.  This
+    # guarantees that concurrent requests cannot dispatch multiple resends.
+    if not await cache.reserve_resend_cooldown(
+        normalized_email, settings.resend_cooldown_seconds
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Please wait before requesting another verification code.",
+        )
+    if not await cache.reserve_email_send(normalized_email, settings.hourly_limit):
+        await cache.delete_cooldown(normalized_email)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Verification email limit reached. Please try again later.",
+        )
+
     # Generate and store new code
     code = generate_verification_code()
     code_hash = hash_verification_code(code)
-    await cache.store_verification_code(
-        email=normalized_email,
-        code_hash=code_hash,
-        user_id=user.id,
-        ttl_seconds=settings.code_ttl_seconds,
-    )
-
-    # Set cooldown and record rate event
-    await cache.set_resend_cooldown(normalized_email, settings.resend_cooldown_seconds)
-    await cache.record_email_send(normalized_email)
+    try:
+        await cache.store_verification_code(
+            email=normalized_email,
+            code_hash=code_hash,
+            user_id=user.id,
+            ttl_seconds=settings.code_ttl_seconds,
+        )
+    except Exception:
+        # Do not leave an artificial cooldown behind when the new code was
+        # not persisted.  The rate event remains conservative and expires.
+        await cache.delete_cooldown(normalized_email)
+        raise
 
     # Dispatch
     background_tasks.add_task(send_verification_email, normalized_email, code)
@@ -467,7 +512,15 @@ async def login_user(
         * Pending-verification accounts are rejected with 403.
         * Transparent bcrypt → Argon2id hash upgrade on success.
     """
-    user = await UserRepository.get_user_by_email(db, payload.email)
+    normalized_email = canonicalize_email(payload.email)
+    user = await UserRepository.get_user_by_email(db, normalized_email)
+
+    if user is not None and user.status == SUSPENDED:
+        await bounded_verify_timing_sentinel(payload.password)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is unavailable.",
+        )
 
     if user is not None and user.hashed_password is None:
         # SSO-only user attempting password login
@@ -697,8 +750,9 @@ async def google_login(
         except Exception:
             await db.rollback()
             raise
-        logger.info("Auto-created user via Google SSO: %s", email)
+        logger.info("Auto-created user via Google SSO: user_id=%s", user.id)
 
+    _ensure_user_can_authenticate(user)
     token = create_access_token(
         data={"sub": user.email, "full_name": user.full_name or ""}
     )
@@ -721,7 +775,17 @@ async def forgot_password(
     Always returns a success-shaped response regardless of whether the email
     exists. Timing is normalised to prevent enumeration via latency.
     """
-    user = await UserRepository.get_user_by_email(db, payload.email)
+    normalized_email = canonicalize_email(payload.email)
+    cache = _get_auth_cache()
+    # Rate-limit by email as well as the route's IP limiter.  A denied request
+    # keeps the same generic response to preserve anti-enumeration behavior.
+    if not await cache.reserve_email_action(normalized_email, "forgot", limit=3):
+        await bounded_verify_timing_sentinel("forgot-password-timing")
+        return {
+            "message": "If an account with that email exists, a password reset link has been sent."
+        }
+
+    user = await UserRepository.get_user_by_email(db, normalized_email)
 
     if user is not None and user.status == ACTIVE:
         logger.info("Password reset requested for user_id=%s", user.id)
@@ -731,7 +795,6 @@ async def forgot_password(
         raw_token, token_hash = generate_reset_token()
 
         # Store hash in Valkey (single-use via Lua on consumption)
-        cache = _get_auth_cache()
         await cache.store_reset_token(
             token_hash=token_hash,
             user_id=user.id,
@@ -741,7 +804,7 @@ async def forgot_password(
         background_tasks.add_task(send_password_reset_email, user.email, raw_token)
     else:
         # Normalise timing: simulate cryptographic and I/O work
-        await asyncio.sleep(0.15 + random.uniform(0, 0.05))
+        await bounded_verify_timing_sentinel("forgot-password-timing")
 
     # Generic response to prevent email enumeration
     return {
@@ -781,6 +844,12 @@ async def reset_password(
 
     user = await UserRepository.get_user_by_id(db, user_id)
     if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token.",
+        )
+
+    if user.status is not None and user.status != ACTIVE:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token.",
@@ -892,6 +961,7 @@ async def microsoft_login(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="microsoft_identity_conflict",
             )
+        _ensure_user_can_authenticate(user)
         token = create_access_token(
             data={"sub": user.email, "full_name": user.full_name or ""}
         )
@@ -1071,11 +1141,7 @@ async def github_login_callback(
                 or token_data.get("error")
                 or "No access token returned from GitHub"
             )
-            logger.error(
-                "GitHub token exchange failed: %s (raw response: %s)",
-                gh_error,
-                token_data,
-            )
+            logger.error("GitHub token exchange failed: error_type=%s", type(gh_error).__name__)
             raise HTTPException(
                 status_code=400, detail=f"GitHub OAuth error: {gh_error}"
             )
@@ -1173,9 +1239,10 @@ async def github_login_callback(
             await db.rollback()
             raise
 
-        logger.info("Auto-created user via GitHub SSO: %s", primary_email)
+        logger.info("Auto-created user via GitHub SSO: user_id=%s", user.id)
 
     # 5. Issue session token and redirect using URL fragment to avoid access log leakage
+    _ensure_user_can_authenticate(user)
     token = create_access_token(
         data={"sub": user.email, "full_name": user.full_name or ""}
     )

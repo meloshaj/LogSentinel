@@ -29,7 +29,7 @@ def test_password_hashing_and_verification() -> None:
     hashed = hash_password(password)
     
     assert hashed != password
-    assert hashed.startswith("$2b$")  # bcrypt prefix
+    assert hashed.startswith("$argon2id$")  # Argon2id PHC prefix
     
     # Valid validation
     assert verify_password(password, hashed) is True
@@ -93,9 +93,8 @@ def test_register_user_success(client: TestClient, mock_db: AsyncMock) -> None:
     assert response.status_code == status.HTTP_201_CREATED
     body = response.json()
     assert body["email"] == "newuser@company.com"
-    assert body["full_name"] == "New User"
-    assert body["organization"] == "Acme Inc"
-    assert "id" in body
+    assert body["status"] == "pending_verification"
+    assert "verification" in body["message"].lower()
 
     # Verify db interaction
     mock_db.add.assert_called_once()
@@ -121,7 +120,7 @@ def test_register_user_already_exists(client: TestClient, mock_db: AsyncMock) ->
 
     response = client.post("/api/auth/register", json=payload)
     
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.status_code == status.HTTP_409_CONFLICT
     assert response.json()["detail"] == "A user with this email address already exists"
 
 

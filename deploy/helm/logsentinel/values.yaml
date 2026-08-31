@@ -79,5 +79,6 @@ env:
   drain3QueueDrainTimeoutSeconds: "30.0"
 
 secret:
-  jwtSecretKey: "change-me-in-production"
-  postgresPassword: "logsentinel_secret"
+  jwtSecretKey: ""
+  postgresPassword: ""
+  encryptionKey: ""

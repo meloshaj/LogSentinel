@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
+os.environ.setdefault(
+    "ENCRYPTION_KEY", "bvVYnjx7L9I_sx-PW9PfR1E_e1xLHqgej5-SL3_nut8="
+)
+os.environ.setdefault(
+    "JWT_SECRET_KEY",
+    "j6nXLp4jdPIYuoGC20uNKMgG2KhYVeEyaHqxECoYXygCQ3nrgQvULL9YlIn6eGye",
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -68,3 +76,26 @@ def mock_redis_globally():
         with patch("backend.app.main.close_redis_pool", new_callable=AsyncMock):
             with patch("redis.StrictRedis", return_value=MockRedis()):
                 yield
+
+
+@pytest.fixture(autouse=True)
+def mock_auth_cache():
+    """Keep route tests independent of an external Valkey instance."""
+    cache = AsyncMock()
+    cache.reserve_resend_cooldown.return_value = True
+    cache.store_verification_code.return_value = None
+    cache.record_email_send.return_value = None
+    with patch(
+        "backend.app.routers.auth_router._get_auth_cache", return_value=cache
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_auth_email_dispatch():
+    """Prevent route unit tests from contacting a real SMTP server."""
+    with patch(
+        "backend.app.routers.auth_router.send_verification_email",
+        new_callable=AsyncMock,
+    ):
+        yield

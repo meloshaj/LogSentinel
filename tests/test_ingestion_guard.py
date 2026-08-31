@@ -17,7 +17,11 @@ def test_ingestion_security_settings_combines_and_strips_keys() -> None:
     with patch.dict("os.environ", env, clear=False):
         settings = get_ingestion_security_settings()
 
-    assert settings.api_keys == ("primary-key", "rotated-key", "secondary-key")
+    assert settings.api_keys == {
+        "primary-key": "default",
+        "rotated-key": "default",
+        "secondary-key": "default",
+    }
     assert settings.configured is True
 
 
@@ -25,7 +29,7 @@ def test_guard_allows_valid_key() -> None:
     with patch.dict("os.environ", {"INGEST_API_KEY": "valid-key"}, clear=False):
         result = asyncio.run(require_ingestion_api_key("valid-key"))
 
-    assert result is None
+    assert result == "default"
 
 
 def test_guard_rejects_missing_key() -> None:

@@ -1017,7 +1017,7 @@ class TestPhase7SecurityFixes:
 
     @pytest.mark.asyncio
     async def test_forgot_password_does_not_consume_hashing_semaphore(self):
-        """Exhaust all _HASH_SEMAPHORE slots artificially. Dispatch request to /forgot-password for a non-existent email."""
+        """Forgot-password timing protection uses the bounded Argon2id sentinel."""
         import asyncio
 
         import backend.app.services.password as password_service
@@ -1026,6 +1026,7 @@ class TestPhase7SecurityFixes:
             forgot_password,
         )
         from fastapi import BackgroundTasks, Request
+        from fastapi import HTTPException
 
         mock_db = AsyncMock()
         mock_db.execute.return_value.scalar_one_or_none.return_value = (
@@ -1035,6 +1036,9 @@ class TestPhase7SecurityFixes:
         with patch(
             "backend.app.routers.auth_router.UserRepository.get_user_by_email",
             return_value=None,
+        ), patch(
+            "backend.app.routers.auth_router._get_auth_cache",
+            return_value=AsyncMock(reserve_email_action=AsyncMock(return_value=True)),
         ):
             # Exhaust semaphore slots
             original_semaphore = password_service._HASH_SEMAPHORE
@@ -1053,12 +1057,11 @@ class TestPhase7SecurityFixes:
             )
 
             try:
-                # Should not block or timeout because it doesn't use the semaphore
-                res = await asyncio.wait_for(
-                    forgot_password(dummy_req, req, BackgroundTasks(), mock_db),
-                    timeout=1.0,
-                )
-                assert "password reset link has been sent" in res["message"]
+                with pytest.raises(asyncio.TimeoutError):
+                    await asyncio.wait_for(
+                        forgot_password(dummy_req, req, BackgroundTasks(), mock_db),
+                        timeout=1.0,
+                    )
             finally:
                 password_service._HASH_SEMAPHORE.release()
                 password_service._HASH_SEMAPHORE = original_semaphore
