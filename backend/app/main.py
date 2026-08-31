@@ -402,6 +402,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _observability_loop(app),
         name="logsentinel-observability",
     )
+    app.state.auth_gc_task = asyncio.create_task(
+        _auth_gc_loop(app),
+        name="logsentinel-auth-gc",
+    )
     try:
         yield
     finally:
@@ -413,6 +417,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except asyncio.CancelledError:
                 pass
             app.state.observability_task = None
+
+        auth_gc_task = getattr(app.state, "auth_gc_task", None)
+        if auth_gc_task is not None:
+            auth_gc_task.cancel()
+            try:
+                await auth_gc_task
+            except asyncio.CancelledError:
+                pass
+            app.state.auth_gc_task = None
+
         # Drain parsing first so feature extraction receives every accepted log.
         await stream_cleaner.stop()
         await drain_worker.stop()
@@ -424,6 +438,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await batch_manager.flush_all()
         await dispose_engine()
         await close_redis_pool()
+
+
+async def _auth_gc_loop(app: FastAPI) -> None:
+    """Periodically clear stale pending-verification users from the database.
+
+    Uses a distributed Valkey lock to ensure only one worker/container
+    runs the cleanup in a multi-instance deployment.
+    """
+    while True:
+        try:
+            redis_client = getattr(app.state, "redis", None)
+            if redis_client:
+                try:
+                    lock_acquired = await redis_client.set(
+                        "lock:gc:pending_users", "1", ex=3500, nx=True
+                    )
+                    if not lock_acquired:
+                        # Another worker has the lease, skip this hour
+                        await asyncio.sleep(3600)
+                        continue
+                except Exception:
+                    logger.warning(
+                        "Failed to acquire GC lock from Redis", exc_info=True
+                    )
+
+            from .core.database import get_session_factory
+            from .repositories.user_repository import UserRepository
+
+            factory = get_session_factory()
+            async with factory() as db:
+                await UserRepository.cleanup_pending_users(db, max_age_hours=24)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("GC iteration failed")
+
+        await asyncio.sleep(3600)
 
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -731,6 +782,21 @@ async def validation_exception_handler(
     _: object, exc: RequestValidationError
 ) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+from .services.auth_cache import AuthCacheUnavailableError
+
+
+@app.exception_handler(AuthCacheUnavailableError)
+async def auth_cache_unavailable_handler(
+    _: object, exc: AuthCacheUnavailableError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Authentication cache temporarily unavailable. Please retry shortly."
+        },
+    )
 
 
 @app.get(

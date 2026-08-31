@@ -622,3 +622,74 @@ def get_archive_settings() -> ArchiveSettings:
         ),
         staging_row_limit=int(os.getenv("ARCHIVE_STAGING_ROW_LIMIT", "100000")),
     )
+
+
+class EmailVerificationSettings(BaseModel):
+    """Configuration for email verification code pipeline."""
+
+    code_ttl_seconds: int = Field(
+        default=600,
+        gt=0,
+        description="Time-to-live for verification codes in seconds (env: EMAIL_VERIFICATION_CODE_TTL_SECONDS)",
+    )
+    max_attempts: int = Field(
+        default=5,
+        gt=0,
+        description="Maximum failed verification attempts before lockout (env: EMAIL_VERIFICATION_MAX_ATTEMPTS)",
+    )
+    resend_cooldown_seconds: int = Field(
+        default=60,
+        gt=0,
+        description="Minimum seconds between verification email resends (env: EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS)",
+    )
+    hourly_limit: int = Field(
+        default=5,
+        gt=0,
+        description="Maximum verification emails per email address per hour (env: EMAIL_VERIFICATION_HOURLY_LIMIT)",
+    )
+
+
+def get_email_verification_settings() -> EmailVerificationSettings:
+    """Construct email verification settings from the current environment."""
+    return EmailVerificationSettings(
+        code_ttl_seconds=int(os.getenv("EMAIL_VERIFICATION_CODE_TTL_SECONDS", "600")),
+        max_attempts=int(os.getenv("EMAIL_VERIFICATION_MAX_ATTEMPTS", "5")),
+        resend_cooldown_seconds=int(
+            os.getenv("EMAIL_VERIFICATION_RESEND_COOLDOWN_SECONDS", "60")
+        ),
+        hourly_limit=int(os.getenv("EMAIL_VERIFICATION_HOURLY_LIMIT", "5")),
+    )
+
+
+class PasswordResetSettings(BaseModel):
+    """Configuration for password reset token pipeline."""
+
+    token_ttl_seconds: int = Field(
+        default=900,
+        gt=0,
+        description="Time-to-live for password reset tokens in seconds (env: PASSWORD_RESET_TOKEN_TTL_SECONDS)",
+    )
+
+
+def get_password_reset_settings() -> PasswordResetSettings:
+    """Construct password reset settings from the current environment."""
+    return PasswordResetSettings(
+        token_ttl_seconds=int(os.getenv("PASSWORD_RESET_TOKEN_TTL_SECONDS", "900")),
+    )
+
+
+class AuthSecuritySettings(BaseModel):
+    """Security bounds for authentication processes."""
+
+    max_concurrent_hashes_per_worker: int = Field(
+        default_factory=lambda: max(
+            1, 10 // int(os.getenv("WORKERS", os.getenv("WEB_CONCURRENCY", "1")))
+        ),
+        gt=0,
+        description="Maximum concurrent Argon2id hashing operations per worker process.",
+    )
+
+
+def get_auth_security_settings() -> AuthSecuritySettings:
+    """Construct auth security settings dynamically from environment variables."""
+    return AuthSecuritySettings()

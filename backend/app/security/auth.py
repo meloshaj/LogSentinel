@@ -1,7 +1,9 @@
 """Authentication and authorization helper utilities.
 
-Provides password hashing using bcrypt, JWT generation and verification
-using PyJWT, and the FastAPI dependency to authenticate and resolve the current user.
+Provides password hashing using Argon2id (with bcrypt legacy support),
+JWT generation with ``iat`` claims, JWT verification with
+``password_changed_at`` session invalidation, and the FastAPI
+dependency to authenticate and resolve the current user.
 """
 
 from __future__ import annotations
@@ -10,7 +12,6 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -19,6 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import get_async_session
 from ..core.orm import UserRecord
+from ..services.password import (
+    verify_and_update_password,
+)
 
 # JWT Configuration
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
@@ -29,34 +33,42 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 security_scheme = HTTPBearer()
 
 
-def hash_password(password: str) -> str:
-    """Hash a plain-text password using bcrypt."""
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
-    return hashed.decode("utf-8")
+# ---------------------------------------------------------------------------
+# Legacy thin wrappers — retain the original function signatures so that
+# existing callers (tests, SSO routes) continue to work unchanged.
+# ---------------------------------------------------------------------------
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a plain-text password against a hashed bcrypt password."""
-    try:
-        return bcrypt.checkpw(
-            plain_password.encode("utf-8"), hashed_password.encode("utf-8")
-        )
-    except Exception:
-        return False
+    """Verify a plain-text password against a stored hash (bcrypt or Argon2id).
+
+    This is a compatibility wrapper.  For new code, prefer
+    ``verify_and_update_password`` which also returns an upgraded hash.
+    """
+    valid, _ = verify_and_update_password(plain_password, hashed_password)
+    return valid
 
 
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
-    """Create a new JSON Web Token (JWT) with standard expiration claims."""
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(
-            minutes=ACCESS_TOKEN_EXPIRE_MINUTES
-        )
+    """Create a new JSON Web Token (JWT) with ``exp`` and ``iat`` claims.
 
-    to_encode.update({"exp": expire})
+    The ``iat`` (issued-at) claim is used by ``get_current_user`` to
+    reject tokens issued before the user's most recent password change.
+    """
+    to_encode = data.copy()
+    now = datetime.now(timezone.utc)
+
+    if expires_delta:
+        expire = now + expires_delta
+    else:
+        expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+
+    to_encode.update(
+        {
+            "exp": expire,
+            "iat": now,
+        }
+    )
     return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
@@ -66,7 +78,16 @@ async def get_current_user(
 ) -> UserRecord:
     """FastAPI dependency to extract and authenticate JWT and return the user record.
 
-    Raises HTTP 401 if token is expired, invalid, or user doesn't exist.
+    Security checks:
+        1. Decode and validate the JWT signature and expiration.
+        2. Resolve the user by the ``sub`` (email) claim.
+        3. If the user has a ``password_changed_at`` timestamp, reject
+           any token whose ``iat`` predates that timestamp.  This
+           provides immediate global session revocation after a
+           password change without requiring a token blocklist.
+
+    Raises HTTP 401 if token is expired, invalid, revoked, or user
+    doesn't exist.
     """
     token = credentials.credentials
     credentials_exception = HTTPException(
@@ -90,5 +111,27 @@ async def get_current_user(
 
     if user is None:
         raise credentials_exception
+
+    # Session invalidation: reject tokens issued before password change
+    if user.password_changed_at is None:
+        return user
+
+    issued_at = payload.get("iat")
+    if issued_at is not None:
+        token_issued = datetime.fromtimestamp(issued_at, tz=timezone.utc)
+        # Normalize database timestamp to remove microseconds before comparing against JWT Unix seconds
+        safe_changed_at = user.password_changed_at.replace(microsecond=0)
+        if safe_changed_at.tzinfo is None:
+            safe_changed_at = safe_changed_at.replace(tzinfo=timezone.utc)
+        else:
+            safe_changed_at = safe_changed_at.astimezone(timezone.utc)
+
+        # Allow up to 5 seconds of NTP clock skew drift
+        if (token_issued.timestamp() + 5) < safe_changed_at.timestamp():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token invalidated due to password change",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return user

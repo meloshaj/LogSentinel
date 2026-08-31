@@ -1,14 +1,26 @@
 """FastAPI router for user authentication endpoints.
 
-Provides routes for user registration, token generation (login),
-user profile retrieval, Google SSO, Microsoft SSO, and password reset.
+Provides routes for user registration with email verification,
+token generation (login), user profile retrieval, Google SSO,
+Microsoft SSO, GitHub SSO, email verification, password reset,
+and resend verification.
+
+Security controls:
+    * Timing-attack normalization on login and forgot-password.
+    * Atomic single-use verification codes via Valkey Lua scripts.
+    * Atomic single-use password-reset tokens via Valkey Lua scripts.
+    * Session invalidation via password_changed_at + JWT iat checks.
+    * Rate limiting via SlowAPI on all sensitive endpoints.
+    * Abuse prevention via per-email cooldowns and sliding-window limits.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
+import random
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
@@ -17,17 +29,19 @@ from sqlalchemy.exc import IntegrityError
 
 from ..core.database import AsyncSessionDep
 from ..core.orm import UserRecord
-from ..core.settings import get_github_auth_settings, get_microsoft_auth_settings
+from ..core.settings import (
+    get_email_verification_settings,
+    get_github_auth_settings,
+    get_microsoft_auth_settings,
+    get_password_reset_settings,
+)
+from ..core.user_status import ACTIVE, PENDING_VERIFICATION
 from ..repositories.account_repository import AccountRepository
 from ..repositories.external_identity_repository import ExternalIdentityRepository
 from ..repositories.user_repository import UserRepository
 from ..security.auth import (
-    JWT_ALGORITHM,
-    JWT_SECRET_KEY,
     create_access_token,
     get_current_user,
-    hash_password,
-    verify_password,
 )
 from ..security.microsoft_auth import (
     InvalidMicrosoftTenantError,
@@ -38,15 +52,49 @@ from ..security.microsoft_auth import (
     MicrosoftTokenVerifier,
     MissingRequiredScopeError,
 )
+from ..services.auth_cache import AuthCacheManager
+from ..services.email import (
+    send_password_changed_notification,
+    send_password_reset_email,
+    send_verification_email,
+)
+from ..services.password import (
+    bounded_hash_password,
+    bounded_verify_password,
+    bounded_verify_timing_sentinel,
+    generate_reset_token,
+    generate_verification_code,
+    hash_verification_code,
+)
 
 logger = logging.getLogger("logsentinel.auth_router")
-
-from ..services.email import send_password_reset_email
 
 # Google OAuth configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
+
+# ---------------------------------------------------------------------------
+# Lazy Valkey cache manager — initialised on first use
+# ---------------------------------------------------------------------------
+_auth_cache: AuthCacheManager | None = None
+
+
+def _get_auth_cache() -> AuthCacheManager:
+    """Return a cached AuthCacheManager backed by the application's Redis pool."""
+    global _auth_cache
+    if _auth_cache is None:
+        from redis.asyncio import Redis
+
+        from ..core.redis import _redis_pool
+
+        if _redis_pool is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Cache service is not available",
+            )
+        _auth_cache = AuthCacheManager(Redis(connection_pool=_redis_pool))
+    return _auth_cache
 
 
 # ─── Request/Response Schemas ────────────────────────────────────────────────
@@ -127,51 +175,282 @@ class ResetPasswordRequest(BaseModel):
     )
 
 
+class VerifyEmailRequest(BaseModel):
+    """Schema for email verification code submission."""
+
+    email: EmailStr
+    code: str = Field(
+        ...,
+        min_length=6,
+        max_length=6,
+        pattern=r"^\d{6}$",
+        description="6-digit verification code",
+    )
+
+
+class ResendVerificationRequest(BaseModel):
+    """Schema for requesting a new verification code."""
+
+    email: EmailStr
+
+
+class RegisterResponse(BaseModel):
+    """Schema for registration response."""
+
+    message: str
+    email: str
+    status: str
+
+
 # ─── Endpoint Route Handlers ─────────────────────────────────────────────────
 
 from ..core.rate_limit import limiter
 
 
 @router.post(
-    "/register", status_code=status.HTTP_201_CREATED, response_model=UserResponse
+    "/register", status_code=status.HTTP_201_CREATED, response_model=RegisterResponse
 )
 @limiter.limit("3/minute")
 async def register_user(
     request: Request,
     payload: UserRegisterRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSessionDep,
-) -> UserResponse:
-    """Register a new user account and save their hashed credentials in the database."""
-    # Check if a user already exists with this email
-    existing_user = await UserRepository.get_user_by_email(db, payload.email)
-    if existing_user is not None:
-        identities = await ExternalIdentityRepository.get_all_by_user_id(
-            db, existing_user.id
-        )
-        if identities:
-            # User has an OAuth identity, so standard signup should not be allowed
-            provider = identities[0].provider.capitalize()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"This email is already registered using {provider} Login. Please sign in with {provider}.",
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A user with this email address already exists",
-            )
+) -> RegisterResponse:
+    """Register a new user account with email verification.
 
-    # Hash the password and save
-    hashed = hash_password(payload.password)
-    user = await UserRepository.create_user(
-        db=db,
-        email=payload.email,
-        hashed_password=hashed,
-        full_name=payload.fullName,
-        organization=payload.organization,
+    Creates the user in ``pending_verification`` status, generates a
+    6-digit verification code stored in Valkey, and dispatches a
+    verification email asynchronously.
+    """
+    normalized_email = payload.email.strip().lower()
+
+    # Use row-level lock to prevent TOCTOU race condition
+    existing_user = await UserRepository.get_user_by_email_for_update(
+        db, normalized_email
     )
 
-    return UserResponse.model_validate(user)
+    settings = get_email_verification_settings()
+    cache = _get_auth_cache()
+
+    if existing_user is not None:
+        if existing_user.status == ACTIVE:
+            # Check if they have OAuth identities for a more helpful error
+            identities = await ExternalIdentityRepository.get_all_by_user_id(
+                db, existing_user.id
+            )
+            if identities:
+                provider = identities[0].provider.capitalize()
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"This email is already registered using {provider} Login. Please sign in with {provider}.",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A user with this email address already exists",
+            )
+        elif existing_user.status == PENDING_VERIFICATION:
+            # Atomic check-and-set cooldown to prevent registration griefing
+            reserved = await cache.reserve_resend_cooldown(
+                normalized_email, settings.resend_cooldown_seconds
+            )
+            if not reserved:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="A verification code was recently dispatched for this email. Please check your inbox or wait before retrying.",
+                )
+
+            # Re-registration of a pending user: update credentials and resend code
+            from sqlalchemy.sql import func
+
+            existing_user.hashed_password = await bounded_hash_password(
+                payload.password
+            )
+            existing_user.full_name = payload.fullName or existing_user.full_name
+            existing_user.organization = (
+                payload.organization or existing_user.organization
+            )
+            existing_user.created_at = func.now()
+            await db.commit()
+            await db.refresh(existing_user)
+            user = existing_user
+            is_new_registration = False
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A user with this email address already exists",
+            )
+    else:
+        # Atomic check-and-set cooldown for new user
+        await cache.reserve_resend_cooldown(
+            normalized_email, settings.resend_cooldown_seconds
+        )
+
+        # New user
+        hashed = await bounded_hash_password(payload.password)
+        user = await UserRepository.create_user(
+            db=db,
+            email=normalized_email,
+            hashed_password=hashed,
+            full_name=payload.fullName,
+            organization=payload.organization,
+            status=PENDING_VERIFICATION,
+        )
+        is_new_registration = True
+
+    # Generate and store verification code
+    settings = get_email_verification_settings()
+    cache = _get_auth_cache()
+    code = generate_verification_code()
+    code_hash = hash_verification_code(code)
+
+    try:
+        await cache.store_verification_code(
+            email=normalized_email,
+            code_hash=code_hash,
+            user_id=user.id,
+            ttl_seconds=settings.code_ttl_seconds,
+        )
+        # Record rate-limit event (cooldown is already reserved)
+        await cache.record_email_send(normalized_email)
+    except Exception as exc:
+        if is_new_registration:
+            # Delete only newly created pending rows
+            await db.delete(user)
+            await db.commit()
+        else:
+            # For preemption, rollback the uncommitted transaction or re-fetch and do NOT delete the pre-existing row
+            await db.rollback()
+        # Clean up the reserved cooldown key on failure
+        await cache.delete_cooldown(normalized_email)
+        from ..services.auth_cache import AuthCacheUnavailableError
+
+        raise AuthCacheUnavailableError(
+            "Failed to persist verification code in cache."
+        ) from exc
+
+    # Dispatch verification email
+    background_tasks.add_task(send_verification_email, normalized_email, code)
+
+    return RegisterResponse(
+        message="Verification code dispatched",
+        email=normalized_email,
+        status=PENDING_VERIFICATION,
+    )
+
+
+@router.post("/verify-email", response_model=TokenResponse)
+@limiter.limit("10/minute")
+async def verify_email(
+    request: Request,
+    payload: VerifyEmailRequest,
+    db: AsyncSessionDep,
+) -> TokenResponse:
+    """Verify a 6-digit email code and activate the user account.
+
+    On success, the user's status transitions to ``active`` and a
+    JWT access token is returned for immediate login.
+    """
+    normalized_email = payload.email.strip().lower()
+    settings = get_email_verification_settings()
+    cache = _get_auth_cache()
+
+    submitted_hash = hash_verification_code(payload.code)
+    result = await cache.verify_code(
+        email=normalized_email,
+        submitted_code_hash=submitted_hash,
+        max_attempts=settings.max_attempts,
+    )
+
+    if result == -1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verification code expired or not found. Please request a new code.",
+        )
+    if result == -2:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Maximum verification attempts exceeded. Please request a new code.",
+        )
+    if result == -3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid verification code.",
+        )
+
+    # result is the user_id
+    user = await UserRepository.get_user_by_id(db, result)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User account not found.",
+        )
+
+    # Activate user
+    user = await UserRepository.activate_user(db, user)
+
+    # Issue JWT
+    token = create_access_token(
+        data={"sub": user.email, "full_name": user.full_name or ""}
+    )
+    return TokenResponse(access_token=token)
+
+
+@router.post("/resend-verification", status_code=status.HTTP_200_OK)
+@limiter.limit("3/minute")
+async def resend_verification(
+    request: Request,
+    payload: ResendVerificationRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSessionDep,
+) -> dict:
+    """Resend a verification code with cooldown and rate-limit enforcement."""
+    normalized_email = payload.email.strip().lower()
+    settings = get_email_verification_settings()
+    cache = _get_auth_cache()
+
+    # Cooldown check
+    if await cache.check_resend_cooldown(normalized_email):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Please wait before requesting another verification code.",
+        )
+
+    # Hourly rate check
+    if await cache.check_hourly_rate(normalized_email, settings.hourly_limit):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Verification email limit reached. Please try again later.",
+        )
+
+    # Verify user exists and is pending
+    user = await UserRepository.get_user_by_email(db, normalized_email)
+    if user is None or user.status != PENDING_VERIFICATION:
+        # Uniform response to prevent enumeration
+        return {
+            "message": "If a pending account exists, a new verification code has been sent."
+        }
+
+    # Generate and store new code
+    code = generate_verification_code()
+    code_hash = hash_verification_code(code)
+    await cache.store_verification_code(
+        email=normalized_email,
+        code_hash=code_hash,
+        user_id=user.id,
+        ttl_seconds=settings.code_ttl_seconds,
+    )
+
+    # Set cooldown and record rate event
+    await cache.set_resend_cooldown(normalized_email, settings.resend_cooldown_seconds)
+    await cache.record_email_send(normalized_email)
+
+    # Dispatch
+    background_tasks.add_task(send_verification_email, normalized_email, code)
+
+    return {
+        "message": "If a pending account exists, a new verification code has been sent."
+    }
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -181,27 +460,67 @@ async def login_user(
     payload: UserLoginRequest,
     db: AsyncSessionDep,
 ) -> TokenResponse:
-    """Authenticate email & password and return a signed JWT access token."""
+    """Authenticate email & password and return a signed JWT access token.
+
+    Security controls:
+        * Timing sentinel absorbs Argon2id cost for non-existent users.
+        * Pending-verification accounts are rejected with 403.
+        * Transparent bcrypt → Argon2id hash upgrade on success.
+    """
     user = await UserRepository.get_user_by_email(db, payload.email)
-    if user is not None and not user.hashed_password:
+
+    if user is not None and user.hashed_password is None:
+        # SSO-only user attempting password login
         identities = await ExternalIdentityRepository.get_all_by_user_id(db, user.id)
         if identities:
             provider = identities[0].provider.capitalize()
+            # Still absorb timing
+            await bounded_verify_timing_sentinel(payload.password)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"This email is already registered using {provider} Login. Please sign in with {provider}.",
             )
 
-    if (
-        user is None
-        or not user.hashed_password
-        or not verify_password(payload.password, user.hashed_password)
-    ):
+        # User has no password and no identities (invalid state)
+        await bounded_verify_timing_sentinel(payload.password)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
+
+    if user is None:
+        await bounded_verify_timing_sentinel(payload.password)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
+
+    # Check account status before verifying password
+    if user.status == PENDING_VERIFICATION:
+        # Still absorb timing cost
+        await bounded_verify_timing_sentinel(payload.password)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account email not verified. Please check your email for the verification code.",
+        )
+
+    # Verify password with dual-algorithm support
+    assert user.hashed_password is not None, (
+        "Password hash cannot be None at this point"
+    )
+    valid, upgraded_hash = await bounded_verify_password(
+        payload.password, user.hashed_password
+    )
+    if not valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Transparent hash upgrade (bcrypt → Argon2id)
+    if upgraded_hash is not None:
+        await UserRepository.update_hashed_password_silent(db, user, upgraded_hash)
 
     # Generate token with sub set to email and full_name for sidebar display
     token = create_access_token(
@@ -339,6 +658,7 @@ async def google_login(
                 email=email,
                 hashed_password=None,
                 full_name=full_name,
+                status=ACTIVE,
                 commit=False,
             )
             external_identity = (
@@ -386,25 +706,29 @@ async def forgot_password(
     """Accept a password-reset request without exposing account existence.
 
     Always returns a success-shaped response regardless of whether the email
-    exists to prevent email enumeration attacks.
+    exists. Timing is normalised to prevent enumeration via latency.
     """
-    from datetime import datetime, timedelta, timezone
-
-    import jwt as pyjwt
-
     user = await UserRepository.get_user_by_email(db, payload.email)
 
-    if user is not None:
-        logger.info(
-            "Password reset requested for user_id=%s",
-            user.id,
+    if user is not None and user.status == ACTIVE:
+        logger.info("Password reset requested for user_id=%s", user.id)
+
+        # Generate opaque reset token
+        settings = get_password_reset_settings()
+        raw_token, token_hash = generate_reset_token()
+
+        # Store hash in Valkey (single-use via Lua on consumption)
+        cache = _get_auth_cache()
+        await cache.store_reset_token(
+            token_hash=token_hash,
+            user_id=user.id,
+            ttl_seconds=settings.token_ttl_seconds,
         )
 
-        expire = datetime.now(timezone.utc) + timedelta(minutes=15)
-        to_encode = {"sub": user.email, "type": "password_reset", "exp": expire}
-        token = pyjwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-
-        background_tasks.add_task(send_password_reset_email, user.email, token)
+        background_tasks.add_task(send_password_reset_email, user.email, raw_token)
+    else:
+        # Normalise timing: simulate cryptographic and I/O work
+        await asyncio.sleep(0.15 + random.uniform(0, 0.05))
 
     # Generic response to prevent email enumeration
     return {
@@ -416,51 +740,45 @@ async def forgot_password(
 
 
 @router.post("/reset-password", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
 async def reset_password(
+    request: Request,
     payload: ResetPasswordRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSessionDep,
 ) -> dict:
-    """Verify the reset token and update the user's password."""
-    import jwt as pyjwt
+    """Consume a single-use reset token and update the user's password.
 
-    try:
-        token_data = pyjwt.decode(
-            payload.token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM]
-        )
-    except pyjwt.ExpiredSignatureError:
+    Post-reset operations:
+        * password_changed_at is set → all existing JWTs are invalidated.
+        * A security notification email is dispatched.
+    """
+    # Compute SHA-256 of the submitted raw token
+    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+
+    # Atomic single-use consumption
+    cache = _get_auth_cache()
+    user_id = await cache.consume_reset_token(token_hash)
+
+    if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Reset link has expired. Please request a new one.",
-        )
-    except pyjwt.PyJWTError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid reset token.",
+            detail="Invalid or expired reset token. Please request a new password reset.",
         )
 
-    # Ensure this is a password-reset token, not a regular session token
-    if token_data.get("type") != "password_reset":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid reset token.",
-        )
-
-    email = token_data.get("sub")
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid reset token.",
-        )
-
-    user = await UserRepository.get_user_by_email(db, email)
+    user = await UserRepository.get_user_by_id(db, user_id)
     if user is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token.",
         )
 
-    hashed = hash_password(payload.new_password)
-    await UserRepository.update_password(db, user, hashed)
+    # Generate new hash and update user
+    hashed = await bounded_hash_password(payload.new_password)
+    await UserRepository.update_password_with_timestamp(db, user, hashed)
+
+    # Dispatch security notification
+    background_tasks.add_task(send_password_changed_notification, user.email)
 
     return {
         "message": "Password has been reset successfully. You can now sign in with your new password."
@@ -596,6 +914,7 @@ async def microsoft_login(
             email=candidate_email,
             hashed_password=None,  # SSO users have no local password
             full_name=identity.display_name,
+            status=ACTIVE,
             commit=False,
         )
         external_identity = await ExternalIdentityRepository.create_external_identity(
@@ -819,6 +1138,7 @@ async def github_login_callback(
                 email=primary_email,
                 hashed_password=None,
                 full_name=full_name,
+                status=ACTIVE,
                 commit=False,
             )
             await AccountRepository.create_account(

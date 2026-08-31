@@ -192,6 +192,13 @@ class UserRecord(Base):
     hashed_password: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     organization: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+    status: Mapped[str] = mapped_column(VARCHAR(32), nullable=False, default="active")
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

@@ -76,6 +76,7 @@ def test_manifest_blocks_incompatible_historical_sequences() -> None:
         "scripts/migrations/20260822_0001_schema_reconciliation.sql",
         "scripts/migrations/20260826_0001_multitenant_partitioning.sql",
         "scripts/migrations/20260826_0002_archive_manifest.sql",
+        "scripts/migrations/20260831_0001_auth_lifecycle.sql",
     ]
     assert (
         blocked["scripts/migrations/20260805_add_ulid_to_logs.sql"]["status"]
