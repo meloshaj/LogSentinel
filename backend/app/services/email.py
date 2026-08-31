@@ -1,48 +1,232 @@
+"""Transactional email dispatcher for LogSentinel authentication flows.
+
+Provides functions for verification emails, password resets, and
+password-change notifications.  All functions use synchronous smtplib
+in FastAPI BackgroundTasks (which runs them in a thread pool).
+
+Security invariants:
+    * Plaintext codes and tokens are NEVER logged.
+    * Recipient email addresses are logged as truncated hashes.
+    * SMTP failures are caught and logged — they never crash the caller.
+    * Each function retries up to 3 times with exponential backoff.
+"""
+
+from __future__ import annotations
+
+import hashlib
 import logging
+import os
 import smtplib
+import time
 from email.message import EmailMessage
 
 from ..core.settings import get_smtp_settings
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("logsentinel.email")
+
+_MAX_RETRIES = 3
+_BACKOFF_BASE = 2  # seconds
+
+
+def _email_hash(email: str) -> str:
+    """Return a truncated SHA-256 hash of an email for safe logging."""
+    return hashlib.sha256(email.lower().encode()).hexdigest()[:12]
+
+
+def _frontend_url() -> str:
+    """Return the primary frontend URL from environment."""
+    urls = os.getenv("FRONTEND_URL", "http://localhost:8080")
+    return urls.split(",")[0].strip()
+
+
+def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> None:
+    """Send an email with retry logic and exponential backoff.
+
+    This is a synchronous function intended to run in a background
+    thread (via FastAPI BackgroundTasks).
+    """
+    settings = get_smtp_settings()
+    last_error: Exception | None = None
+
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            with smtplib.SMTP(settings.host, settings.port, timeout=10) as server:
+                # Use STARTTLS when not connecting to a local dev server
+                if settings.port != 1025:
+                    server.starttls()
+                if settings.user and settings.password:
+                    server.login(settings.user, settings.password)
+                server.send_message(msg)
+                logger.info(
+                    "Email sent to %s… (attempt %d/%d)",
+                    recipient_hash,
+                    attempt,
+                    _MAX_RETRIES,
+                )
+                return
+        except Exception as exc:
+            last_error = exc
+            delay = _BACKOFF_BASE ** attempt
+            logger.warning(
+                "Email dispatch attempt %d/%d failed for %s… (%s: %s). "
+                "Retrying in %ds.",
+                attempt,
+                _MAX_RETRIES,
+                recipient_hash,
+                type(exc).__name__,
+                exc,
+                delay,
+            )
+            if attempt < _MAX_RETRIES:
+                time.sleep(delay)
+
+    logger.error(
+        "Failed to send email to %s… after %d attempts. Last error: %s",
+        recipient_hash,
+        _MAX_RETRIES,
+        last_error,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Email Verification
+# ---------------------------------------------------------------------------
+
+
+def send_verification_email(email_to: str, code: str) -> None:
+    """Send a 6-digit email verification code.
+
+    The code is embedded in both HTML and plaintext parts.
+    """
+    settings = get_smtp_settings()
+    recipient_hash = _email_hash(email_to)
+
+    plain_body = (
+        f"Welcome to LogSentinel!\n\n"
+        f"Your email verification code is:\n\n"
+        f"    {code}\n\n"
+        f"This code expires in 10 minutes.\n\n"
+        f"If you did not create a LogSentinel account, please ignore this email.\n"
+    )
+
+    html_body = f"""\
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
+  <h2 style="color: #1a1a2e;">Welcome to LogSentinel</h2>
+  <p>Your email verification code is:</p>
+  <div style="background: #f0f4ff; border-radius: 8px; padding: 20px; text-align: center; margin: 24px 0;">
+    <span style="font-size: 32px; font-weight: 700; letter-spacing: 8px; color: #1a1a2e;">{code}</span>
+  </div>
+  <p style="color: #666; font-size: 14px;">This code expires in <strong>10 minutes</strong>.</p>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+  <p style="color: #999; font-size: 12px;">If you did not create a LogSentinel account, please ignore this email.</p>
+</body>
+</html>
+"""
+
+    msg = EmailMessage()
+    msg["Subject"] = "LogSentinel — Verify your email address"
+    msg["From"] = settings.emails_from_email
+    msg["To"] = email_to
+    msg.set_content(plain_body)
+    msg.add_alternative(html_body, subtype="html")
+
+    logger.info("Dispatching verification email to %s…", recipient_hash)
+    _send_with_retry(msg, recipient_hash)
+
+
+# ---------------------------------------------------------------------------
+# Password Reset
+# ---------------------------------------------------------------------------
 
 
 def send_password_reset_email(email_to: str, token: str) -> None:
-    """Send a password reset email using the configured SMTP server.
+    """Send a password reset email containing a single-use reset link.
 
-    In local development or test environments where SMTP_HOST is not valid
-    or accessible, this logs the token instead of crashing.
+    The ``token`` is the raw opaque token (not the hash).
     """
     settings = get_smtp_settings()
+    recipient_hash = _email_hash(email_to)
+    frontend = _frontend_url()
+    reset_url = f"{frontend}/reset-password?token={token}"
 
-    # In a real app, generate a URL based on FRONTEND_URL.
-    reset_url = f"https://logsentinel.local/reset-password?token={token}"
-
-    msg = EmailMessage()
-    msg.set_content(
-        f"You have requested a password reset.\n\n"
+    plain_body = (
+        f"You have requested a password reset for your LogSentinel account.\n\n"
         f"Click the link below to reset your password:\n"
         f"{reset_url}\n\n"
-        f"If you did not request this, please ignore this email."
+        f"This link expires in 15 minutes and can only be used once.\n\n"
+        f"If you did not request this, please ignore this email. "
+        f"Your password will remain unchanged.\n"
     )
-    msg["Subject"] = "LogSentinel - Password Reset Request"
+
+    html_body = f"""\
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
+  <h2 style="color: #1a1a2e;">Password Reset Request</h2>
+  <p>You have requested a password reset for your LogSentinel account.</p>
+  <div style="text-align: center; margin: 24px 0;">
+    <a href="{reset_url}" style="background: #4f46e5; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Reset Password</a>
+  </div>
+  <p style="color: #666; font-size: 14px;">This link expires in <strong>15 minutes</strong> and can only be used once.</p>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+  <p style="color: #999; font-size: 12px;">If you did not request this, please ignore this email. Your password will remain unchanged.</p>
+</body>
+</html>
+"""
+
+    msg = EmailMessage()
+    msg["Subject"] = "LogSentinel — Password Reset Request"
     msg["From"] = settings.emails_from_email
     msg["To"] = email_to
+    msg.set_content(plain_body)
+    msg.add_alternative(html_body, subtype="html")
 
-    try:
-        # We use sync smtplib in a background task (which FastAPI runs in a threadpool)
-        with smtplib.SMTP(settings.host, settings.port, timeout=5) as server:
-            server.starttls()  # Enforce TLS
-            if settings.user and settings.password:
-                server.login(settings.user, settings.password)
-            server.send_message(msg)
-            logger.info("Password reset email sent to %s", email_to)
-    except Exception as e:
-        logger.warning(
-            "Failed to send password reset email to %s via SMTP (%s:%s): %s. "
-            "Falling back to stdout logging (URL omitted for security).",
-            email_to,
-            settings.host,
-            settings.port,
-            str(e),
-        )
+    logger.info("Dispatching password reset email to %s…", recipient_hash)
+    _send_with_retry(msg, recipient_hash)
+
+
+# ---------------------------------------------------------------------------
+# Password Changed Notification
+# ---------------------------------------------------------------------------
+
+
+def send_password_changed_notification(email_to: str) -> None:
+    """Send a security notification that the user's password was changed.
+
+    This alert helps legitimate users detect unauthorized password resets.
+    """
+    settings = get_smtp_settings()
+    recipient_hash = _email_hash(email_to)
+
+    plain_body = (
+        f"Your LogSentinel account password was recently changed.\n\n"
+        f"If you made this change, no further action is needed.\n\n"
+        f"If you did NOT change your password, please contact support "
+        f"immediately as your account may be compromised.\n"
+    )
+
+    html_body = """\
+<html>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
+  <h2 style="color: #1a1a2e;">Password Changed</h2>
+  <p>Your LogSentinel account password was recently changed.</p>
+  <p>If you made this change, no further action is needed.</p>
+  <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px 16px; margin: 24px 0; border-radius: 4px;">
+    <strong>Did not make this change?</strong><br>
+    <span style="font-size: 14px;">Please contact support immediately as your account may be compromised.</span>
+  </div>
+  <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+  <p style="color: #999; font-size: 12px;">This is an automated security notification from LogSentinel.</p>
+</body>
+</html>
+"""
+
+    msg = EmailMessage()
+    msg["Subject"] = "LogSentinel — Your password was changed"
+    msg["From"] = settings.emails_from_email
+    msg["To"] = email_to
+    msg.set_content(plain_body)
+    msg.add_alternative(html_body, subtype="html")
+
+    logger.info("Dispatching password-changed notification to %s…", recipient_hash)
+    _send_with_retry(msg, recipient_hash)
