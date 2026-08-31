@@ -31,11 +31,9 @@ from backend.app.security.auth import get_current_user
 # ---------------------------------------------------------------------------
 
 
-@pytest_asyncio.fixture(scope="module")
-async def postgres_engine():
-    """Spin up a Postgres container and yield an async SQLAlchemy engine."""
-    # We use sync start() then wrap it for async usage, because testcontainers
-    # natively relies on sync Docker API
+@pytest.fixture(scope="module")
+def postgres_url():
+    """Spin up a Postgres container and yield the async connection URL."""
     container = PostgresContainer("postgres:15-alpine")
     container.start()
 
@@ -44,10 +42,16 @@ async def postgres_engine():
         "postgresql+psycopg2", "postgresql+asyncpg"
     )
 
-    engine = create_async_engine(url, echo=False)
+    yield url
+    container.stop()
+
+
+@pytest_asyncio.fixture
+async def postgres_engine(postgres_url):
+    """Create a new async engine per test to isolate event loops."""
+    engine = create_async_engine(postgres_url, echo=False)
 
     # Ensure the DB schema is created
-    # We need to run the raw SQL migrations to get the exact schema definitions
     async with engine.begin() as conn:
         from backend.app.core.orm import Base
 
@@ -56,7 +60,6 @@ async def postgres_engine():
     yield engine
 
     await engine.dispose()
-    container.stop()
 
 
 @pytest_asyncio.fixture
