@@ -65,11 +65,10 @@ class ArchiveWorker:
         )
 
         query = text("""
-            SELECT c.chunk_name, c.schema_name, d.range_start, d.range_end
-            FROM timescaledb_information.chunks c
-            JOIN timescaledb_information.dimensions d ON c.chunk_name = d.chunk_name
-            WHERE c.hypertable_name = 'logs' 
-              AND d.range_end < :retention_threshold
+            SELECT chunk_name, chunk_schema AS schema_name, range_start, range_end
+            FROM timescaledb_information.chunks
+            WHERE hypertable_name = 'logs' 
+              AND range_end < :retention_threshold
         """)
 
         async with engine.connect() as conn:

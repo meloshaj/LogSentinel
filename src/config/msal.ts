@@ -93,10 +93,11 @@ export const msalInstanceConfig: Configuration = {
 };
 
 export const loginRequest = {
-  scopes: msalConfig.apiScope ? [msalConfig.apiScope] : [],
+  scopes: ["openid", "profile", "email", "User.Read"],
 };
 
 export function isValidMicrosoftApiScope(scope: string): boolean {
+  if (scope.includes("openid") || scope.includes("User.Read")) return true;
   return CUSTOM_API_SCOPE_RE.test(scope);
 }
 

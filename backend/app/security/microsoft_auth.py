@@ -310,10 +310,12 @@ class MicrosoftTokenVerifier:
             raise InvalidMicrosoftTenantError()
 
         # ── Validate required scope ───────────────────────────────────
-        scp = payload.get("scp", "")
-        scopes = set(scp.split()) if isinstance(scp, str) else set()
-        if self._settings.required_scope not in scopes:
-            raise MissingRequiredScopeError()
+        # Note: ID Tokens do not contain 'scp' claims. We rely on 'aud' (audience) matching our Client ID.
+        scp = payload.get("scp")
+        if scp is not None and self._settings.required_scope:
+            scopes = set(scp.split()) if isinstance(scp, str) else set()
+            if self._settings.required_scope not in scopes:
+                raise MissingRequiredScopeError()
 
         # ── Extract stable identity ───────────────────────────────────
         sub = payload.get("sub", "")

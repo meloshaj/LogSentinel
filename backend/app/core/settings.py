@@ -494,11 +494,15 @@ class MicrosoftAuthSettings(BaseModel):
     def _validate_allowed_tenants(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         normalized: list[str] = []
         for value in values:
+            val_clean = value.strip().lower()
+            if val_clean in {"common", "organizations", "consumers"}:
+                normalized.append(val_clean)
+                continue
             try:
-                normalized.append(str(UUID(value.strip())))
+                normalized.append(str(UUID(val_clean)))
             except ValueError as exc:
                 raise ValueError(
-                    "AZURE_ALLOWED_TENANTS entries must be tenant GUIDs"
+                    "AZURE_ALLOWED_TENANTS entries must be tenant GUIDs or standard multi-tenant aliases"
                 ) from exc
         return tuple(normalized)
 
