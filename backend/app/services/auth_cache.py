@@ -227,7 +227,8 @@ class AuthCacheManager:
     @catch_redis_errors
     async def record_email_send(self, email: str, window_seconds: int = 3600) -> None:
         """Record an email send event in the sliding-window rate limiter."""
+        import uuid
         key = f"email_verify_rate:{email.strip().lower()}"
         now = time.time()
-        await self._redis.zadd(key, {str(now): now})
+        await self._redis.zadd(key, {f"{now}:{uuid.uuid4()}": now})
         await self._redis.expire(key, window_seconds)

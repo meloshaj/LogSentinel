@@ -27,9 +27,10 @@ import pytest
 import pytest_asyncio
 
 # Ensure test env is set before any app imports
+import base64
 os.environ.setdefault("ENVIRONMENT", "test")
-os.environ.setdefault("ENCRYPTION_KEY", "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=")
-os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-32-bytes-minimum-length-for-hs256")
+os.environ.setdefault("ENCRYPTION_KEY", base64.b64encode(b"0" * 32).decode("utf-8"))
+os.environ.setdefault("JWT_SECRET_KEY", "0" * 32)
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 from backend.app.core.user_status import ACTIVE, PENDING_VERIFICATION
