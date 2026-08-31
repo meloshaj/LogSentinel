@@ -1033,12 +1033,17 @@ class TestPhase7SecurityFixes:
             None  # User not found
         )
 
-        with patch(
-            "backend.app.routers.auth_router.UserRepository.get_user_by_email",
-            return_value=None,
-        ), patch(
-            "backend.app.routers.auth_router._get_auth_cache",
-            return_value=AsyncMock(reserve_email_action=AsyncMock(return_value=True)),
+        with (
+            patch(
+                "backend.app.routers.auth_router.UserRepository.get_user_by_email",
+                return_value=None,
+            ),
+            patch(
+                "backend.app.routers.auth_router._get_auth_cache",
+                return_value=AsyncMock(
+                    reserve_email_action=AsyncMock(return_value=True)
+                ),
+            ),
         ):
             # Exhaust semaphore slots
             original_semaphore = password_service._HASH_SEMAPHORE

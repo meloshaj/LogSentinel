@@ -64,12 +64,14 @@ def test_reset_email_escapes_and_does_not_log_raw_token(monkeypatch, caplog) -> 
 
     assert len(sent) == 1
     message = sent[0]
-    assert "token%26must-not-appear-in-logs" in message.get_body(
-        preferencelist=("plain",)
-    ).get_content()
-    assert "token%26must-not-appear-in-logs" in message.get_body(
-        preferencelist=("html",)
-    ).get_content()
+    assert (
+        "token%26must-not-appear-in-logs"
+        in message.get_body(preferencelist=("plain",)).get_content()
+    )
+    assert (
+        "token%26must-not-appear-in-logs"
+        in message.get_body(preferencelist=("html",)).get_content()
+    )
     assert raw_token not in caplog.text
 
 
@@ -112,13 +114,17 @@ async def test_suspended_password_login_never_issues_a_token() -> None:
             "path": "/api/auth/login",
         }
     )
-    with patch(
-        "backend.app.routers.auth_router.UserRepository.get_user_by_email",
-        new=AsyncMock(return_value=user),
-    ), patch(
-        "backend.app.routers.auth_router.bounded_verify_timing_sentinel",
-        new=AsyncMock(),
-    ), patch("backend.app.routers.auth_router.create_access_token") as create_token:
+    with (
+        patch(
+            "backend.app.routers.auth_router.UserRepository.get_user_by_email",
+            new=AsyncMock(return_value=user),
+        ),
+        patch(
+            "backend.app.routers.auth_router.bounded_verify_timing_sentinel",
+            new=AsyncMock(),
+        ),
+        patch("backend.app.routers.auth_router.create_access_token") as create_token,
+    ):
         with pytest.raises(HTTPException) as exc:
             await login_user(
                 request,

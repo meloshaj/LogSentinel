@@ -94,7 +94,9 @@ def validate_auth_email_configuration() -> None:
             or parsed.username
             or parsed.password
         ):
-            raise RuntimeError("FRONTEND_URL must contain HTTPS origins only in production")
+            raise RuntimeError(
+                "FRONTEND_URL must contain HTTPS origins only in production"
+            )
 
     smtp = get_smtp_settings()
     if (

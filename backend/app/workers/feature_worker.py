@@ -153,7 +153,9 @@ class FeatureExtractionWorker:
 
             for tenant_id, window in pending_windows:
                 try:
-                    feature_vector = self._extractors[tenant_id].extract_features(window)
+                    feature_vector = self._extractors[tenant_id].extract_features(
+                        window
+                    )
                     try:
                         if (
                             self.anomaly_detector is not None
@@ -257,7 +259,9 @@ class FeatureExtractionWorker:
 
     def clear_buffers(self) -> dict[str, int]:
         """Clear all internal buffers (for testing/debugging)."""
-        logs_removed = sum(extractor.clear_buffer() for extractor in self._extractors.values())
+        logs_removed = sum(
+            extractor.clear_buffer() for extractor in self._extractors.values()
+        )
         features_removed = len(self._feature_buffer)
         self._feature_buffer.clear()
 

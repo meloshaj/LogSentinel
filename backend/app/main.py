@@ -79,7 +79,9 @@ ingest_request_rate = _get_or_create_metric(
 )
 batch_ingestion_size = _get_or_create_metric(
     Counter,
-    "logsentinel_batch_ingestion_size_total", "Total logs ingested", ["endpoint"]
+    "logsentinel_batch_ingestion_size_total",
+    "Total logs ingested",
+    ["endpoint"],
 )
 active_websocket_connections = _get_or_create_gauge(
     "logsentinel_active_websocket_connections",
@@ -411,8 +413,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "and add them to your .env file."
         )
     if environment == "production" and (
-        not configured_encryption_key
-        or configured_encryption_key in _INSECURE_SECRETS
+        not configured_encryption_key or configured_encryption_key in _INSECURE_SECRETS
     ):
         raise RuntimeError(
             "FATAL: ENCRYPTION_KEY is missing or insecure in production. "

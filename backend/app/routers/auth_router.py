@@ -23,7 +23,14 @@ import os
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    ValidationError,
+    model_validator,
+)
 from sqlalchemy.exc import IntegrityError
 
 from ..core.database import AsyncSessionDep
@@ -1141,7 +1148,9 @@ async def github_login_callback(
                 or token_data.get("error")
                 or "No access token returned from GitHub"
             )
-            logger.error("GitHub token exchange failed: error_type=%s", type(gh_error).__name__)
+            logger.error(
+                "GitHub token exchange failed: error_type=%s", type(gh_error).__name__
+            )
             raise HTTPException(
                 status_code=400, detail=f"GitHub OAuth error: {gh_error}"
             )
