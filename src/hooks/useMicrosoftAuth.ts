@@ -152,7 +152,7 @@ export function useMicrosoftAuth() {
               ...loginRequest,
               account,
             });
-            microsoftAccessToken = silentResponse.accessToken;
+            microsoftAccessToken = silentResponse.idToken;
           } catch (silentError) {
             if (!(silentError instanceof InteractionRequiredAuthError)) {
               throw silentError;
@@ -162,7 +162,7 @@ export function useMicrosoftAuth() {
               ...loginRequest,
               account,
             });
-            microsoftAccessToken = popupResponse.accessToken;
+            microsoftAccessToken = popupResponse.idToken;
             instance.setActiveAccount(popupResponse.account ?? account);
           }
         } else {
@@ -179,7 +179,7 @@ export function useMicrosoftAuth() {
           }
 
           instance.setActiveAccount(loginResponse.account);
-          microsoftAccessToken = loginResponse.accessToken;
+          microsoftAccessToken = loginResponse.idToken;
 
           if (!microsoftAccessToken) {
             try {
@@ -187,7 +187,7 @@ export function useMicrosoftAuth() {
                 ...loginRequest,
                 account: loginResponse.account,
               });
-              microsoftAccessToken = silentResponse.accessToken;
+              microsoftAccessToken = silentResponse.idToken;
             } catch (silentError) {
               if (!(silentError instanceof InteractionRequiredAuthError)) {
                 throw silentError;
@@ -197,7 +197,7 @@ export function useMicrosoftAuth() {
                 ...loginRequest,
                 account: loginResponse.account,
               });
-              microsoftAccessToken = popupResponse.accessToken;
+              microsoftAccessToken = popupResponse.idToken;
               instance.setActiveAccount(
                 popupResponse.account ?? loginResponse.account,
               );

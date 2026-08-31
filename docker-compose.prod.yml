@@ -84,10 +84,20 @@ services:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
       - FRONTEND_URL=${FRONTEND_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}
       - RUN_ARCHIVE_WORKER_IN_LIFESPAN=false
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
+      - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
+      - AZURE_REQUIRED_SCOPE=${AZURE_REQUIRED_SCOPE:-access_as_user}
+      - AZURE_ALLOWED_TENANTS=${AZURE_ALLOWED_TENANTS:-}
+      - AZURE_JWKS_TIMEOUT=${AZURE_JWKS_TIMEOUT:-5.0}
+      - AZURE_JWKS_CACHE_TTL=${AZURE_JWKS_CACHE_TTL:-3600}
     volumes:
       - drain_data:/app/app/state
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 5

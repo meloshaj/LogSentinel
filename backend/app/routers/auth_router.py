@@ -248,20 +248,52 @@ async def google_login(
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.credential}"
-            )
-            if resp.status_code != 200:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid Google credential",
+            if payload.credential.startswith("ya29."):
+                # Validate access token
+                resp = await client.get(
+                    f"https://oauth2.googleapis.com/tokeninfo?access_token={payload.credential}"
                 )
-            idinfo = resp.json()
-            if idinfo.get("aud") != GOOGLE_CLIENT_ID:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Google credential audience mismatch",
+                if resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid Google access token",
+                    )
+                token_info = resp.json()
+                if token_info.get("aud") and token_info.get("aud") != GOOGLE_CLIENT_ID:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Google credential audience mismatch",
+                    )
+
+                # Fetch user profile using the access token
+                user_resp = await client.get(
+                    "https://www.googleapis.com/oauth2/v3/userinfo",
+                    headers={"Authorization": f"Bearer {payload.credential}"},
                 )
+                if user_resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Failed to retrieve Google user profile",
+                    )
+                idinfo = user_resp.json()
+            else:
+                # Validate id_token
+                resp = await client.get(
+                    f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.credential}"
+                )
+                if resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid Google id_token",
+                    )
+                idinfo = resp.json()
+                if idinfo.get("aud") != GOOGLE_CLIENT_ID:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Google credential audience mismatch",
+                    )
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -295,10 +327,10 @@ async def google_login(
     else:
         user = await UserRepository.get_user_by_email(db, email)
         if user is not None:
-            # User exists but has no google external identity (likely standard signup)
+            # User exists but has no google external identity (could be standard signup or other SSO)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="This email is registered with a standard password. Please sign in with your password.",
+                detail="This email is already connected to another sign-in method. Please sign in with your original method.",
             )
 
         try:
