@@ -26,7 +26,6 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
 
 from ..core.database import AsyncSessionDep
 from ..core.orm import UserRecord
@@ -41,12 +40,8 @@ from ..repositories.account_repository import AccountRepository
 from ..repositories.external_identity_repository import ExternalIdentityRepository
 from ..repositories.user_repository import UserRepository
 from ..security.auth import (
-    JWT_ALGORITHM,
-    JWT_SECRET_KEY,
     create_access_token,
     get_current_user,
-    hash_password,
-    verify_password,
 )
 from ..security.microsoft_auth import (
     InvalidMicrosoftTenantError,
@@ -64,12 +59,12 @@ from ..services.email import (
     send_verification_email,
 )
 from ..services.password import (
-    generate_reset_token,
-    generate_verification_code,
-    hash_verification_code,
     bounded_hash_password,
     bounded_verify_password,
     bounded_verify_timing_sentinel,
+    generate_reset_token,
+    generate_verification_code,
+    hash_verification_code,
 )
 
 logger = logging.getLogger("logsentinel.auth_router")
@@ -89,8 +84,9 @@ def _get_auth_cache() -> AuthCacheManager:
     """Return a cached AuthCacheManager backed by the application's Redis pool."""
     global _auth_cache
     if _auth_cache is None:
-        from ..core.redis import _redis_pool
         from redis.asyncio import Redis
+
+        from ..core.redis import _redis_pool
 
         if _redis_pool is None:
             raise HTTPException(
@@ -184,7 +180,10 @@ class VerifyEmailRequest(BaseModel):
 
     email: EmailStr
     code: str = Field(
-        ..., min_length=6, max_length=6, pattern=r"^\d{6}$",
+        ...,
+        min_length=6,
+        max_length=6,
+        pattern=r"^\d{6}$",
         description="6-digit verification code",
     )
 
@@ -225,10 +224,12 @@ async def register_user(
     verification email asynchronously.
     """
     normalized_email = payload.email.strip().lower()
-    
+
     # Use row-level lock to prevent TOCTOU race condition
-    existing_user = await UserRepository.get_user_by_email_for_update(db, normalized_email)
-    
+    existing_user = await UserRepository.get_user_by_email_for_update(
+        db, normalized_email
+    )
+
     settings = get_email_verification_settings()
     cache = _get_auth_cache()
 
@@ -250,7 +251,9 @@ async def register_user(
             )
         elif existing_user.status == PENDING_VERIFICATION:
             # Atomic check-and-set cooldown to prevent registration griefing
-            reserved = await cache.reserve_resend_cooldown(normalized_email, settings.resend_cooldown_seconds)
+            reserved = await cache.reserve_resend_cooldown(
+                normalized_email, settings.resend_cooldown_seconds
+            )
             if not reserved:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -259,9 +262,14 @@ async def register_user(
 
             # Re-registration of a pending user: update credentials and resend code
             from sqlalchemy.sql import func
-            existing_user.hashed_password = await bounded_hash_password(payload.password)
+
+            existing_user.hashed_password = await bounded_hash_password(
+                payload.password
+            )
             existing_user.full_name = payload.fullName or existing_user.full_name
-            existing_user.organization = payload.organization or existing_user.organization
+            existing_user.organization = (
+                payload.organization or existing_user.organization
+            )
             existing_user.created_at = func.now()
             await db.commit()
             await db.refresh(existing_user)
@@ -274,8 +282,10 @@ async def register_user(
             )
     else:
         # Atomic check-and-set cooldown for new user
-        await cache.reserve_resend_cooldown(normalized_email, settings.resend_cooldown_seconds)
-        
+        await cache.reserve_resend_cooldown(
+            normalized_email, settings.resend_cooldown_seconds
+        )
+
         # New user
         hashed = await bounded_hash_password(payload.password)
         user = await UserRepository.create_user(
@@ -293,7 +303,7 @@ async def register_user(
     cache = _get_auth_cache()
     code = generate_verification_code()
     code_hash = hash_verification_code(code)
-    
+
     try:
         await cache.store_verification_code(
             email=normalized_email,
@@ -314,7 +324,10 @@ async def register_user(
         # Clean up the reserved cooldown key on failure
         await cache.delete_cooldown(normalized_email)
         from ..services.auth_cache import AuthCacheUnavailableError
-        raise AuthCacheUnavailableError("Failed to persist verification code in cache.") from exc
+
+        raise AuthCacheUnavailableError(
+            "Failed to persist verification code in cache."
+        ) from exc
 
     # Dispatch verification email
     background_tasks.add_task(send_verification_email, normalized_email, code)
@@ -414,7 +427,9 @@ async def resend_verification(
     user = await UserRepository.get_user_by_email(db, normalized_email)
     if user is None or user.status != PENDING_VERIFICATION:
         # Uniform response to prevent enumeration
-        return {"message": "If a pending account exists, a new verification code has been sent."}
+        return {
+            "message": "If a pending account exists, a new verification code has been sent."
+        }
 
     # Generate and store new code
     code = generate_verification_code()
@@ -433,7 +448,9 @@ async def resend_verification(
     # Dispatch
     background_tasks.add_task(send_verification_email, normalized_email, code)
 
-    return {"message": "If a pending account exists, a new verification code has been sent."}
+    return {
+        "message": "If a pending account exists, a new verification code has been sent."
+    }
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -452,7 +469,7 @@ async def login_user(
     """
     user = await UserRepository.get_user_by_email(db, payload.email)
 
-    if user is not None and not user.hashed_password:
+    if user is not None and user.hashed_password is None:
         # SSO-only user attempting password login
         identities = await ExternalIdentityRepository.get_all_by_user_id(db, user.id)
         if identities:
@@ -463,6 +480,13 @@ async def login_user(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"This email is already registered using {provider} Login. Please sign in with {provider}.",
             )
+
+        # User has no password and no identities (invalid state)
+        await bounded_verify_timing_sentinel(payload.password)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+        )
 
     if user is None:
         await bounded_verify_timing_sentinel(payload.password)
@@ -481,7 +505,12 @@ async def login_user(
         )
 
     # Verify password with dual-algorithm support
-    valid, upgraded_hash = await bounded_verify_password(payload.password, user.hashed_password)
+    assert user.hashed_password is not None, (
+        "Password hash cannot be None at this point"
+    )
+    valid, upgraded_hash = await bounded_verify_password(
+        payload.password, user.hashed_password
+    )
     if not valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -600,12 +629,25 @@ async def google_login(
     full_name: str | None = idinfo.get("name")
 
     # Find or create user
+    iss = idinfo.get("iss", "https://accounts.google.com")
     ext_identity = await ExternalIdentityRepository.get_by_provider_identity(
         db,
         provider="google",
-        issuer="https://accounts.google.com",
+        issuer=iss,
         subject=idinfo.get("sub", ""),
     )
+    if ext_identity is None:
+        alt_iss = (
+            "accounts.google.com"
+            if iss == "https://accounts.google.com"
+            else "https://accounts.google.com"
+        )
+        ext_identity = await ExternalIdentityRepository.get_by_provider_identity(
+            db,
+            provider="google",
+            issuer=alt_iss,
+            subject=idinfo.get("sub", ""),
+        )
 
     if ext_identity is not None:
         user = await UserRepository.get_user_by_id(db, ext_identity.user_id)
@@ -637,7 +679,7 @@ async def google_login(
                     db=db,
                     user_id=user.id,
                     provider="google",
-                    issuer=idinfo.get("iss", "accounts.google.com"),
+                    issuer=idinfo.get("iss", "https://accounts.google.com"),
                     subject=idinfo.get("sub", ""),
                     email=email,
                     display_name=full_name,

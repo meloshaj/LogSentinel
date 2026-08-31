@@ -1,3 +1,4 @@
+# ruff: noqa: SIM117
 """Integration tests for the authentication lifecycle.
 
 Tests cover:
@@ -16,6 +17,9 @@ engine so no real infrastructure is required.
 from __future__ import annotations
 
 import asyncio
+
+# Ensure test env is set before any app imports
+import base64
 import hashlib
 import json
 import os
@@ -24,12 +28,10 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
-# Ensure test env is set before any app imports
 os.environ.setdefault("ENVIRONMENT", "test")
-os.environ.setdefault("ENCRYPTION_KEY", "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=")
-os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-32-bytes-minimum-length-for-hs256")
+os.environ.setdefault("ENCRYPTION_KEY", base64.b64encode(b"0" * 32).decode("utf-8"))
+os.environ.setdefault("JWT_SECRET_KEY", "0" * 32)
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 from backend.app.core.user_status import ACTIVE, PENDING_VERIFICATION
@@ -41,7 +43,6 @@ from backend.app.services.password import (
     verify_and_update_password,
     verify_timing_sentinel,
 )
-
 
 # ─── Unit Tests: Password Service ───────────────────────────────────────────
 
@@ -212,7 +213,8 @@ class TestAuthCacheManager:
             if min_score == "-inf":
                 min_score = float("-inf")
             to_remove = [
-                k for k, v in sorted_sets[key].items()
+                k
+                for k, v in sorted_sets[key].items()
                 if float(min_score) <= v <= float(max_score)
             ]
             for k in to_remove:
@@ -234,6 +236,7 @@ class TestAuthCacheManager:
         # For Lua scripts, we simulate inline
         def mock_register_script(script_text):
             """Create a callable that simulates the Lua script logic."""
+
             async def execute(keys=None, args=None):
                 key = keys[0] if keys else None
 
@@ -273,6 +276,7 @@ class TestAuthCacheManager:
     @pytest.fixture
     def cache(self, mock_redis):
         from backend.app.services.auth_cache import AuthCacheManager
+
         return AuthCacheManager(mock_redis)
 
     @pytest.mark.asyncio
@@ -282,7 +286,9 @@ class TestAuthCacheManager:
         code = "123456"
         code_hash = hash_verification_code(code, b"test")
 
-        await cache.store_verification_code(email, code_hash, user_id=42, ttl_seconds=600)
+        await cache.store_verification_code(
+            email, code_hash, user_id=42, ttl_seconds=600
+        )
         result = await cache.verify_code(email, code_hash, max_attempts=5)
         assert result == 42
 
@@ -310,7 +316,7 @@ class TestAuthCacheManager:
         for i in range(5):
             result = await cache.verify_code(email, wrong_hash, max_attempts=5)
             if i < 4:
-                assert result == -3, f"Attempt {i+1} should return -3"
+                assert result == -3, f"Attempt {i + 1} should return -3"
 
         # 6th attempt should be lockout (-2) or expired (-1)
         result = await cache.verify_code(email, wrong_hash, max_attempts=5)
@@ -335,7 +341,7 @@ class TestAuthCacheManager:
     @pytest.mark.asyncio
     async def test_store_and_consume_reset_token(self, cache):
         """Happy path: store and consume a reset token."""
-        raw, token_hash = generate_reset_token()
+        __raw, token_hash = generate_reset_token()
 
         await cache.store_reset_token(token_hash, user_id=55, ttl_seconds=900)
         user_id = await cache.consume_reset_token(token_hash)
@@ -344,7 +350,7 @@ class TestAuthCacheManager:
     @pytest.mark.asyncio
     async def test_reset_token_replay_prevention(self, cache):
         """A consumed reset token should not be usable a second time."""
-        raw, token_hash = generate_reset_token()
+        __raw, token_hash = generate_reset_token()
 
         await cache.store_reset_token(token_hash, user_id=55)
 
@@ -410,8 +416,6 @@ class TestJWTSessionInvalidation:
 
     def test_token_issued_before_password_change_is_rejected(self):
         """A token with iat < password_changed_at should be considered invalid."""
-        import jwt as pyjwt
-        from backend.app.security.auth import JWT_SECRET_KEY
 
         # Token issued at time T
         issued_at = datetime(2026, 8, 30, 12, 0, 0, tzinfo=timezone.utc)
@@ -450,51 +454,55 @@ class TestJWTSessionInvalidation:
 
     def test_timezone_naive_and_aware_handling(self):
         """Verify both naive and aware datetimes are normalized successfully."""
-        from fastapi import HTTPException
-        from backend.app.security.auth import get_current_user
-        from fastapi.security import HTTPAuthorizationCredentials
         from backend.app.core.orm import UserRecord
-        
+
         # Test 1: Naive Datetime
-        naive_dt = datetime(2026, 8, 30, 12, 0, 0)
+        naive_dt = datetime(2026, 8, 30, 12, 0, 0, tzinfo=timezone.utc)
         user = UserRecord(email="naive@example.com", password_changed_at=naive_dt)
-        
+
         safe_changed_at = user.password_changed_at.replace(microsecond=0)
         if safe_changed_at.tzinfo is None:
             safe_changed_at = safe_changed_at.replace(tzinfo=timezone.utc)
-        
+
         assert safe_changed_at.tzinfo == timezone.utc
-        
+
         # Test 2: Aware Datetime
         aware_dt = datetime(2026, 8, 30, 12, 0, 0, tzinfo=timezone(timedelta(hours=2)))
         user2 = UserRecord(email="aware@example.com", password_changed_at=aware_dt)
-        
+
         safe_changed_at2 = user2.password_changed_at.replace(microsecond=0)
         safe_changed_at2 = safe_changed_at2.astimezone(timezone.utc)
-        
+
         assert safe_changed_at2.tzinfo == timezone.utc
         assert safe_changed_at2.hour == 10  # 12:00 +02:00 -> 10:00 UTC
 
     @pytest.mark.asyncio
     async def test_get_current_user_null_password_changed_at(self):
         """Verify get_current_user skips validation when password_changed_at is None."""
-        from fastapi.security import HTTPAuthorizationCredentials
-        from backend.app.security.auth import get_current_user
-        from backend.app.core.orm import UserRecord
         import jwt as pyjwt
-        from backend.app.security.auth import JWT_SECRET_KEY, JWT_ALGORITHM
-        
+        from backend.app.core.orm import UserRecord
+        from backend.app.security.auth import (
+            JWT_ALGORITHM,
+            JWT_SECRET_KEY,
+            get_current_user,
+        )
+        from fastapi.security import HTTPAuthorizationCredentials
+
         user = UserRecord(id=1, email="nullpass@example.com", password_changed_at=None)
-        
+
         # Mock the DB session dependency to return the user
         mock_db = MagicMock()
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = user
         mock_db.execute = AsyncMock(return_value=mock_result)
-        
-        token = pyjwt.encode({"sub": user.email, "exp": time.time() + 3600, "iat": time.time()}, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+        token = pyjwt.encode(
+            {"sub": user.email, "exp": time.time() + 3600, "iat": time.time()},
+            JWT_SECRET_KEY,
+            algorithm=JWT_ALGORITHM,
+        )
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-        
+
         # Should not raise any AttributeError
         resolved_user = await get_current_user(creds, mock_db)
         assert resolved_user.id == 1
@@ -534,6 +542,7 @@ class TestUserStatus:
 
     def test_all_statuses(self):
         from backend.app.core.user_status import ALL_STATUSES, SUSPENDED
+
         assert PENDING_VERIFICATION in ALL_STATUSES
         assert ACTIVE in ALL_STATUSES
         assert SUSPENDED in ALL_STATUSES
@@ -543,34 +552,36 @@ class TestUserStatus:
 
 
 class TestOperationalResilience:
-    
     @pytest.mark.asyncio
     async def test_gc_loop_exception_recovery(self):
         """Ensure an exception in the DB block does not crash the infinite loop."""
         from backend.app.main import _auth_gc_loop
         from fastapi import FastAPI
-        
+
         app = FastAPI()
         app.state.redis = None  # Mock redis missing
-        
+
         # Mock the get_session_factory to throw an exception
-        with patch("backend.app.core.database.get_session_factory", side_effect=Exception("DB Connection Drop!")):
+        with patch(
+            "backend.app.core.database.get_session_factory",
+            side_effect=Exception("DB Connection Drop!"),
+        ):
             # Also mock asyncio.sleep so we can track calls and abort the loop
             sleep_calls = 0
-            
+
             async def mock_sleep(*args, **kwargs):
                 nonlocal sleep_calls
                 sleep_calls += 1
                 if sleep_calls >= 2:
                     raise asyncio.CancelledError("Stop Loop")
-            
+
             with patch("asyncio.sleep", new_callable=AsyncMock, side_effect=mock_sleep):
                 try:
                     await _auth_gc_loop(app)
                 except asyncio.CancelledError:
                     pass
-            
-            # The sleep should have been called twice, proving the exception was swallowed 
+
+            # The sleep should have been called twice, proving the exception was swallowed
             # and the loop continued to the next iteration
             assert sleep_calls == 2
 
@@ -578,17 +589,18 @@ class TestOperationalResilience:
     async def test_lua_integer_type_parsing(self):
         """Ensure auth_cache explicitly checks isinstance(result, int)."""
         from backend.app.services.auth_cache import AuthCacheManager
+
         mock_redis = AsyncMock()
-        
+
         # Simulate Lua returning exactly an integer, e.g. -2 for lockout
         async def mock_script(keys=None, args=None):
             return -2
-            
+
         mock_redis.register_script = MagicMock(return_value=mock_script)
-        
+
         cache = AuthCacheManager(mock_redis)
         result = await cache.verify_code("test@example.com", "hash", max_attempts=5)
-        
+
         # Must return the integer directly, rather than raising JSON/string type errors
         assert result == -2
 
@@ -597,29 +609,47 @@ class TestOperationalResilience:
 
 
 class TestPhase5Hardening:
-
     @pytest.mark.asyncio
     async def test_registration_preempts_unverified_account(self):
         """Test registration overwrites a pending account instead of 409."""
-        from backend.app.routers.auth_router import register_user
-        from backend.app.routers.auth_router import UserRegisterRequest
-        from backend.app.core.user_status import PENDING_VERIFICATION
         from backend.app.core.orm import UserRecord
+        from backend.app.core.user_status import PENDING_VERIFICATION
+        from backend.app.routers.auth_router import UserRegisterRequest, register_user
         from fastapi import BackgroundTasks, Request
-        
+
         mock_db = AsyncMock()
-        mock_user = UserRecord(email="test@example.com", status=PENDING_VERIFICATION, hashed_password="old")
-        
+        mock_user = UserRecord(
+            email="test@example.com", status=PENDING_VERIFICATION, hashed_password="old"
+        )
+
         # Create a valid starlette Request object for the slowapi limiter
-        dummy_request = Request(scope={"type": "http", "method": "POST", "headers": [], "client": ("127.0.238.44", 8000), "path": "/api/auth/register"})
-        
-        with patch("backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update", return_value=mock_user):
+        dummy_request = Request(
+            scope={
+                "type": "http",
+                "method": "POST",
+                "headers": [],
+                "client": ("127.0.238.44", 8000),
+                "path": "/api/auth/register",
+            }
+        )
+
+        with patch(
+            "backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update",
+            return_value=mock_user,
+        ):
             mock_cache = AsyncMock()
             mock_cache.check_resend_cooldown.return_value = False
-            with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
-                req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
+            with patch(
+                "backend.app.routers.auth_router._get_auth_cache",
+                return_value=mock_cache,
+            ):
+                req = UserRegisterRequest(
+                    email="test@example.com", password=f"TestPass{123}!"
+                )
                 # The endpoint should return a 201 response, not raise HTTP 409
-                res = await register_user(dummy_request, req, BackgroundTasks(), mock_db)
+                res = await register_user(
+                    dummy_request, req, BackgroundTasks(), mock_db
+                )
                 assert res.status == "pending_verification"
                 assert mock_user.hashed_password != "old"
                 assert mock_db.commit.called
@@ -627,24 +657,44 @@ class TestPhase5Hardening:
     @pytest.mark.asyncio
     async def test_registration_active_account_returns_409(self):
         """Test registration on an active account still throws 409."""
-        from backend.app.routers.auth_router import register_user
-        from backend.app.routers.auth_router import UserRegisterRequest
-        from backend.app.core.user_status import ACTIVE
         from backend.app.core.orm import UserRecord
+        from backend.app.core.user_status import ACTIVE
+        from backend.app.routers.auth_router import UserRegisterRequest, register_user
         from fastapi import BackgroundTasks, HTTPException, Request
-        
+
         mock_db = AsyncMock()
         mock_user = UserRecord(email="test@example.com", status=ACTIVE)
-        
+
         # Create a valid starlette Request object for the slowapi limiter
-        dummy_request = Request(scope={"type": "http", "method": "POST", "headers": [], "client": ("127.0.100.101", 8000), "path": "/api/auth/register"})
-        
-        with patch("backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update", return_value=mock_user):
-            with patch("backend.app.routers.auth_router.ExternalIdentityRepository.get_all_by_user_id", return_value=[]):
-                with patch("backend.app.routers.auth_router._get_auth_cache", return_value=AsyncMock()):
-                    req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
+        dummy_request = Request(
+            scope={
+                "type": "http",
+                "method": "POST",
+                "headers": [],
+                "client": ("127.0.100.101", 8000),
+                "path": "/api/auth/register",
+            }
+        )
+
+        with patch(
+            "backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update",
+            return_value=mock_user,
+        ):
+            with patch(
+                "backend.app.routers.auth_router.ExternalIdentityRepository.get_all_by_user_id",
+                return_value=[],
+            ):
+                with patch(
+                    "backend.app.routers.auth_router._get_auth_cache",
+                    return_value=AsyncMock(),
+                ):
+                    req = UserRegisterRequest(
+                        email="test@example.com", password=f"TestPass{123}!"
+                    )
                     with pytest.raises(HTTPException) as exc:
-                        await register_user(dummy_request, req, BackgroundTasks(), mock_db)
+                        await register_user(
+                            dummy_request, req, BackgroundTasks(), mock_db
+                        )
                     assert exc.value.status_code == 409
 
     @pytest.mark.asyncio
@@ -652,15 +702,20 @@ class TestPhase5Hardening:
         """Test that the semaphore allows execution without deadlocking."""
         import backend.app.services.password as password_service
         from backend.app.services.password import bounded_hash_password
-        
+
         async def mock_run_in_threadpool(*args, **kwargs):
             await asyncio.sleep(0.01)
             return "hash"
-            
-        with patch.object(password_service, "run_in_threadpool", side_effect=mock_run_in_threadpool):
+
+        with patch.object(
+            password_service, "run_in_threadpool", side_effect=mock_run_in_threadpool
+        ):
             # We spawn 15 concurrent tasks, the semaphore has a limit of 10.
             # They should all eventually complete.
-            tasks = [asyncio.create_task(bounded_hash_password("password")) for _ in range(15)]
+            tasks = [
+                asyncio.create_task(bounded_hash_password("password"))
+                for _ in range(15)
+            ]
             results = await asyncio.gather(*tasks)
             assert len(results) == 15
             assert all(isinstance(r, str) for r in results)
@@ -668,12 +723,15 @@ class TestPhase5Hardening:
     @pytest.mark.asyncio
     async def test_cache_outage_fails_closed(self):
         """Test AuthCacheUnavailableError is raised on Redis connection failure."""
-        from backend.app.services.auth_cache import AuthCacheManager, AuthCacheUnavailableError
         import redis.exceptions
-        
+        from backend.app.services.auth_cache import (
+            AuthCacheManager,
+            AuthCacheUnavailableError,
+        )
+
         mock_redis = AsyncMock()
         mock_redis.set.side_effect = redis.exceptions.ConnectionError("Network Down")
-        
+
         cache = AuthCacheManager(mock_redis)
         with pytest.raises(AuthCacheUnavailableError):
             await cache.store_verification_code("test@example.com", "hash", 1)
@@ -686,8 +744,8 @@ class TestPhase6Reliability:
     async def test_hash_semaphore_backpressure_timeout(self):
         """Verify that requests waiting longer than 2.0s for a hash slot receive HTTP 503."""
         import backend.app.services.password as password_service
-        from fastapi import HTTPException
         from backend.app.services.password import bounded_hash_password
+        from fastapi import HTTPException
 
         # Mock the run_in_threadpool to block indefinitely
         async def mock_run_in_threadpool(*args, **kwargs):
@@ -696,7 +754,10 @@ class TestPhase6Reliability:
 
         # Patch run_in_threadpool just for this test
         import asyncio
-        with patch.object(password_service, "run_in_threadpool", side_effect=mock_run_in_threadpool):
+
+        with patch.object(
+            password_service, "run_in_threadpool", side_effect=mock_run_in_threadpool
+        ):
             # Also patch the timeout to be very short for the test so we don't wait 2 seconds
             with patch("asyncio.timeout", return_value=asyncio.timeout(0.1)):
                 original_limit = password_service._HASH_SEMAPHORE
@@ -712,22 +773,38 @@ class TestPhase6Reliability:
     @pytest.mark.asyncio
     async def test_registration_preemption_respects_cooldown(self):
         """Confirm that attempting to pre-empt an unverified user during the active cooldown returns HTTP 429."""
-        from backend.app.routers.auth_router import register_user, UserRegisterRequest
-        from backend.app.core.user_status import PENDING_VERIFICATION
         from backend.app.core.orm import UserRecord
+        from backend.app.core.user_status import PENDING_VERIFICATION
+        from backend.app.routers.auth_router import UserRegisterRequest, register_user
         from fastapi import BackgroundTasks, HTTPException, Request
 
         mock_db = AsyncMock()
         mock_user = UserRecord(email="test@example.com", status=PENDING_VERIFICATION)
-        dummy_request = Request(scope={"type": "http", "method": "POST", "headers": [], "client": ("127.0.179.200", 8000), "path": "/api/auth/register"})
+        dummy_request = Request(
+            scope={
+                "type": "http",
+                "method": "POST",
+                "headers": [],
+                "client": ("127.0.179.200", 8000),
+                "path": "/api/auth/register",
+            }
+        )
 
         # Mock repository to return the pending user
-        with patch("backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update", return_value=mock_user):
+        with patch(
+            "backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update",
+            return_value=mock_user,
+        ):
             # Mock cache to return False for reserve_resend_cooldown
             mock_cache = AsyncMock()
             mock_cache.reserve_resend_cooldown.return_value = False
-            with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
-                req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
+            with patch(
+                "backend.app.routers.auth_router._get_auth_cache",
+                return_value=mock_cache,
+            ):
+                req = UserRegisterRequest(
+                    email="test@example.com", password=f"TestPass{123}!"
+                )
                 with pytest.raises(HTTPException) as exc:
                     await register_user(dummy_request, req, BackgroundTasks(), mock_db)
                 assert exc.value.status_code == 429
@@ -736,26 +813,54 @@ class TestPhase6Reliability:
     @pytest.mark.asyncio
     async def test_registration_dual_write_failure_rollback(self):
         """Simulate a cache write failure after DB insertion and confirm user is rolled back."""
-        from backend.app.routers.auth_router import register_user, UserRegisterRequest
         from backend.app.core.orm import UserRecord
+        from backend.app.routers.auth_router import UserRegisterRequest, register_user
         from backend.app.services.auth_cache import AuthCacheUnavailableError
         from fastapi import BackgroundTasks, Request
 
         mock_db = AsyncMock()
-        mock_user = UserRecord(id=99, email="new@example.com", status="pending_verification")
-        dummy_request = Request(scope={"type": "http", "method": "POST", "headers": [], "client": ("127.0.229.163", 8000), "path": "/api/auth/register"})
+        mock_user = UserRecord(
+            id=99, email="new@example.com", status="pending_verification"
+        )
+        dummy_request = Request(
+            scope={
+                "type": "http",
+                "method": "POST",
+                "headers": [],
+                "client": ("127.0.229.163", 8000),
+                "path": "/api/auth/register",
+            }
+        )
 
-        with patch("backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update", return_value=None):
-            with patch("backend.app.routers.auth_router.UserRepository.create_user", return_value=mock_user):
-                with patch("backend.app.routers.auth_router.bounded_hash_password", return_value="hash"):
+        with patch(
+            "backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update",
+            return_value=None,
+        ):
+            with patch(
+                "backend.app.routers.auth_router.UserRepository.create_user",
+                return_value=mock_user,
+            ):
+                with patch(
+                    "backend.app.routers.auth_router.bounded_hash_password",
+                    return_value="hash",
+                ):
                     mock_cache = AsyncMock()
                     # Trigger a cache failure
-                    mock_cache.store_verification_code.side_effect = AuthCacheUnavailableError("Cache down")
-                    with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
-                        req = UserRegisterRequest(email="new@example.com", password=f"TestPass{123}!")
+                    mock_cache.store_verification_code.side_effect = (
+                        AuthCacheUnavailableError("Cache down")
+                    )
+                    with patch(
+                        "backend.app.routers.auth_router._get_auth_cache",
+                        return_value=mock_cache,
+                    ):
+                        req = UserRegisterRequest(
+                            email="new@example.com", password=f"TestPass{123}!"
+                        )
                         with pytest.raises(AuthCacheUnavailableError):
-                            await register_user(dummy_request, req, BackgroundTasks(), mock_db)
-                        
+                            await register_user(
+                                dummy_request, req, BackgroundTasks(), mock_db
+                            )
+
                         # Assert rollback was called
                         mock_db.delete.assert_called_once_with(mock_user)
                         # Assert it was committed
@@ -768,32 +873,37 @@ class TestPhase7SecurityFixes:
     @pytest.mark.asyncio
     async def test_semaphore_timeout_does_not_release_running_thread(self):
         """Verify that timeout does not release semaphore if thread is still running."""
+        import asyncio
+
         import backend.app.services.password as password_service
         from backend.app.services.password import bounded_hash_password
         from fastapi import HTTPException
-        import asyncio
-        
+
         original_semaphore = password_service._HASH_SEMAPHORE
         password_service._HASH_SEMAPHORE = asyncio.Semaphore(1)
-        
+
         async def mock_run_in_threadpool(*args, **kwargs):
             await asyncio.sleep(0.5)
             return "hash"
-            
+
         try:
-            with patch.object(password_service, "run_in_threadpool", side_effect=mock_run_in_threadpool):
+            with patch.object(
+                password_service,
+                "run_in_threadpool",
+                side_effect=mock_run_in_threadpool,
+            ):
                 # Task 1 starts and acquires the semaphore, thread takes 0.5s
                 t1 = asyncio.create_task(bounded_hash_password("password"))
-                await asyncio.sleep(0.05) # Yield to let t1 acquire
-                
+                await asyncio.sleep(0.05)  # Yield to let t1 acquire
+
                 # Task 2 tries to acquire but is blocked by t1. It will time out on acquire.
                 with patch("asyncio.timeout", return_value=asyncio.timeout(0.1)):
                     t2 = asyncio.create_task(bounded_hash_password("password"))
-                    
+
                     with pytest.raises(HTTPException) as exc:
                         await t2
                     assert exc.value.status_code == 503
-                    
+
                 # The semaphore should STILL be locked by t1 because t1 is in the 0.5s sleep!
                 assert password_service._HASH_SEMAPHORE.locked()
                 await t1
@@ -805,16 +915,15 @@ class TestPhase7SecurityFixes:
     @pytest.mark.asyncio
     async def test_preemption_concurrent_race_prevented(self):
         """Assert that exactly one succeeds (201) and one is rejected by the cooldown lock (429)."""
-        from backend.app.routers.auth_router import register_user, UserRegisterRequest
-        from backend.app.core.user_status import PENDING_VERIFICATION
-        from backend.app.core.orm import UserRecord
-        from fastapi import BackgroundTasks, HTTPException, Request
         import asyncio
+
+        from backend.app.core.orm import UserRecord
+        from backend.app.core.user_status import PENDING_VERIFICATION
+        from backend.app.routers.auth_router import UserRegisterRequest, register_user
+        from fastapi import BackgroundTasks, HTTPException, Request
 
         mock_db = AsyncMock()
         mock_user = UserRecord(email="test@example.com", status=PENDING_VERIFICATION)
-        
-        pass
 
         # Real cache logic for reserve_resend_cooldown is atomic, so we mock it to simulate a race:
         # first call returns True, second call returns False
@@ -822,48 +931,85 @@ class TestPhase7SecurityFixes:
         mock_cache.reserve_resend_cooldown.side_effect = [True, False]
 
         req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
-        dummy_req = Request(scope={"type": "http", "method": "POST", "headers": [], "client": ("127.0.0.1", 8000), "path": "/api/auth/register"})
+        dummy_req = Request(
+            scope={
+                "type": "http",
+                "method": "POST",
+                "headers": [],
+                "client": ("127.0.0.1", 8000),
+                "path": "/api/auth/register",
+            }
+        )
 
-        with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
-            with patch("backend.app.routers.auth_router.bounded_hash_password", return_value="hash"):
-                with patch("backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update", return_value=mock_user):
+        with patch(
+            "backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache
+        ):
+            with patch(
+                "backend.app.routers.auth_router.bounded_hash_password",
+                return_value="hash",
+            ):
+                with patch(
+                    "backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update",
+                    return_value=mock_user,
+                ):
                     # Call register_user twice
                     res1 = register_user(dummy_req, req, BackgroundTasks(), mock_db)
                     res2 = register_user(dummy_req, req, BackgroundTasks(), mock_db)
                     results = await asyncio.gather(res1, res2, return_exceptions=True)
-                    
+
                     successes = [r for r in results if not isinstance(r, Exception)]
-                    exceptions = [r for r in results if isinstance(r, HTTPException) and r.status_code == 429]
-                    
+                    exceptions = [
+                        r
+                        for r in results
+                        if isinstance(r, HTTPException) and r.status_code == 429
+                    ]
+
                     assert len(successes) == 1
                     assert len(exceptions) == 1
 
     @pytest.mark.asyncio
     async def test_compensating_transaction_preserves_preempted_user(self):
         """Send a preemption registration request. Verify that 503 is returned and the original user record still exists in the database."""
-        from backend.app.routers.auth_router import register_user, UserRegisterRequest
-        from backend.app.services.auth_cache import AuthCacheUnavailableError
-        from backend.app.core.user_status import PENDING_VERIFICATION
         from backend.app.core.orm import UserRecord
+        from backend.app.core.user_status import PENDING_VERIFICATION
+        from backend.app.routers.auth_router import UserRegisterRequest, register_user
+        from backend.app.services.auth_cache import AuthCacheUnavailableError
         from fastapi import BackgroundTasks, Request
 
         mock_db = AsyncMock()
-        mock_user = UserRecord(id=99, email="test@example.com", status=PENDING_VERIFICATION)
-        pass
+        mock_user = UserRecord(
+            id=99, email="test@example.com", status=PENDING_VERIFICATION
+        )
 
         mock_cache = AsyncMock()
         mock_cache.reserve_resend_cooldown.return_value = True
         mock_cache.store_verification_code.side_effect = Exception("Cache failure")
 
         req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
-        dummy_req = Request(scope={"type": "http", "method": "POST", "headers": [], "client": ("127.0.0.1", 8000), "path": "/api/auth/register"})
+        dummy_req = Request(
+            scope={
+                "type": "http",
+                "method": "POST",
+                "headers": [],
+                "client": ("127.0.0.1", 8000),
+                "path": "/api/auth/register",
+            }
+        )
 
-        with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
-            with patch("backend.app.routers.auth_router.bounded_hash_password", return_value="hash"):
-                with patch("backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update", return_value=mock_user):
+        with patch(
+            "backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache
+        ):
+            with patch(
+                "backend.app.routers.auth_router.bounded_hash_password",
+                return_value="hash",
+            ):
+                with patch(
+                    "backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update",
+                    return_value=mock_user,
+                ):
                     with pytest.raises(AuthCacheUnavailableError):
                         await register_user(dummy_req, req, BackgroundTasks(), mock_db)
-                
+
                 # Rollback should be called, but NOT db.delete
                 assert mock_db.rollback.called
                 assert not mock_db.delete.called
@@ -872,26 +1018,46 @@ class TestPhase7SecurityFixes:
     @pytest.mark.asyncio
     async def test_forgot_password_does_not_consume_hashing_semaphore(self):
         """Exhaust all _HASH_SEMAPHORE slots artificially. Dispatch request to /forgot-password for a non-existent email."""
-        from backend.app.routers.auth_router import forgot_password, ForgotPasswordRequest
-        from fastapi import BackgroundTasks, Request
-        import backend.app.services.password as password_service
         import asyncio
 
+        import backend.app.services.password as password_service
+        from backend.app.routers.auth_router import (
+            ForgotPasswordRequest,
+            forgot_password,
+        )
+        from fastapi import BackgroundTasks, Request
+
         mock_db = AsyncMock()
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None # User not found
-        
-        with patch("backend.app.routers.auth_router.UserRepository.get_user_by_email", return_value=None):
+        mock_db.execute.return_value.scalar_one_or_none.return_value = (
+            None  # User not found
+        )
+
+        with patch(
+            "backend.app.routers.auth_router.UserRepository.get_user_by_email",
+            return_value=None,
+        ):
             # Exhaust semaphore slots
             original_semaphore = password_service._HASH_SEMAPHORE
             password_service._HASH_SEMAPHORE = asyncio.Semaphore(1)
-            await password_service._HASH_SEMAPHORE.acquire() # Exhausted
-            
+            await password_service._HASH_SEMAPHORE.acquire()  # Exhausted
+
             req = ForgotPasswordRequest(email="nonexistent@example.com")
-            dummy_req = Request(scope={"type": "http", "method": "POST", "headers": [], "client": ("127.0.0.1", 8000), "path": "/api/auth/forgot-password"})
-            
+            dummy_req = Request(
+                scope={
+                    "type": "http",
+                    "method": "POST",
+                    "headers": [],
+                    "client": ("127.0.0.1", 8000),
+                    "path": "/api/auth/forgot-password",
+                }
+            )
+
             try:
                 # Should not block or timeout because it doesn't use the semaphore
-                res = await asyncio.wait_for(forgot_password(dummy_req, req, BackgroundTasks(), mock_db), timeout=1.0)
+                res = await asyncio.wait_for(
+                    forgot_password(dummy_req, req, BackgroundTasks(), mock_db),
+                    timeout=1.0,
+                )
                 assert "password reset link has been sent" in res["message"]
             finally:
                 password_service._HASH_SEMAPHORE.release()

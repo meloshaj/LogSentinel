@@ -22,14 +22,13 @@ import logging
 import os
 import secrets
 
-from fastapi.concurrency import run_in_threadpool
-from fastapi import HTTPException
-
-from ..core.settings import get_auth_security_settings
-
 import bcrypt
 from argon2 import PasswordHasher
 from argon2.exceptions import HashingError, VerificationError, VerifyMismatchError
+from fastapi import HTTPException
+from fastapi.concurrency import run_in_threadpool
+
+from ..core.settings import get_auth_security_settings
 
 logger = logging.getLogger("logsentinel.password")
 
@@ -38,7 +37,7 @@ logger = logging.getLogger("logsentinel.password")
 # ---------------------------------------------------------------------------
 _hasher = PasswordHasher(
     time_cost=3,
-    memory_cost=65536,   # 64 MiB
+    memory_cost=65536,  # 64 MiB
     parallelism=4,
     hash_len=32,
     salt_len=16,
@@ -138,6 +137,7 @@ logger.info(
     _SECURITY_SETTINGS.max_concurrent_hashes_per_worker * 64,
 )
 
+
 async def bounded_hash_password(password: str) -> str:
     """Async threadpool wrapper for Argon2id hashing, bounded by a semaphore."""
     try:
@@ -146,7 +146,7 @@ async def bounded_hash_password(password: str) -> str:
     except TimeoutError:
         raise HTTPException(
             status_code=503,
-            detail="Authentication engine saturated. Please retry shortly."
+            detail="Authentication engine saturated. Please retry shortly.",
         )
 
     try:
@@ -154,7 +154,10 @@ async def bounded_hash_password(password: str) -> str:
     finally:
         _HASH_SEMAPHORE.release()
 
-async def bounded_verify_password(plain_password: str, stored_hash: str) -> tuple[bool, str | None]:
+
+async def bounded_verify_password(
+    plain_password: str, stored_hash: str
+) -> tuple[bool, str | None]:
     """Async threadpool wrapper for Argon2id verification, bounded by a semaphore."""
     try:
         async with asyncio.timeout(2.0):
@@ -162,13 +165,16 @@ async def bounded_verify_password(plain_password: str, stored_hash: str) -> tupl
     except TimeoutError:
         raise HTTPException(
             status_code=503,
-            detail="Authentication engine saturated. Please retry shortly."
+            detail="Authentication engine saturated. Please retry shortly.",
         )
 
     try:
-        return await run_in_threadpool(verify_and_update_password, plain_password, stored_hash)
+        return await run_in_threadpool(
+            verify_and_update_password, plain_password, stored_hash
+        )
     finally:
         _HASH_SEMAPHORE.release()
+
 
 async def bounded_verify_timing_sentinel(password: str) -> None:
     """Async threadpool wrapper for timing sentinels, bounded by a semaphore."""
@@ -178,7 +184,7 @@ async def bounded_verify_timing_sentinel(password: str) -> None:
     except TimeoutError:
         raise HTTPException(
             status_code=503,
-            detail="Authentication engine saturated. Please retry shortly."
+            detail="Authentication engine saturated. Please retry shortly.",
         )
 
     try:

@@ -16,27 +16,32 @@ import json
 import logging
 import time
 
-from redis.asyncio import Redis
 import redis.exceptions
+from redis.asyncio import Redis
 
 logger = logging.getLogger("logsentinel.auth_cache")
 
 
 class AuthCacheUnavailableError(Exception):
     """Raised when the underlying Valkey/Redis infrastructure is unreachable."""
-    pass
 
 
 def catch_redis_errors(func):
     """Decorator to catch RedisError and fail-closed by raising AuthCacheUnavailableError."""
     import functools
+
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
         except redis.exceptions.RedisError as e:
-            logger.error("Valkey cache connection failed during %s: %s", func.__name__, e)
-            raise AuthCacheUnavailableError("Authentication cache temporarily unavailable") from e
+            logger.error(
+                "Valkey cache connection failed during %s: %s", func.__name__, e
+            )
+            raise AuthCacheUnavailableError(
+                "Authentication cache temporarily unavailable"
+            ) from e
+
     return wrapper
 
 
@@ -113,11 +118,13 @@ class AuthCacheManager:
         replaces the old one on resend).
         """
         key = f"email_verify:{email.strip().lower()}"
-        payload = json.dumps({
-            "code_hash": code_hash,
-            "attempts": 0,
-            "user_id": user_id,
-        })
+        payload = json.dumps(
+            {
+                "code_hash": code_hash,
+                "attempts": 0,
+                "user_id": user_id,
+            }
+        )
         await self._redis.set(key, payload, ex=ttl_seconds)
         logger.debug("Stored verification code for email hash=%s", hash(email))
 
@@ -227,7 +234,9 @@ class AuthCacheManager:
     @catch_redis_errors
     async def record_email_send(self, email: str, window_seconds: int = 3600) -> None:
         """Record an email send event in the sliding-window rate limiter."""
+        import uuid
+
         key = f"email_verify_rate:{email.strip().lower()}"
         now = time.time()
-        await self._redis.zadd(key, {str(now): now})
+        await self._redis.zadd(key, {f"{now}:{uuid.uuid4()}": now})
         await self._redis.expire(key, window_seconds)

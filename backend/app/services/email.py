@@ -66,7 +66,7 @@ def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> None:
                 return
         except Exception as exc:
             last_error = exc
-            delay = _BACKOFF_BASE ** attempt
+            delay = _BACKOFF_BASE**attempt
             logger.warning(
                 "Email dispatch attempt %d/%d failed for %s… (%s: %s). "
                 "Retrying in %ds.",
@@ -199,10 +199,10 @@ def send_password_changed_notification(email_to: str) -> None:
     recipient_hash = _email_hash(email_to)
 
     plain_body = (
-        f"Your LogSentinel account password was recently changed.\n\n"
-        f"If you made this change, no further action is needed.\n\n"
-        f"If you did NOT change your password, please contact support "
-        f"immediately as your account may be compromised.\n"
+        "Your LogSentinel account password was recently changed.\n\n"
+        "If you made this change, no further action is needed.\n\n"
+        "If you did NOT change your password, please contact support "
+        "immediately as your account may be compromised.\n"
     )
 
     html_body = """\

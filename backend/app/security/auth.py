@@ -21,9 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database import get_async_session
 from ..core.orm import UserRecord
 from ..services.password import (
-    hash_password,
     verify_and_update_password,
-    verify_timing_sentinel,
 )
 
 # JWT Configuration
@@ -65,10 +63,12 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
     else:
         expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode.update({
-        "exp": expire,
-        "iat": now,
-    })
+    to_encode.update(
+        {
+            "exp": expire,
+            "iat": now,
+        }
+    )
     return jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 
@@ -115,7 +115,7 @@ async def get_current_user(
     # Session invalidation: reject tokens issued before password change
     if user.password_changed_at is None:
         return user
-        
+
     issued_at = payload.get("iat")
     if issued_at is not None:
         token_issued = datetime.fromtimestamp(issued_at, tz=timezone.utc)
@@ -125,7 +125,7 @@ async def get_current_user(
             safe_changed_at = safe_changed_at.replace(tzinfo=timezone.utc)
         else:
             safe_changed_at = safe_changed_at.astimezone(timezone.utc)
-            
+
         # Allow up to 5 seconds of NTP clock skew drift
         if (token_issued.timestamp() + 5) < safe_changed_at.timestamp():
             raise HTTPException(

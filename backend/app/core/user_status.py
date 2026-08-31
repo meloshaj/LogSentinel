@@ -15,6 +15,4 @@ ACTIVE: str = "active"
 SUSPENDED: str = "suspended"
 """Account has been administratively suspended."""
 
-ALL_STATUSES: frozenset[str] = frozenset(
-    {PENDING_VERIFICATION, ACTIVE, SUSPENDED}
-)
+ALL_STATUSES: frozenset[str] = frozenset({PENDING_VERIFICATION, ACTIVE, SUSPENDED})
