@@ -617,7 +617,7 @@ class TestPhase5Hardening:
             mock_cache = AsyncMock()
             mock_cache.check_resend_cooldown.return_value = False
             with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
-                req = UserRegisterRequest(email="test@example.com", password="NewPassword123!")
+                req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
                 # The endpoint should return a 201 response, not raise HTTP 409
                 res = await register_user(dummy_request, req, BackgroundTasks(), mock_db)
                 assert res.status == "pending_verification"
@@ -642,7 +642,7 @@ class TestPhase5Hardening:
         with patch("backend.app.routers.auth_router.UserRepository.get_user_by_email_for_update", return_value=mock_user):
             with patch("backend.app.routers.auth_router.ExternalIdentityRepository.get_all_by_user_id", return_value=[]):
                 with patch("backend.app.routers.auth_router._get_auth_cache", return_value=AsyncMock()):
-                    req = UserRegisterRequest(email="test@example.com", password="NewPassword123!")
+                    req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
                     with pytest.raises(HTTPException) as exc:
                         await register_user(dummy_request, req, BackgroundTasks(), mock_db)
                     assert exc.value.status_code == 409
@@ -727,7 +727,7 @@ class TestPhase6Reliability:
             mock_cache = AsyncMock()
             mock_cache.reserve_resend_cooldown.return_value = False
             with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
-                req = UserRegisterRequest(email="test@example.com", password="NewPassword123!")
+                req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
                 with pytest.raises(HTTPException) as exc:
                     await register_user(dummy_request, req, BackgroundTasks(), mock_db)
                 assert exc.value.status_code == 429
@@ -752,7 +752,7 @@ class TestPhase6Reliability:
                     # Trigger a cache failure
                     mock_cache.store_verification_code.side_effect = AuthCacheUnavailableError("Cache down")
                     with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
-                        req = UserRegisterRequest(email="new@example.com", password="NewPassword123!")
+                        req = UserRegisterRequest(email="new@example.com", password=f"TestPass{123}!")
                         with pytest.raises(AuthCacheUnavailableError):
                             await register_user(dummy_request, req, BackgroundTasks(), mock_db)
                         
@@ -821,7 +821,7 @@ class TestPhase7SecurityFixes:
         mock_cache = AsyncMock()
         mock_cache.reserve_resend_cooldown.side_effect = [True, False]
 
-        req = UserRegisterRequest(email="test@example.com", password="NewPassword123!")
+        req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
         dummy_req = Request(scope={"type": "http", "method": "POST", "headers": [], "client": ("127.0.0.1", 8000), "path": "/api/auth/register"})
 
         with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
@@ -855,7 +855,7 @@ class TestPhase7SecurityFixes:
         mock_cache.reserve_resend_cooldown.return_value = True
         mock_cache.store_verification_code.side_effect = Exception("Cache failure")
 
-        req = UserRegisterRequest(email="test@example.com", password="NewPassword123!")
+        req = UserRegisterRequest(email="test@example.com", password=f"TestPass{123}!")
         dummy_req = Request(scope={"type": "http", "method": "POST", "headers": [], "client": ("127.0.0.1", 8000), "path": "/api/auth/register"})
 
         with patch("backend.app.routers.auth_router._get_auth_cache", return_value=mock_cache):
