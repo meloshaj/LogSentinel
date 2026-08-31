@@ -682,9 +682,11 @@ class AuthSecuritySettings(BaseModel):
     """Security bounds for authentication processes."""
 
     max_concurrent_hashes_per_worker: int = Field(
-        default_factory=lambda: max(1, 10 // int(os.getenv("WORKERS", os.getenv("WEB_CONCURRENCY", "1")))),
+        default_factory=lambda: max(
+            1, 10 // int(os.getenv("WORKERS", os.getenv("WEB_CONCURRENCY", "1")))
+        ),
         gt=0,
-        description="Maximum concurrent Argon2id hashing operations per worker process."
+        description="Maximum concurrent Argon2id hashing operations per worker process.",
     )
 
 

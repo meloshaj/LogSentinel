@@ -417,7 +417,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except asyncio.CancelledError:
                 pass
             app.state.observability_task = None
-            
+
         auth_gc_task = getattr(app.state, "auth_gc_task", None)
         if auth_gc_task is not None:
             auth_gc_task.cancel()
@@ -426,7 +426,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             except asyncio.CancelledError:
                 pass
             app.state.auth_gc_task = None
-            
+
         # Drain parsing first so feature extraction receives every accepted log.
         await stream_cleaner.stop()
         await drain_worker.stop()
@@ -442,7 +442,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 async def _auth_gc_loop(app: FastAPI) -> None:
     """Periodically clear stale pending-verification users from the database.
-    
+
     Uses a distributed Valkey lock to ensure only one worker/container
     runs the cleanup in a multi-instance deployment.
     """
@@ -459,7 +459,9 @@ async def _auth_gc_loop(app: FastAPI) -> None:
                         await asyncio.sleep(3600)
                         continue
                 except Exception:
-                    logger.warning("Failed to acquire GC lock from Redis", exc_info=True)
+                    logger.warning(
+                        "Failed to acquire GC lock from Redis", exc_info=True
+                    )
 
             from .core.database import get_session_factory
             from .repositories.user_repository import UserRepository
@@ -471,7 +473,7 @@ async def _auth_gc_loop(app: FastAPI) -> None:
             raise
         except Exception:
             logger.exception("GC iteration failed")
-        
+
         await asyncio.sleep(3600)
 
 
@@ -784,11 +786,16 @@ async def validation_exception_handler(
 
 from .services.auth_cache import AuthCacheUnavailableError
 
+
 @app.exception_handler(AuthCacheUnavailableError)
-async def auth_cache_unavailable_handler(_: object, exc: AuthCacheUnavailableError) -> JSONResponse:
+async def auth_cache_unavailable_handler(
+    _: object, exc: AuthCacheUnavailableError
+) -> JSONResponse:
     return JSONResponse(
         status_code=503,
-        content={"detail": "Authentication cache temporarily unavailable. Please retry shortly."},
+        content={
+            "detail": "Authentication cache temporarily unavailable. Please retry shortly."
+        },
     )
 
 

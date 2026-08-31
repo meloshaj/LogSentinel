@@ -29,7 +29,9 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_user_by_email_for_update(db: AsyncSession, email: str) -> UserRecord | None:
+    async def get_user_by_email_for_update(
+        db: AsyncSession, email: str
+    ) -> UserRecord | None:
         """Retrieve a user by their unique email address with a row-level lock."""
         stmt = select(UserRecord).where(UserRecord.email == email).with_for_update()
         result = await db.execute(stmt)
@@ -66,7 +68,9 @@ class UserRepository:
         if commit:
             await db.commit()
             await db.refresh(new_user)
-            logger.info("Successfully registered user id=%s status=%s", new_user.id, status)
+            logger.info(
+                "Successfully registered user id=%s status=%s", new_user.id, status
+            )
         else:
             await db.flush()
         return new_user
@@ -129,7 +133,9 @@ class UserRepository:
         user.hashed_password = hashed_password
         await db.commit()
         await db.refresh(user)
-        logger.info("Password hash upgraded (algorithm migration) for user: id=%s", user.id)
+        logger.info(
+            "Password hash upgraded (algorithm migration) for user: id=%s", user.id
+        )
 
     @staticmethod
     async def cleanup_pending_users(
@@ -144,7 +150,7 @@ class UserRepository:
 
         cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
         total_deleted = 0
-        
+
         while True:
             # Fetch a bounded batch of IDs to prevent table locks and large WAL generation
             subq = (
@@ -153,20 +159,17 @@ class UserRepository:
                 .where(UserRecord.created_at < cutoff)
                 .limit(1000)
             ).scalar_subquery()
-            
-            delete_stmt = (
-                delete(UserRecord)
-                .where(UserRecord.id.in_(subq))
-            )
+
+            delete_stmt = delete(UserRecord).where(UserRecord.id.in_(subq))
             result = await db.execute(delete_stmt)
             await db.commit()
-            
-            deleted_in_batch = result.rowcount  # type: ignore[union-attr]
+
+            deleted_in_batch = result.rowcount  # type: ignore[attr-defined]
             if deleted_in_batch == 0:
                 break
-                
+
             total_deleted += deleted_in_batch
-            
+
         if total_deleted > 0:
             logger.info(
                 "Cleaned up %d pending-verification users older than %dh (in batches)",

@@ -9,9 +9,6 @@ features that sqlite cannot faithfully simulate, such as:
 
 from __future__ import annotations
 
-import asyncio
-import os
-import sys
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -33,6 +30,7 @@ from backend.app.security.auth import get_current_user
 # Test Database Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture(scope="module")
 async def postgres_engine():
     """Spin up a Postgres container and yield an async SQLAlchemy engine."""
@@ -40,20 +38,23 @@ async def postgres_engine():
     # natively relies on sync Docker API
     container = PostgresContainer("postgres:15-alpine")
     container.start()
-    
+
     # Generate the async connection URL
-    url = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+asyncpg")
-    
+    url = container.get_connection_url().replace(
+        "postgresql+psycopg2", "postgresql+asyncpg"
+    )
+
     engine = create_async_engine(url, echo=False)
-    
+
     # Ensure the DB schema is created
     # We need to run the raw SQL migrations to get the exact schema definitions
     async with engine.begin() as conn:
         from backend.app.core.orm import Base
+
         await conn.run_sync(Base.metadata.create_all)
-        
+
     yield engine
-    
+
     await engine.dispose()
     container.stop()
 
@@ -61,7 +62,9 @@ async def postgres_engine():
 @pytest_asyncio.fixture
 async def db_session(postgres_engine):
     """Yield a transactional session for each test."""
-    factory = async_sessionmaker(postgres_engine, expire_on_commit=False, class_=AsyncSession)
+    factory = async_sessionmaker(
+        postgres_engine, expire_on_commit=False, class_=AsyncSession
+    )
     async with factory() as session:
         yield session
 
@@ -70,46 +73,57 @@ async def db_session(postgres_engine):
 # Integration Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_garbage_collection_pending_users(db_session: AsyncSession):
     """Verify that cleanup_pending_users correctly removes stale unverified accounts."""
     now = datetime.now(timezone.utc)
-    
+
     # 1. Stale pending user (> 24 hours old)
     stale_user = UserRecord(
         email="stale@example.com",
         status=PENDING_VERIFICATION,
-        created_at=now - timedelta(hours=25)
+        created_at=now - timedelta(hours=25),
     )
-    
+
     # 2. Fresh pending user (< 24 hours old)
     fresh_user = UserRecord(
         email="fresh@example.com",
         status=PENDING_VERIFICATION,
-        created_at=now - timedelta(hours=23)
+        created_at=now - timedelta(hours=23),
     )
-    
+
     # 3. Stale active user (should NEVER be deleted)
     active_user = UserRecord(
         email="active@example.com",
         status=ACTIVE,
         created_at=now - timedelta(hours=48),
-        email_verified_at=now - timedelta(hours=48)
+        email_verified_at=now - timedelta(hours=48),
     )
-    
+
     db_session.add_all([stale_user, fresh_user, active_user])
     await db_session.commit()
-    
+
     # Run GC
-    deleted_count = await UserRepository.cleanup_pending_users(db_session, max_age_hours=24)
-    
+    deleted_count = await UserRepository.cleanup_pending_users(
+        db_session, max_age_hours=24
+    )
+
     # Should only delete the stale pending user
     assert deleted_count == 1
-    
+
     # Verify records
-    assert await UserRepository.get_user_by_email(db_session, "stale@example.com") is None
-    assert await UserRepository.get_user_by_email(db_session, "fresh@example.com") is not None
-    assert await UserRepository.get_user_by_email(db_session, "active@example.com") is not None
+    assert (
+        await UserRepository.get_user_by_email(db_session, "stale@example.com") is None
+    )
+    assert (
+        await UserRepository.get_user_by_email(db_session, "fresh@example.com")
+        is not None
+    )
+    assert (
+        await UserRepository.get_user_by_email(db_session, "active@example.com")
+        is not None
+    )
 
 
 @pytest.mark.asyncio
@@ -120,15 +134,15 @@ async def test_password_changed_at_truncation(db_session: AsyncSession):
         db=db_session,
         email="truncation@example.com",
         hashed_password="old_hash",
-        status=ACTIVE
+        status=ACTIVE,
     )
-    
+
     # Update password using the new date_trunc logic
     await UserRepository.update_password_with_timestamp(db_session, user, "new_hash")
-    
+
     # Fetch from DB to see what Postgres actually stored
     await db_session.refresh(user)
-    
+
     # Ensure microsecond is 0 (truncated at DB level)
     assert user.password_changed_at.microsecond == 0
 
@@ -136,39 +150,42 @@ async def test_password_changed_at_truncation(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_get_current_user_timestamp_collision(db_session: AsyncSession):
     """Verify get_current_user correctly normalizes iat vs password_changed_at."""
-    from backend.app.security.auth import create_access_token, get_current_user
-    from fastapi.security import HTTPAuthorizationCredentials
     from fastapi import HTTPException
-    
+    from fastapi.security import HTTPAuthorizationCredentials
+
     # Create user and simulate a password change with artificial microseconds
     user = await UserRepository.create_user(
-        db=db_session,
-        email="collision@example.com",
-        status=ACTIVE
+        db=db_session, email="collision@example.com", status=ACTIVE
     )
-    
+
     # Simulate DB returning a timestamp with microseconds (e.g., .999)
     # This might happen if the code is bypassed, or before the date_trunc patch
     fake_changed_at = datetime(2026, 8, 31, 10, 0, 0, 999000, tzinfo=timezone.utc)
     user.password_changed_at = fake_changed_at
     await db_session.commit()
-    
+
     # Issue a token at the EXACT SAME SECOND (10:00:00), which results in iat lacking microseconds
     # We fake the iat by backdating it
     import jwt
-    from backend.app.security.auth import JWT_SECRET_KEY, JWT_ALGORITHM
-    
+    from backend.app.security.auth import JWT_ALGORITHM, JWT_SECRET_KEY
+
     token = jwt.encode(
-        {"sub": user.email, "exp": fake_changed_at.timestamp() + 3600, "iat": int(fake_changed_at.timestamp())},
+        {
+            "sub": user.email,
+            "exp": fake_changed_at.timestamp() + 3600,
+            "iat": int(fake_changed_at.timestamp()),
+        },
         JWT_SECRET_KEY,
-        algorithm=JWT_ALGORITHM
+        algorithm=JWT_ALGORITHM,
     )
-    
+
     creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
-    
+
     # This should SUCCEED because the microsecond of fake_changed_at is normalized to 0 in get_current_user
     try:
         resolved_user = await get_current_user(creds, db_session)
         assert resolved_user.id == user.id
     except HTTPException:
-        pytest.fail("get_current_user incorrectly rejected a token issued in the same second due to microsecond mismatch")
+        pytest.fail(
+            "get_current_user incorrectly rejected a token issued in the same second due to microsecond mismatch"
+        )
