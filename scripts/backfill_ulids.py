@@ -7,12 +7,14 @@ from sqlalchemy import text
 import sys
 from pathlib import Path
 
+from backend.app.security.redaction import sanitize_error_text
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 async def run_backfill(database_url: str):
-    logger.info(f"Connecting to database at {database_url}...")
+    logger.info("Connecting to database at %s...", sanitize_error_text(database_url))
     engine = create_async_engine(database_url, echo=False)
     
     try:
@@ -48,7 +50,7 @@ async def run_backfill(database_url: str):
             logger.info("Backfill complete. Please run the SQL migration to swap `id_ulid` to `id`.")
             
     except Exception as e:
-        logger.error(f"Backfill failed: {e}")
+        logger.error("Backfill failed: %s", sanitize_error_text(e))
         sys.exit(1)
     finally:
         await engine.dispose()

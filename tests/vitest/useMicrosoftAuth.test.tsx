@@ -88,6 +88,7 @@ describe("useMicrosoftAuth", () => {
       "http://localhost:8000/api/auth/microsoft",
       {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ access_token: "microsoft-access-token" }),
       },

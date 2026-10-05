@@ -2,15 +2,25 @@
 
 import json
 import logging
+import uuid
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 from ..core.constants import LOG_STREAM_NAME
+from ..core.ingest_limits import validate_bounded_structure
+from ..core.rate_limit import limiter
 from ..models import LogEntry
 from ..schemas.ingest import IngestPayload, IngestResponse
+from ..schemas.stream import StreamEnvelope
 from ..security import require_ingestion_api_key
+from ..security.data_scope import DataScope
+from ..security.redaction import sanitize_error_text
+from ..security.tenant_boundary import (
+    UntrustedTenantMetadataError,
+    reject_untrusted_tenant_fields,
+)
 
 logger = logging.getLogger("logsentinel.ingest")
 
@@ -58,10 +68,11 @@ router = APIRouter(
         },
     },
 )
+@limiter.limit("100/minute")
 async def ingest_log_endpoint(
     request: Request,
     payload: IngestPayload | list[LogEntry],
-    tenant_id: str = Depends(require_ingestion_api_key),
+    data_scope: DataScope = Depends(require_ingestion_api_key),
 ) -> JSONResponse:
     """Accept log payloads asynchronously and enqueue them to Redis streams with approximate trimming."""
     if isinstance(payload, IngestPayload):
@@ -77,8 +88,27 @@ async def ingest_log_endpoint(
             "logs": logs_list,
         }
 
-    # Enforce authoritative multitenancy
-    normalized_payload["tenant_id"] = tenant_id
+    for log in normalized_payload.get("logs", []):
+        if isinstance(log, dict):
+            if not log.get("event_id"):
+                log["event_id"] = uuid.uuid4().hex
+
+    # The payload is untrusted. Tenant authority is carried only by the
+    # transport envelope and is never merged into user metadata.
+    try:
+        reject_untrusted_tenant_fields(normalized_payload)
+    except UntrustedTenantMetadataError as exc:
+        raise HTTPException(
+            status_code=422, detail="tenant_metadata_not_allowed"
+        ) from exc
+    validate_bounded_structure(normalized_payload)
+
+    envelope = StreamEnvelope(
+        event_id=uuid.uuid4().hex,
+        tenant_id=data_scope.tenant_id,
+        owner_user_id=data_scope.owner_user_id,
+        payload=normalized_payload,
+    ).model_dump(mode="json")
 
     try:
         redis: Redis = getattr(request.app.state, "redis", None)  # type: ignore
@@ -89,7 +119,7 @@ async def ingest_log_endpoint(
         # XADD logs:stream MAXLEN ~ 500000 * payload
         pipe.xadd(
             LOG_STREAM_NAME,
-            {"payload": json.dumps(normalized_payload)},
+            {"payload": json.dumps(envelope)},
             maxlen=500000,
             approximate=True,
         )
@@ -99,7 +129,11 @@ async def ingest_log_endpoint(
         queue_size = results[1]
         accepted = True
     except Exception as e:
-        logger.error("Failed to enqueue payload to Redis: %s", str(e))
+        logger.error(
+            "Failed to enqueue payload to Redis: exception_type=%s detail=%s",
+            type(e).__name__,
+            sanitize_error_text(e),
+        )
         accepted = False
         queue_size = 0
 
@@ -113,7 +147,7 @@ async def ingest_log_endpoint(
         status_label = "202" if accepted else "503"
         ingest_request_rate.labels(endpoint="/ingest-log", status=status_label).inc()
     except Exception:
-        logger.debug("Unable to record ingestion metrics", exc_info=True)
+        logger.debug("Unable to record ingestion metrics")
 
     logger.info(
         "Accepted log payload",

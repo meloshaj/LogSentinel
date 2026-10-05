@@ -8,7 +8,7 @@ and resend verification.
 Security controls:
     * Timing-attack normalization on login and forgot-password.
     * Atomic single-use verification codes via Valkey Lua scripts.
-    * Atomic single-use password-reset tokens via Valkey Lua scripts.
+    * PostgreSQL-authoritative, idempotent single-use password-reset state.
     * Session invalidation via password_changed_at + JWT iat checks.
     * Rate limiting via SlowAPI on all sensitive endpoints.
     * Abuse prevention via per-email cooldowns and sliding-window limits.
@@ -20,9 +20,23 @@ import asyncio
 import hashlib
 import logging
 import os
+import secrets
+import urllib.parse
+from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+import httpx
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
+from fastapi.responses import RedirectResponse
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -31,25 +45,31 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from ..core.database import AsyncSessionDep
 from ..core.email_identity import canonicalize_email
-from ..core.orm import UserRecord
+from ..core.orm import IngestionApiKeyRecord, UserRecord
 from ..core.settings import (
     get_email_verification_settings,
     get_github_auth_settings,
     get_microsoft_auth_settings,
     get_password_reset_settings,
 )
+from ..core.rate_limit import limiter
 from ..core.user_status import ACTIVE, PENDING_VERIFICATION, SUSPENDED
 from ..repositories.account_repository import AccountRepository
 from ..repositories.external_identity_repository import ExternalIdentityRepository
 from ..repositories.user_repository import UserRepository
-from ..security.auth import (
-    create_access_token,
-    get_current_user,
+from ..security.auth import create_access_token
+from ..security.redaction import sanitize_error_text
+from ..security.tenant_context import (
+    TenantContext,
+    get_tenant_context,
+    require_permission,
 )
+from ..security.tenants import resolve_provider_tenant_mapping
 from ..security.microsoft_auth import (
     InvalidMicrosoftTenantError,
     InvalidMicrosoftTokenError,
@@ -60,10 +80,14 @@ from ..security.microsoft_auth import (
     MissingRequiredScopeError,
 )
 from ..services.auth_cache import AuthCacheManager
-from ..services.email import (
-    send_password_changed_notification,
-    send_password_reset_email,
-    send_verification_email,
+from ..services.email import send_verification_email as _send_verification_email
+from ..services.email_outbox import enqueue_email
+from ..services.sessions import (
+    CSRF_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
+    create_session,
+    revoke_session,
+    rotate_refresh_token,
 )
 from ..services.password import (
     bounded_hash_password,
@@ -73,8 +97,19 @@ from ..services.password import (
     generate_verification_code,
     hash_verification_code,
 )
+from ..services.password_reset import (
+    PasswordResetInvalidError,
+    PasswordResetUnavailableError,
+    complete_password_reset,
+    digest_reset_token,
+    issue_password_reset,
+)
 
 logger = logging.getLogger("logsentinel.auth_router")
+
+# Kept as a module attribute for legacy route-test fixtures.  Production email
+# delivery is durable and goes through ``enqueue_email`` below.
+send_verification_email = _send_verification_email
 
 # Google OAuth configuration
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -121,10 +156,17 @@ class UserRegisterRequest(BaseModel):
 
     email: EmailStr
     password: str = Field(
-        ..., min_length=8, description="Password must be at least 8 characters long"
+        ...,
+        min_length=8,
+        max_length=1024,
+        description="Password must be at least 8 characters long",
     )
-    fullName: str | None = Field(None, description="Optional full name of the user")
-    organization: str | None = Field(None, description="Optional organization name")
+    fullName: str | None = Field(
+        None, max_length=255, description="Optional full name of the user"
+    )
+    organization: str | None = Field(
+        None, max_length=255, description="Optional organization name"
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -133,7 +175,7 @@ class UserLoginRequest(BaseModel):
     """Schema for user login request."""
 
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=1, max_length=1024)
 
 
 class TokenResponse(BaseModel):
@@ -141,6 +183,65 @@ class TokenResponse(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+
+
+def _secure_cookie(request: Request) -> bool:
+    return (
+        request.url.scheme == "https"
+        or os.getenv("ENVIRONMENT", "").lower() == "production"
+    )
+
+
+def _set_session_cookies(response: Response, request: Request, issued) -> None:
+    max_age = max(
+        0, int((issued.expires_at - datetime.now(timezone.utc)).total_seconds())
+    )
+    response.set_cookie(
+        REFRESH_COOKIE_NAME,
+        issued.refresh_token,
+        httponly=True,
+        secure=_secure_cookie(request),
+        samesite="lax",
+        path="/api/auth",
+        max_age=max_age,
+    )
+    response.set_cookie(
+        CSRF_COOKIE_NAME,
+        issued.csrf_token,
+        httponly=False,
+        secure=_secure_cookie(request),
+        samesite="lax",
+        path="/",
+        max_age=max_age,
+    )
+
+
+async def _issue_session(
+    user: UserRecord, db, request: Request, response: Response
+) -> TokenResponse:
+    issued = await create_session(db, user)
+    _set_session_cookies(response, request, issued)
+    return TokenResponse(
+        access_token=create_access_token(
+            {"sub": user.email, "full_name": user.full_name or ""},
+            session_id=issued.session_id,
+        )
+    )
+
+
+def _validate_cookie_request(request: Request) -> str:
+    origin = request.headers.get("origin")
+    allowed = {
+        value.strip().rstrip("/")
+        for value in os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")
+    }
+    if origin and origin.rstrip("/") not in allowed:
+        raise HTTPException(status_code=403, detail="invalid_request_origin")
+    csrf = request.headers.get("x-csrf-token", "")
+    cookie_csrf = request.cookies.get(CSRF_COOKIE_NAME, "")
+    if not csrf or not cookie_csrf or not secrets.compare_digest(csrf, cookie_csrf):
+        raise HTTPException(status_code=403, detail="invalid_csrf_token")
+    return csrf
 
 
 class UserResponse(BaseModel):
@@ -157,7 +258,7 @@ class UserResponse(BaseModel):
 class GoogleLoginRequest(BaseModel):
     """Schema for Google SSO login — accepts the id_token from the frontend."""
 
-    credential: str
+    credential: str = Field(..., min_length=1, max_length=16384)
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -228,8 +329,6 @@ class RegisterResponse(BaseModel):
 
 
 # ─── Endpoint Route Handlers ─────────────────────────────────────────────────
-
-from ..core.rate_limit import limiter
 
 
 @router.post(
@@ -321,6 +420,7 @@ async def register_user(
                 full_name=payload.fullName,
                 organization=payload.organization,
                 status=PENDING_VERIFICATION,
+                commit=False,
             )
         except IntegrityError:
             # The unique database constraint is the final concurrency gate
@@ -365,7 +465,15 @@ async def register_user(
         ) from exc
 
     # Dispatch verification email
-    background_tasks.add_task(send_verification_email, normalized_email, code)
+    await enqueue_email(
+        db,
+        kind="verification",
+        recipient=normalized_email,
+        secret=code,
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        idempotency_key=f"verification:{user.id}:{code_hash}",
+    )
 
     return RegisterResponse(
         message="Verification code dispatched",
@@ -379,6 +487,7 @@ async def register_user(
 async def verify_email(
     request: Request,
     payload: VerifyEmailRequest,
+    response: Response,
     db: AsyncSessionDep,
 ) -> TokenResponse:
     """Verify a 6-digit email code and activate the user account.
@@ -438,10 +547,7 @@ async def verify_email(
 
     # Issue JWT
     _ensure_user_can_authenticate(user)
-    token = create_access_token(
-        data={"sub": user.email, "full_name": user.full_name or ""}
-    )
-    return TokenResponse(access_token=token)
+    return await _issue_session(user, db, request, response)
 
 
 @router.post("/resend-verification", status_code=status.HTTP_200_OK)
@@ -498,7 +604,15 @@ async def resend_verification(
         raise
 
     # Dispatch
-    background_tasks.add_task(send_verification_email, normalized_email, code)
+    await enqueue_email(
+        db,
+        kind="verification",
+        recipient=normalized_email,
+        secret=code,
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        idempotency_key=f"verification:{user.id}:{code_hash}",
+    )
 
     return {
         "message": "If a pending account exists, a new verification code has been sent."
@@ -510,6 +624,7 @@ async def resend_verification(
 async def login_user(
     request: Request,
     payload: UserLoginRequest,
+    response: Response,
     db: AsyncSessionDep,
 ) -> TokenResponse:
     """Authenticate email & password and return a signed JWT access token.
@@ -583,34 +698,180 @@ async def login_user(
         await UserRepository.update_hashed_password_silent(db, user, upgraded_hash)
 
     # Generate token with sub set to email and full_name for sidebar display
-    token = create_access_token(
-        data={"sub": user.email, "full_name": user.full_name or ""}
-    )
-    return TokenResponse(access_token=token)
+    return await _issue_session(user, db, request, response)
 
 
 @router.get("/me", response_model=UserResponse)
 async def get_my_profile(
-    current_user: Annotated[UserRecord, Depends(get_current_user)],
+    tenant: Annotated[TenantContext, Depends(get_tenant_context)],
 ) -> UserResponse:
-    """Return the profile details of the authenticated user."""
-    return UserResponse.model_validate(current_user)
+    """Return profile details only while the current tenant membership is active."""
+    return UserResponse.model_validate(tenant.user)
+
+
+@router.post("/api-key")
+async def create_api_key(
+    current_user: Annotated[
+        TenantContext, Depends(require_permission("api_keys:manage"))
+    ],
+    db: AsyncSessionDep,
+    name: str = "ingestion-key",
+    expires_in_days: int = 90,
+) -> dict:
+    """Create a tenant-scoped ingestion key; plaintext is returned exactly once."""
+    from datetime import datetime, timedelta, timezone
+
+    if not 1 <= expires_in_days <= 365:
+        raise HTTPException(
+            status_code=422, detail="expires_in_days must be between 1 and 365"
+        )
+    # Serialize the per-tenant count and insert so concurrent creators cannot
+    # both pass the active-key limit check.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": f"logsentinel:api-key-limit:{current_user.tenant_id}"},
+    )
+    active_rows = await db.execute(
+        select(IngestionApiKeyRecord.id).where(
+            IngestionApiKeyRecord.tenant_id == current_user.tenant_id,
+            IngestionApiKeyRecord.user_id == current_user.user_id,
+            IngestionApiKeyRecord.revoked_at.is_(None),
+            IngestionApiKeyRecord.expires_at > datetime.now(timezone.utc),
+        )
+    )
+    if len(active_rows.all()) >= 25:
+        raise HTTPException(status_code=409, detail="active_api_key_limit_exceeded")
+    raw_key = f"lsn_live_{secrets.token_urlsafe(32)}"
+    record = IngestionApiKeyRecord(
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        key_prefix=raw_key[:16],
+        key_hash=hashlib.sha256(raw_key.encode("utf-8")).hexdigest(),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=expires_in_days),
+        scopes=["logs:ingest"],
+    )
+    db.add(record)
+    await db.flush()
+    await db.commit()
+    return {"api_key": raw_key, "key_prefix": record.key_prefix, "id": record.id}
 
 
 @router.get("/api-key")
-async def get_my_api_key(
-    current_user: Annotated[UserRecord, Depends(get_current_user)],
+async def list_api_keys(
+    current_user: Annotated[
+        TenantContext, Depends(require_permission("api_keys:manage"))
+    ],
+    db: AsyncSessionDep,
 ) -> dict:
-    """Return a mock API key for the authenticated user for the frontend to display."""
-    return {"api_key": "lsn_test_sk_mock_fetched_from_backend"}
+    """List metadata only; existing plaintext keys are never retrievable."""
+    result = await db.execute(
+        select(IngestionApiKeyRecord)
+        .where(IngestionApiKeyRecord.tenant_id == current_user.tenant_id)
+        .where(IngestionApiKeyRecord.user_id == current_user.user_id)
+        .order_by(IngestionApiKeyRecord.created_at.desc())
+    )
+    return {
+        "keys": [
+            {
+                "id": record.id,
+                "key_prefix": record.key_prefix,
+                "created_at": record.created_at,
+                "last_used_at": record.last_used_at,
+                "expires_at": record.expires_at,
+                "revoked": record.revoked_at is not None,
+            }
+            for record in result.scalars().all()
+        ]
+    }
+
+
+@router.delete("/api-key/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_api_key(
+    key_id: int,
+    current_user: Annotated[
+        TenantContext, Depends(require_permission("api_keys:manage"))
+    ],
+    db: AsyncSessionDep,
+) -> None:
+    """Revoke one key immediately, scoped by the authenticated tenant."""
+    result = await db.execute(
+        select(IngestionApiKeyRecord).where(
+            IngestionApiKeyRecord.id == key_id,
+            IngestionApiKeyRecord.tenant_id == current_user.tenant_id,
+            IngestionApiKeyRecord.user_id == current_user.user_id,
+            IngestionApiKeyRecord.revoked_at.is_(None),
+        )
+    )
+    record = result.scalar_one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail="api_key_not_found")
+    from datetime import datetime, timezone
+
+    record.revoked_at = datetime.now(timezone.utc)
+    await db.commit()
+
+
+@router.post("/api-key/{key_id}/rotate")
+async def rotate_api_key(
+    key_id: int,
+    current_user: Annotated[
+        TenantContext, Depends(require_permission("api_keys:manage"))
+    ],
+    db: AsyncSessionDep,
+) -> dict:
+    """Atomically revoke a tenant key and return its replacement once."""
+    # Rotation also creates an active key; serialize it with ordinary key
+    # creation so the per-tenant active-key limit remains race-safe.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": f"logsentinel:api-key-limit:{current_user.tenant_id}"},
+    )
+    result = await db.execute(
+        select(IngestionApiKeyRecord)
+        .where(
+            IngestionApiKeyRecord.id == key_id,
+            IngestionApiKeyRecord.tenant_id == current_user.tenant_id,
+            IngestionApiKeyRecord.user_id == current_user.user_id,
+            IngestionApiKeyRecord.revoked_at.is_(None),
+        )
+        .with_for_update()
+    )
+    old_record = result.scalar_one_or_none()
+    if old_record is None:
+        raise HTTPException(status_code=404, detail="api_key_not_found")
+    from datetime import datetime, timedelta, timezone
+
+    raw_key = f"lsn_live_{secrets.token_urlsafe(32)}"
+    old_record.revoked_at = datetime.now(timezone.utc)
+    new_record = IngestionApiKeyRecord(
+        tenant_id=current_user.tenant_id,
+        user_id=current_user.id,
+        key_prefix=raw_key[:16],
+        key_hash=hashlib.sha256(raw_key.encode("utf-8")).hexdigest(),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=90),
+        # Never turn a legacy key with absent scope metadata into a wildcard
+        # or implicitly privileged replacement.
+        scopes=list(old_record.scopes or []),
+    )
+    db.add(new_record)
+    await db.flush()
+    await db.commit()
+    return {
+        "api_key": raw_key,
+        "key_prefix": new_record.key_prefix,
+        "id": new_record.id,
+    }
 
 
 # ─── Google SSO ──────────────────────────────────────────────────────────────
 
 
 @router.post("/google", response_model=TokenResponse)
+@limiter.limit("100/minute")
 async def google_login(
+    request: Request,
     payload: GoogleLoginRequest,
+    response: Response,
     db: AsyncSessionDep,
 ) -> TokenResponse:
     """Verify a Google id_token and return a LogSentinel JWT.
@@ -625,12 +886,16 @@ async def google_login(
             detail="Google SSO is not configured. Set the GOOGLE_CLIENT_ID environment variable.",
         )
 
+    provider_issuer = "https://accounts.google.com"
+    provider_subject: str | None = None
     try:
-        async with httpx.AsyncClient() as client:
+        timeout = httpx.Timeout(10.0, connect=3.0, read=7.0, write=5.0, pool=3.0)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
             if payload.credential.startswith("ya29."):
                 # Validate access token
-                resp = await client.get(
-                    f"https://oauth2.googleapis.com/tokeninfo?access_token={payload.credential}"
+                resp = await client.post(
+                    "https://oauth2.googleapis.com/tokeninfo",
+                    data={"access_token": payload.credential},
                 )
                 if resp.status_code != 200:
                     raise HTTPException(
@@ -638,10 +903,25 @@ async def google_login(
                         detail="Invalid Google access token",
                     )
                 token_info = resp.json()
-                if token_info.get("aud") and token_info.get("aud") != GOOGLE_CLIENT_ID:
+                if not isinstance(token_info, dict):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid Google access token",
+                    )
+                if token_info.get("aud") != GOOGLE_CLIENT_ID:
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="Google credential audience mismatch",
+                    )
+                expires_in = token_info.get("expires_in")
+                if (
+                    not isinstance(expires_in, (int, str))
+                    or not str(expires_in).isdigit()
+                    or int(expires_in) <= 0
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid Google access-token expiry",
                     )
 
                 # Fetch user profile using the access token
@@ -655,10 +935,16 @@ async def google_login(
                         detail="Failed to retrieve Google user profile",
                     )
                 idinfo = user_resp.json()
+                if not isinstance(idinfo, dict):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid Google user profile",
+                    )
             else:
                 # Validate id_token
-                resp = await client.get(
-                    f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.credential}"
+                resp = await client.post(
+                    "https://oauth2.googleapis.com/tokeninfo",
+                    data={"id_token": payload.credential},
                 )
                 if resp.status_code != 200:
                     raise HTTPException(
@@ -666,11 +952,31 @@ async def google_login(
                         detail="Invalid Google id_token",
                     )
                 idinfo = resp.json()
+                if not isinstance(idinfo, dict):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid Google id_token",
+                    )
                 if idinfo.get("aud") != GOOGLE_CLIENT_ID:
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="Google credential audience mismatch",
                     )
+                if idinfo.get("iss") not in {"accounts.google.com", provider_issuer}:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Google credential issuer mismatch",
+                    )
+                exp = idinfo.get("exp")
+                if (
+                    not isinstance(exp, (int, float))
+                    or exp <= datetime.now(timezone.utc).timestamp()
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Expired Google id_token",
+                    )
+                provider_issuer = str(idinfo["iss"])
     except HTTPException:
         raise
     except Exception:
@@ -679,34 +985,52 @@ async def google_login(
             detail="Failed to verify Google credential",
         )
 
-    email: str = idinfo.get("email", "")
-    if not email or not idinfo.get("email_verified", False):
+    provider_subject = idinfo.get("sub") if isinstance(idinfo.get("sub"), str) else None
+    email_value = idinfo.get("email")
+    if (
+        not isinstance(email_value, str)
+        or not email_value
+        or len(email_value) > 320
+        or not provider_subject
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google identity claims are incomplete",
+        )
+    if not idinfo.get("email_verified", False):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Google account email is not verified",
         )
 
-    full_name: str | None = idinfo.get("name")
+    email = canonicalize_email(email_value)
+    full_name_value = idinfo.get("name")
+    full_name: str | None = (
+        full_name_value
+        if isinstance(full_name_value, str) and full_name_value
+        else None
+    )
+    if full_name is not None:
+        full_name = full_name[:255]
 
     # Find or create user
-    iss = idinfo.get("iss", "https://accounts.google.com")
     ext_identity = await ExternalIdentityRepository.get_by_provider_identity(
         db,
         provider="google",
-        issuer=iss,
-        subject=idinfo.get("sub", ""),
+        issuer=provider_issuer,
+        subject=provider_subject,
     )
     if ext_identity is None:
         alt_iss = (
             "accounts.google.com"
-            if iss == "https://accounts.google.com"
+            if provider_issuer == "https://accounts.google.com"
             else "https://accounts.google.com"
         )
         ext_identity = await ExternalIdentityRepository.get_by_provider_identity(
             db,
             provider="google",
             issuer=alt_iss,
-            subject=idinfo.get("sub", ""),
+            subject=provider_subject,
         )
 
     if ext_identity is not None:
@@ -716,6 +1040,14 @@ async def google_login(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="google_identity_conflict",
             )
+        mapped_tenant_id, _ = await resolve_provider_tenant_mapping(
+            db,
+            provider="google",
+            issuer=ext_identity.issuer,
+            provider_tenant_id=ext_identity.tenant_id or "",
+        )
+        if mapped_tenant_id != user.tenant_id:
+            raise HTTPException(status_code=403, detail="provider_tenant_mismatch")
     else:
         user = await UserRepository.get_user_by_email(db, email)
         if user is not None:
@@ -733,14 +1065,20 @@ async def google_login(
                 full_name=full_name,
                 status=ACTIVE,
                 commit=False,
+                provider="google",
+                issuer=provider_issuer,
+                provider_tenant_id=idinfo.get("hd"),
+                provider_subject=provider_subject,
+                verified_email=email,
             )
             external_identity = (
                 await ExternalIdentityRepository.create_external_identity(
                     db=db,
                     user_id=user.id,
                     provider="google",
-                    issuer=idinfo.get("iss", "https://accounts.google.com"),
-                    subject=idinfo.get("sub", ""),
+                    issuer=provider_issuer,
+                    subject=provider_subject,
+                    tenant_id=idinfo.get("hd"),
                     email=email,
                     display_name=full_name,
                     commit=False,
@@ -754,16 +1092,21 @@ async def google_login(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="google_identity_conflict",
             )
-        except Exception:
+        except Exception as exc:
             await db.rollback()
-            raise
+            logger.error(
+                "Google identity persistence failed: exception_type=%s detail=%s",
+                type(exc).__name__,
+                sanitize_error_text(exc),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Google authentication is temporarily unavailable",
+            ) from None
         logger.info("Auto-created user via Google SSO: user_id=%s", user.id)
 
     _ensure_user_can_authenticate(user)
-    token = create_access_token(
-        data={"sub": user.email, "full_name": user.full_name or ""}
-    )
-    return TokenResponse(access_token=token)
+    return await _issue_session(user, db, request, response)
 
 
 # ─── Forgot Password ────────────────────────────────────────────────────────
@@ -801,14 +1144,18 @@ async def forgot_password(
         settings = get_password_reset_settings()
         raw_token, token_hash = generate_reset_token()
 
-        # Store hash in Valkey (single-use via Lua on consumption)
-        await cache.store_reset_token(
-            token_hash=token_hash,
-            user_id=user.id,
-            ttl_seconds=settings.token_ttl_seconds,
-        )
-
-        background_tasks.add_task(send_password_reset_email, user.email, raw_token)
+        # PostgreSQL durably records the capability and encrypted delivery
+        # work together. Valkey remains only a rate-limit/cache dependency.
+        try:
+            await issue_password_reset(
+                db,
+                user=user,
+                token_digest=token_hash,
+                raw_token=raw_token,
+                ttl_seconds=settings.token_ttl_seconds,
+            )
+        except PasswordResetUnavailableError:
+            logger.error("Password reset issuance unavailable")
     else:
         # Normalise timing: simulate cryptographic and I/O work
         await bounded_verify_timing_sentinel("forgot-password-timing")
@@ -830,48 +1177,73 @@ async def reset_password(
     background_tasks: BackgroundTasks,
     db: AsyncSessionDep,
 ) -> dict:
-    """Consume a single-use reset token and update the user's password.
+    """Complete a PostgreSQL-authoritative single-use reset capability.
 
     Post-reset operations:
         * password_changed_at is set → all existing JWTs are invalidated.
         * A security notification email is dispatched.
     """
-    # Compute SHA-256 of the submitted raw token
-    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
-
-    # Atomic single-use consumption
-    cache = _get_auth_cache()
-    user_id = await cache.consume_reset_token(token_hash)
-
-    if user_id is None:
+    token_hash = digest_reset_token(payload.token)
+    try:
+        await complete_password_reset(
+            db,
+            token_digest=token_hash,
+            new_password=payload.new_password,
+        )
+    except PasswordResetInvalidError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired reset token. Please request a new password reset.",
-        )
-
-    user = await UserRepository.get_user_by_id(db, user_id)
-    if user is None:
+        ) from None
+    except PasswordResetUnavailableError:
+        # A failed/ambiguous database commit is never permission to retry the
+        # mutation blindly. The durable row determines whether a later retry
+        # is a completion replay or a still-issued capability.
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token.",
-        )
-
-    if user.status is not None and user.status != ACTIVE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token.",
-        )
-
-    # Generate new hash and update user
-    hashed = await bounded_hash_password(payload.new_password)
-    await UserRepository.update_password_with_timestamp(db, user, hashed)
-
-    # Dispatch security notification
-    background_tasks.add_task(send_password_changed_notification, user.email)
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset could not be completed. Request a new reset link.",
+        ) from None
 
     return {
         "message": "Password has been reset successfully. You can now sign in with your new password."
     }
+
+
+@router.post("/refresh", response_model=TokenResponse)
+@limiter.limit("20/minute")
+async def refresh_session(
+    request: Request, response: Response, db: AsyncSessionDep
+) -> TokenResponse:
+    """Rotate the HttpOnly refresh token and return a fresh short-lived access JWT."""
+    csrf = _validate_cookie_request(request)
+    raw = request.cookies.get(REFRESH_COOKIE_NAME)
+    if not raw:
+        raise HTTPException(status_code=401, detail="session_required")
+    rotated = await rotate_refresh_token(db, raw, csrf)
+    if rotated is None:
+        response.delete_cookie(REFRESH_COOKIE_NAME, path="/api/auth")
+        response.delete_cookie(CSRF_COOKIE_NAME, path="/")
+        raise HTTPException(status_code=401, detail="invalid_or_reused_refresh_token")
+    user, issued = rotated
+    _set_session_cookies(response, request, issued)
+    return TokenResponse(
+        access_token=create_access_token(
+            {"sub": user.email, "full_name": user.full_name or ""},
+            session_id=issued.session_id,
+        )
+    )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_session(
+    request: Request, response: Response, db: AsyncSessionDep
+) -> Response:
+    _validate_cookie_request(request)
+    await revoke_session(db, request.cookies.get(REFRESH_COOKIE_NAME))
+    response.delete_cookie(REFRESH_COOKIE_NAME, path="/api/auth")
+    response.delete_cookie(CSRF_COOKIE_NAME, path="/")
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 # ─── Microsoft SSO ───────────────────────────────────────────────────────────
@@ -895,8 +1267,11 @@ def _get_microsoft_verifier() -> MicrosoftTokenVerifier:
 
 
 @router.post("/microsoft", response_model=TokenResponse)
+@limiter.limit("100/minute")
 async def microsoft_login(
+    request: Request,
     payload: MicrosoftLoginRequest,
+    response: Response,
     db: AsyncSessionDep,
 ) -> TokenResponse:
     """Verify a Microsoft access token and return a LogSentinel JWT.
@@ -916,31 +1291,41 @@ async def microsoft_login(
         verifier = _get_microsoft_verifier()
         identity = await asyncio.to_thread(verifier.verify, payload.access_token)
     except MicrosoftAuthDisabledError:
+        logger.warning("Microsoft login rejected: authentication is disabled")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="microsoft_auth_disabled",
         )
     except InvalidMicrosoftTenantError:
+        logger.warning("Microsoft login rejected: invalid tenant")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="invalid_microsoft_tenant",
         )
     except MissingRequiredScopeError:
+        logger.warning("Microsoft login rejected: required scope missing")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="missing_required_scope",
         )
     except MicrosoftJWKSUnavailableError:
+        logger.warning("Microsoft login unavailable: JWKS lookup failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="microsoft_jwks_unavailable",
         )
-    except InvalidMicrosoftTokenError:
+    except InvalidMicrosoftTokenError as exc:
+        logger.warning(
+            "Microsoft login rejected: exception_type=%s", type(exc).__name__
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid_microsoft_token",
         )
-    except MicrosoftAuthError:
+    except MicrosoftAuthError as exc:
+        logger.warning(
+            "Microsoft login rejected: exception_type=%s", type(exc).__name__
+        )
         # Catch-all for any other Microsoft auth error subclass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -968,11 +1353,16 @@ async def microsoft_login(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="microsoft_identity_conflict",
             )
-        _ensure_user_can_authenticate(user)
-        token = create_access_token(
-            data={"sub": user.email, "full_name": user.full_name or ""}
+        mapped_tenant_id, _ = await resolve_provider_tenant_mapping(
+            db,
+            provider="microsoft",
+            issuer=identity.issuer,
+            provider_tenant_id=identity.tenant_id,
         )
-        return TokenResponse(access_token=token)
+        if mapped_tenant_id != user.tenant_id:
+            raise HTTPException(status_code=403, detail="provider_tenant_mismatch")
+        _ensure_user_can_authenticate(user)
+        return await _issue_session(user, db, request, response)
 
     # ── New Microsoft identity — provision user ────────────────────────
     candidate_email = identity.email.strip().lower() if identity.email else None
@@ -1006,6 +1396,11 @@ async def microsoft_login(
             full_name=identity.display_name,
             status=ACTIVE,
             commit=False,
+            provider="microsoft",
+            issuer=identity.issuer,
+            provider_tenant_id=identity.tenant_id,
+            provider_subject=identity.subject,
+            verified_email=candidate_email,
         )
         external_identity = await ExternalIdentityRepository.create_external_identity(
             db=db,
@@ -1034,22 +1429,14 @@ async def microsoft_login(
 
     logger.info("Auto-created user via Microsoft SSO: user_id=%d", new_user.id)
 
-    token = create_access_token(
-        data={"sub": new_user.email, "full_name": new_user.full_name or ""}
-    )
-    return TokenResponse(access_token=token)
+    return await _issue_session(new_user, db, request, response)
 
 
 # ─── GitHub SSO ──────────────────────────────────────────────────────────────
 
-import secrets
-import urllib.parse
-
-import httpx
-from fastapi.responses import RedirectResponse
-
 
 @router.get("/github")
+@limiter.limit("30/minute")
 async def github_login_redirect(request: Request):
     """Redirect user to GitHub OAuth authorization page."""
     settings = get_github_auth_settings()
@@ -1101,10 +1488,11 @@ async def github_login_redirect(request: Request):
 
 
 @router.get("/callback/github")
+@limiter.limit("100/minute")
 async def github_login_callback(
     request: Request,
-    code: str,
-    state: str,
+    code: Annotated[str, Query(min_length=1, max_length=2048)],
+    state: Annotated[str, Query(min_length=1, max_length=512)],
     db: AsyncSessionDep,
 ):
     """Handle GitHub OAuth callback, exchange code for token, and authenticate user."""
@@ -1116,7 +1504,7 @@ async def github_login_callback(
         )
 
     cookie_state = request.cookies.get("github_oauth_state")
-    if not state or not cookie_state or state != cookie_state:
+    if not state or not cookie_state or not secrets.compare_digest(state, cookie_state):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid state token (CSRF check failed)",
@@ -1124,75 +1512,122 @@ async def github_login_callback(
 
     # 1. Exchange code for access token
     token_url = "https://github.com/login/oauth/access_token"
-    async with httpx.AsyncClient() as client:
-        token_res = await client.post(
-            token_url,
-            headers={"Accept": "application/json"},
-            data={
-                "client_id": settings.client_id,
-                "client_secret": settings.client_secret,
-                "code": code,
-                "redirect_uri": settings.callback_url,
-            },
-        )
-        if token_res.status_code != 200:
-            raise HTTPException(
-                status_code=400, detail="Failed to retrieve GitHub access token"
+    timeout = httpx.Timeout(10.0, connect=3.0, read=7.0, write=5.0, pool=3.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            token_res = await client.post(
+                token_url,
+                headers={"Accept": "application/json"},
+                data={
+                    "client_id": settings.client_id,
+                    "client_secret": settings.client_secret,
+                    "code": code,
+                    "redirect_uri": settings.callback_url,
+                },
+            )
+            if token_res.status_code != 200:
+                raise HTTPException(
+                    status_code=400, detail="Failed to retrieve GitHub access token"
+                )
+
+            token_data = token_res.json()
+            if not isinstance(token_data, dict):
+                raise HTTPException(
+                    status_code=400, detail="Invalid GitHub token response"
+                )
+            access_token_value = token_data.get("access_token")
+            if (
+                not isinstance(access_token_value, str)
+                or not access_token_value
+                or len(access_token_value) > 2048
+            ):
+                logger.error(
+                    "GitHub token exchange failed: response_shape=%s",
+                    type(token_data).__name__,
+                )
+                raise HTTPException(
+                    status_code=400, detail="GitHub OAuth exchange failed"
+                )
+            access_token = access_token_value
+
+            # 2. Fetch user profile
+            user_res = await client.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                },
+            )
+            if user_res.status_code != 200:
+                raise HTTPException(
+                    status_code=400, detail="Failed to retrieve GitHub user profile"
+                )
+
+            github_user = user_res.json()
+            if not isinstance(github_user, dict):
+                raise HTTPException(
+                    status_code=400, detail="Invalid GitHub user profile"
+                )
+            raw_github_id = github_user.get("id")
+            if isinstance(raw_github_id, int) and raw_github_id > 0:
+                github_id = str(raw_github_id)
+            elif (
+                isinstance(raw_github_id, str)
+                and raw_github_id.isdigit()
+                and 0 < len(raw_github_id) <= 32
+            ):
+                github_id = raw_github_id
+            else:
+                raise HTTPException(status_code=400, detail="Invalid GitHub identity")
+            full_name_value = github_user.get("name") or github_user.get("login")
+            full_name = (
+                full_name_value[:255]
+                if isinstance(full_name_value, str) and full_name_value
+                else None
             )
 
-        token_data = token_res.json()
-        access_token = token_data.get("access_token")
-        if not access_token:
-            gh_error = (
-                token_data.get("error_description")
-                or token_data.get("error")
-                or "No access token returned from GitHub"
+            # 3. Fetch primary email
+            email_res = await client.get(
+                "https://api.github.com/user/emails",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                },
             )
-            logger.error(
-                "GitHub token exchange failed: error_type=%s", type(gh_error).__name__
-            )
-            raise HTTPException(
-                status_code=400, detail=f"GitHub OAuth error: {gh_error}"
-            )
+            if email_res.status_code != 200:
+                raise HTTPException(
+                    status_code=400, detail="Failed to retrieve GitHub emails"
+                )
 
-        # 2. Fetch user profile
-        user_res = await client.get(
-            "https://api.github.com/user",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/vnd.github.v3+json",
-            },
-        )
-        if user_res.status_code != 200:
-            raise HTTPException(
-                status_code=400, detail="Failed to retrieve GitHub user profile"
+            emails = email_res.json()
+            if not isinstance(emails, list):
+                raise HTTPException(
+                    status_code=400, detail="Invalid GitHub email response"
+                )
+            primary_email_value = next(
+                (
+                    entry.get("email")
+                    for entry in emails
+                    if isinstance(entry, dict)
+                    and entry.get("primary") is True
+                    and entry.get("verified") is True
+                    and isinstance(entry.get("email"), str)
+                    and len(entry["email"]) <= 320
+                ),
+                None,
             )
-
-        github_user = user_res.json()
-        github_id = str(github_user["id"])
-        full_name = github_user.get("name") or github_user.get("login")
-
-        # 3. Fetch primary email
-        email_res = await client.get(
-            "https://api.github.com/user/emails",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/vnd.github.v3+json",
-            },
-        )
-        if email_res.status_code != 200:
-            raise HTTPException(
-                status_code=400, detail="Failed to retrieve GitHub emails"
-            )
-
-        emails = email_res.json()
-        primary_email = next(
-            (e["email"] for e in emails if e.get("primary") and e.get("verified")), None
-        )
-        if not primary_email:
-            raise HTTPException(
-                status_code=400, detail="No primary email found on GitHub account"
-            )
+            if not isinstance(primary_email_value, str) or not primary_email_value:
+                raise HTTPException(
+                    status_code=400, detail="No primary email found on GitHub account"
+                )
+            primary_email = canonicalize_email(primary_email_value)
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError, KeyError):
+        logger.error("GitHub provider boundary failed: exception_category=provider")
+        raise HTTPException(
+            status_code=502, detail="GitHub authentication is unavailable"
+        ) from None
 
     # 4. Handle Account Linking & Unified User Logic
     account = await AccountRepository.get_account_by_provider(db, "github", github_id)
@@ -1228,6 +1663,11 @@ async def github_login_callback(
                 full_name=full_name,
                 status=ACTIVE,
                 commit=False,
+                provider="github",
+                issuer="https://github.com",
+                provider_tenant_id=None,
+                provider_subject=github_id,
+                verified_email=primary_email,
             )
             await AccountRepository.create_account(
                 db=db,
@@ -1244,17 +1684,23 @@ async def github_login_callback(
             raise HTTPException(
                 status_code=409, detail="GitHub identity conflict during creation"
             )
-        except Exception:
+        except Exception as exc:
             await db.rollback()
-            raise
+            logger.error(
+                "GitHub identity persistence failed: exception_type=%s detail=%s",
+                type(exc).__name__,
+                sanitize_error_text(exc),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="GitHub authentication is temporarily unavailable",
+            ) from None
 
         logger.info("Auto-created user via GitHub SSO: user_id=%s", user.id)
 
-    # 5. Issue session token and redirect using URL fragment to avoid access log leakage
+    # 5. Establish the same server-controlled cookie session used by local/other SSO.
     _ensure_user_can_authenticate(user)
-    token = create_access_token(
-        data={"sub": user.email, "full_name": user.full_name or ""}
-    )
+    issued = await create_session(db, user)
 
     allowed_origins = [
         o.strip() for o in os.getenv("FRONTEND_URL", "http://localhost:8080").split(",")
@@ -1264,4 +1710,10 @@ async def github_login_callback(
         cookie_origin if cookie_origin in allowed_origins else allowed_origins[0]
     )
 
-    return RedirectResponse(f"{frontend_url}/login#token={token}", status_code=303)
+    redirect = RedirectResponse(
+        f"{frontend_url}/login?session=restored", status_code=303
+    )
+    _set_session_cookies(redirect, request, issued)
+    redirect.delete_cookie("github_oauth_state")
+    redirect.delete_cookie("github_oauth_origin")
+    return redirect

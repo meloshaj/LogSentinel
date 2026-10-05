@@ -95,6 +95,13 @@ The redirect URI is a dedicated MSAL bridge, not a React route. It must remain s
 | Entra client secret | Not used | Not used | Must not exist |
 | Internal LogSentinel JWT signing key | `JWT_SECRET_KEY` | — | **Yes** |
 
+The existing Cloudflare Pages project supplies the SPA values as
+`VITE_AZURE_CLIENT_ID`, `VITE_AZURE_AUTHORITY`, `VITE_AZURE_SCOPES`, and
+`VITE_AZURE_REDIRECT_URI`. The frontend accepts these as compatibility aliases;
+the `VITE_MICROSOFT_*` names take precedence when both forms are set. The
+current registered `/auth/callback` URI is served through the static
+`/redirect.html` MSAL bridge by the Pages `_redirects` rule.
+
 `VITE_*` values are compiled into the browser bundle and are never secrets. `JWT_SECRET_KEY` is unrelated to Entra registration and must be a strong, private, randomly generated value shared only with the backend.
 
 The repository ignores `.env` and `.env.local`, and Docker build context excludes both. Keep real deployment identifiers and the local JWT key only in one of those ignored files or in process environment variables. A root `.env.local` is loaded by Vite, but a directly launched backend does not automatically load it; inject the backend variables into its process before startup. Never print the file contents during validation.
@@ -125,7 +132,7 @@ $env:VITE_MICROSOFT_AUTHORITY="https://login.microsoftonline.com/<tenant-guid-or
 $env:VITE_MICROSOFT_API_SCOPE="api://<API_APP_CLIENT_ID>/access_as_user"
 $env:VITE_MICROSOFT_REDIRECT_URI="http://localhost:5173/redirect.html"
 $env:VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI="http://localhost:5173/login"
-corepack pnpm dev
+npm run dev
 ```
 
 If Microsoft authentication is disabled, missing, partial, malformed, cross-origin, or uses a non-LogSentinel scope, the application deliberately does not construct MSAL. Email/password and configured Google login remain available.

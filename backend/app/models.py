@@ -7,6 +7,15 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .schemas.ingest import (
+    BulkIngestPayload,
+    BulkIngestResponse,
+    BulkLogEntry,
+    IngestPayload,
+    IngestResponse,
+    LogEntry,
+)
+
 
 class ParsedLog(BaseModel):
     """Standardized parsed log structure from Drain3 pipeline.
@@ -41,6 +50,12 @@ class ParsedLog(BaseModel):
         ...,
         min_length=1,
         description="Original unprocessed log message",
+    )
+    event_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Stable logical source identity preserved across redelivery",
     )
 
     # Drain3 template fields
@@ -83,6 +98,11 @@ class ParsedLog(BaseModel):
         default="default",
         min_length=1,
         description="Authoritative tenant assigned by the ingestion gateway",
+    )
+    owner_user_id: int = Field(
+        default=0,
+        ge=0,
+        description="Authoritative application user assigned by the ingestion boundary",
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
@@ -204,6 +224,11 @@ class FeatureVector(BaseModel):
         min_length=1,
         description="Tenant whose logs produced this feature window",
     )
+    owner_user_id: int = Field(
+        default=0,
+        ge=0,
+        description="Owner of every source log in this feature window",
+    )
 
     # Statistical features
     log_count: int = Field(
@@ -302,15 +327,6 @@ class PerformanceEvent(BaseModel):
 
     model_config = ConfigDict()
 
-
-from .schemas.ingest import (
-    BulkIngestPayload,
-    BulkIngestResponse,
-    BulkLogEntry,
-    IngestPayload,
-    IngestResponse,
-    LogEntry,
-)
 
 __all__ = [
     "ParsedLog",

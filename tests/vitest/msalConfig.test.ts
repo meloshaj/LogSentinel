@@ -24,10 +24,44 @@ async function loadConfig(overrides: Record<string, string> = {}) {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.resetModules();
 });
 
 describe("MSAL configuration validation", () => {
+  it("uses the production SPA ID, canonical callback, and API access scope", async () => {
+    vi.stubGlobal("window", {
+      location: {
+        origin: "https://logsentinel.pages.dev",
+        hostname: "logsentinel.pages.dev",
+      },
+    });
+    const config = await loadConfig({
+      VITE_MICROSOFT_SPA_CLIENT_ID: "f605e074-58af-4377-8663-9aaa3de47476",
+      VITE_MICROSOFT_API_SCOPE:
+        "api://3bd029d4-5e9e-40d4-a398-90dabc34a59f/access_as_user",
+      VITE_MICROSOFT_REDIRECT_URI:
+        "https://logsentinel.pages.dev/auth/callback",
+    });
+
+    expect(config.msalConfig.clientId).toBe(
+      "f605e074-58af-4377-8663-9aaa3de47476",
+    );
+    expect(config.msalConfig.redirectUri).toBe(
+      "https://logsentinel.pages.dev/auth/callback",
+    );
+    expect(config.msalInstanceConfig.auth.clientId).toBe(
+      "f605e074-58af-4377-8663-9aaa3de47476",
+    );
+    expect(config.msalInstanceConfig.auth.redirectUri).toBe(
+      "https://logsentinel.pages.dev/auth/callback",
+    );
+    expect(config.loginRequest.scopes).toEqual([
+      "api://3bd029d4-5e9e-40d4-a398-90dabc34a59f/access_as_user",
+    ]);
+    expect(config.isMsalConfigured()).toBe(true);
+  });
+
   it("is disabled without constructing a fake client identifier", async () => {
     const config = await loadConfig({
       VITE_MICROSOFT_AUTH_ENABLED: "false",
@@ -53,6 +87,40 @@ describe("MSAL configuration validation", () => {
 
   it("accepts exactly one custom LogSentinel API scope", async () => {
     const config = await loadConfig();
+
+    expect(config.isMsalConfigured()).toBe(true);
+    expect(config.loginRequest.scopes).toEqual([
+      "api://00000000-0000-4000-8000-000000000002/access_as_user",
+    ]);
+  });
+
+  it("uses the canonical production callback when no redirect override is set", async () => {
+    const config = await loadConfig({
+      VITE_MICROSOFT_REDIRECT_URI: "",
+      VITE_AZURE_REDIRECT_URI: "",
+    });
+
+    expect(config.msalConfig.redirectUri).toBe(
+      `${window.location.origin}/auth/callback`,
+    );
+    expect(config.isMsalConfigured()).toBe(true);
+  });
+
+  it("keeps Microsoft auth enabled with the existing Cloudflare Pages VITE_AZURE_* contract", async () => {
+    const config = await loadConfig({
+      VITE_MICROSOFT_AUTH_ENABLED: "",
+      VITE_MICROSOFT_SPA_CLIENT_ID: "",
+      VITE_MICROSOFT_AUTHORITY: "",
+      VITE_MICROSOFT_API_SCOPE: "",
+      VITE_MICROSOFT_REDIRECT_URI: "",
+      VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI: "",
+      VITE_AZURE_CLIENT_ID: "00000000-0000-4000-8000-000000000001",
+      VITE_AZURE_AUTHORITY:
+        "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111",
+      VITE_AZURE_SCOPES:
+        "api://00000000-0000-4000-8000-000000000002/access_as_user",
+      VITE_AZURE_REDIRECT_URI: `${window.location.origin}/auth/callback`,
+    });
 
     expect(config.isMsalConfigured()).toBe(true);
     expect(config.loginRequest.scopes).toEqual([

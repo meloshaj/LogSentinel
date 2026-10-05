@@ -13,6 +13,7 @@ from typing import Any
 from prometheus_client import Counter
 
 from ..models import ParsedLog
+from ..security.redaction import sanitize_error_text
 
 logger = logging.getLogger("logsentinel.batch_manager")
 
@@ -134,8 +135,11 @@ class ParsedLogBatchManager:
                             self._periodic_flush_count += 1
             except asyncio.CancelledError:
                 break
-            except Exception as e:
-                logger.error(f"Periodic flush loop encountered error: {e}")
+            except Exception as exc:
+                logger.error(
+                    "Periodic flush loop encountered error: %s",
+                    sanitize_error_text(exc),
+                )
 
     async def stop_periodic_flush(self) -> None:
         """Stop periodic flushing without cancelling an in-flight sink call."""
@@ -172,48 +176,75 @@ class ParsedLogBatchManager:
                 if not self._buffer:
                     return False
                 batch = self._drain_buffer()
-                self._flush_active = True
+            success, _ = await self._persist_batch_locked(batch)
+            return success
 
-            retries = 3
-            result = None
-            for attempt in range(retries):
-                try:
-                    result = await self._invoke_sink(batch)
-                    break
-                except asyncio.CancelledError:
-                    await self._restore_failed_batch(
-                        batch, "CancelledError: sink invocation cancelled", True
+    async def persist_batch(self, batch: list[ParsedLog]) -> tuple[bool, Any]:
+        """Persist a stream delivery without putting it behind the buffer.
+
+        Stream ACK handling needs the sink's typed per-event result. This
+        method serializes that operation with ordinary flushes while avoiding
+        a second time-based flush race.
+        """
+        if not batch:
+            return False, None
+        async with self._flush_lock:
+            return await self._persist_batch_locked(list(batch))
+
+    async def _persist_batch_locked(self, batch: list[ParsedLog]) -> tuple[bool, Any]:
+        async with self._state_lock:
+            self._flush_active = True
+
+        retries = 3
+        result = None
+        for attempt in range(retries):
+            try:
+                result = await self._invoke_sink(batch)
+                if getattr(result, "failed_count", 0):
+                    raise RuntimeError(
+                        "sink returned failed per-event persistence results"
                     )
+                break
+            except asyncio.CancelledError:
+                await self._restore_failed_batch(
+                    batch, "CancelledError: sink invocation cancelled", True
+                )
+                logger.warning(
+                    "Parsed log batch sink cancelled; restored %d records", len(batch)
+                )
+                raise
+            except Exception as exc:
+                if attempt < retries - 1:
+                    sleep_time = (2**attempt) * 0.1
                     logger.warning(
-                        f"Parsed log batch sink cancelled; restored {len(batch)} records"
+                        "Sink attempt %d failed (%s). Retrying in %.2fs",
+                        attempt + 1,
+                        type(exc).__name__,
+                        sleep_time,
                     )
-                    raise
-                except Exception as exc:
-                    if attempt < retries - 1:
-                        sleep_time = (2**attempt) * 0.1
-                        logger.warning(
-                            f"Sink attempt {attempt + 1} failed ({type(exc).__name__}). Retrying in {sleep_time}s"
-                        )
-                        await asyncio.sleep(sleep_time)
-                    else:
-                        await self._restore_failed_batch(batch, str(exc), False)
-                        logger.error(
-                            f"Parsed log batch sink failed after 3 attempts; restored {len(batch)} records"
-                        )
-                        return False
+                    await asyncio.sleep(sleep_time)
+                else:
+                    await self._restore_failed_batch(
+                        batch, sanitize_error_text(exc), False
+                    )
+                    logger.error(
+                        "Parsed log batch sink failed after 3 attempts; restored %d records",
+                        len(batch),
+                    )
+                    return False, None
 
-            async with self._state_lock:
-                if self.sink is None:
-                    self._flushed_batches.append(list(batch))
-                self._flushed_batch_count += 1
-                self._flushed_record_count += len(batch)
-                self._last_flush_record_count = len(batch)
-                self._last_sink_result = result
-                self._last_sink_error = None
-                self._last_failed_batch = None
-                self._last_flush_at = datetime.now(timezone.utc).isoformat()
-                self._flush_active = False
-            return True
+        async with self._state_lock:
+            if self.sink is None:
+                self._flushed_batches.append(list(batch))
+            self._flushed_batch_count += 1
+            self._flushed_record_count += len(batch)
+            self._last_flush_record_count = len(batch)
+            self._last_sink_result = result
+            self._last_sink_error = None
+            self._last_failed_batch = None
+            self._last_flush_at = datetime.now(timezone.utc).isoformat()
+            self._flush_active = False
+        return True, result
 
     def size(self) -> int:
         return len(self._buffer)
@@ -286,7 +317,7 @@ class ParsedLogBatchManager:
             if self._buffer and self._oldest_timestamp is None:
                 self._oldest_timestamp = time.monotonic()
             self._last_failed_batch = batch
-            self._last_sink_error = error_summary
+            self._last_sink_error = sanitize_error_text(error_summary)
             self._flush_active = False
             if cancelled:
                 self._cancelled_flush_attempt_count += 1

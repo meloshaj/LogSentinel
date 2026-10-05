@@ -11,8 +11,8 @@ import os
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy.engine import make_url
+from pydantic import BaseModel, Field, field_validator, model_validator
+from sqlalchemy.engine import URL, make_url
 
 
 class CoreSettings(BaseModel):
@@ -136,6 +136,43 @@ class DatabaseSettings(BaseModel):
     the individual components.
     """
 
+    environment: str = Field(
+        default_factory=lambda: os.getenv("ENVIRONMENT", "development")
+    )
+    allow_insecure_tls: bool = Field(
+        default_factory=lambda: os.getenv(
+            "POSTGRES_ALLOW_INSECURE_TLS", "false"
+        ).lower()
+        == "true"
+    )
+
+    @model_validator(mode="after")
+    def validate_tls(self):
+        mode = self.ssl_mode
+        if self.database_url_override:
+            query = make_url(self.database_url_override).query
+            if "ssl" in query and "sslmode" in query:
+                raise ValueError("Specify only one database TLS mode")
+            mode = query.get("ssl", query.get("sslmode", mode))
+        if mode not in {
+            "disable",
+            "allow",
+            "prefer",
+            "require",
+            "verify-ca",
+            "verify-full",
+        }:
+            raise ValueError("Invalid PostgreSQL TLS mode")
+        if (
+            self.environment.strip().lower() == "production"
+            and mode != "verify-full"
+            and not self.allow_insecure_tls
+        ):
+            raise ValueError(
+                "Production requires explicit verify-full TLS; POSTGRES_ALLOW_INSECURE_TLS=true is the named exception"
+            )
+        return self
+
     user: str = Field(
         default="logsentinel",
         description="PostgreSQL user name (env: POSTGRES_USER)",
@@ -207,11 +244,21 @@ class DatabaseSettings(BaseModel):
     def url(self) -> str:
         """Build the async DSN string used by ``create_async_engine``."""
         if self.database_url_override:
-            return self.database_url_override
-        return (
-            f"postgresql+asyncpg://{self.user}:{self.password}"
-            f"@{self.host}:{self.port}/{self.db_name}?ssl={self.ssl_mode}"
-        )
+            parsed = make_url(self.database_url_override)
+            query = dict(parsed.query)
+            query["ssl"] = query.pop("sslmode", query.get("ssl", self.ssl_mode))
+            return parsed.set(
+                drivername="postgresql+asyncpg", query=query
+            ).render_as_string(hide_password=False)
+        return URL.create(
+            "postgresql+asyncpg",
+            username=self.user,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+            database=self.db_name,
+            query={"ssl": self.ssl_mode},
+        ).render_as_string(hide_password=False)
 
     def asyncpg_connect_kwargs(self) -> dict[str, object]:
         """Return one consistent connection contract for direct asyncpg users.
@@ -227,7 +274,7 @@ class DatabaseSettings(BaseModel):
         }
 
         if self.database_url_override:
-            parsed = make_url(self.database_url_override)
+            parsed = make_url(self.url)
             query = dict(parsed.query)
             ssl_query_value = query.pop("ssl", None)
             if ssl_query_value is not None and "sslmode" not in query:
@@ -647,6 +694,36 @@ class ArchiveSettings(BaseModel):
         default=100000,
         description="Maximum number of rows allowed during rehydration (env: ARCHIVE_STAGING_ROW_LIMIT)",
     )
+    max_archive_ids: int = Field(
+        default=20,
+        gt=0,
+        description="Maximum archive IDs accepted by one rehydration request",
+    )
+    max_archive_bytes: int = Field(
+        default=256 * 1024 * 1024,
+        gt=0,
+        description="Maximum compressed archive bytes read during rehydration",
+    )
+    max_export_rows: int = Field(
+        default=100000,
+        gt=0,
+        description="Maximum rows materialized while exporting one archive",
+    )
+    max_concurrent_rehydrations: int = Field(
+        default=4,
+        gt=0,
+        description="Maximum active rehydration sessions across the deployment",
+    )
+    max_rehydration_duration_seconds: int = Field(
+        default=300,
+        gt=0,
+        description="Hard timeout for one archive rehydration",
+    )
+    staging_ttl_seconds: int = Field(
+        default=3600,
+        gt=0,
+        description="Lifetime of a rehydration staging table",
+    )
 
 
 def get_archive_settings() -> ArchiveSettings:
@@ -663,6 +740,16 @@ def get_archive_settings() -> ArchiveSettings:
             os.getenv("ARCHIVE_LATENESS_GRACE_HOURS", "2")
         ),
         staging_row_limit=int(os.getenv("ARCHIVE_STAGING_ROW_LIMIT", "100000")),
+        max_archive_ids=int(os.getenv("ARCHIVE_MAX_IDS", "20")),
+        max_archive_bytes=int(os.getenv("ARCHIVE_MAX_BYTES", str(256 * 1024 * 1024))),
+        max_export_rows=int(os.getenv("ARCHIVE_MAX_EXPORT_ROWS", "100000")),
+        max_concurrent_rehydrations=int(
+            os.getenv("ARCHIVE_MAX_CONCURRENT_REHYDRATIONS", "4")
+        ),
+        max_rehydration_duration_seconds=int(
+            os.getenv("ARCHIVE_MAX_REHYDRATION_DURATION_SECONDS", "300")
+        ),
+        staging_ttl_seconds=int(os.getenv("ARCHIVE_STAGING_TTL_SECONDS", "3600")),
     )
 
 

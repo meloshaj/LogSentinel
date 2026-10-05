@@ -3,7 +3,8 @@ import logging
 
 from redis.asyncio import Redis
 
-from ..core.constants import LOG_WORKERS_GROUP
+from ..core.constants import LOG_STREAM_NAME, LOG_WORKERS_GROUP
+from ..security.redaction import sanitize_error_text
 
 logger = logging.getLogger("logsentinel.workers.stream_cleaner")
 
@@ -20,7 +21,7 @@ class StreamCleanerWorker:
 
     def __init__(
         self,
-        stream_name: str = "logs:stream",
+        stream_name: str = LOG_STREAM_NAME,
         group_name: str = LOG_WORKERS_GROUP,
         consumer_name: str = "orphan_cleaner",
         check_interval_seconds: float = 60.0,
@@ -66,8 +67,12 @@ class StreamCleanerWorker:
                 await self._clean_orphans()
             except asyncio.CancelledError:
                 break
-            except Exception:
-                logger.exception("Unexpected error in StreamCleanerWorker loop")
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error in StreamCleanerWorker loop exception_type=%s detail=%s",
+                    type(exc).__name__,
+                    sanitize_error_text(exc),
+                )
 
     async def _clean_orphans(self) -> None:
         # Deliberately do not call XAUTOCLAIM/XACK here.  Recovery and terminal

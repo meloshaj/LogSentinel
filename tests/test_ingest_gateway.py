@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 import backend.app.main as main_module
 from backend.app.main import app
+from backend.app.security.data_scope import DataScope
+from backend.app.security.ingest_guard import require_ingestion_api_key
 
 client = TestClient(app)
 
@@ -38,6 +40,11 @@ def valid_payload() -> dict:
 def test_lifespan_stops_drain_before_features_and_database(monkeypatch) -> None:
     events: list[str] = []
     monkeypatch.setenv("POSTGRES_PASSWORD", "test-postgres-password")
+    monkeypatch.setenv("RUN_WEBHOOK_WORKER_IN_LIFESPAN", "false")
+    monkeypatch.setenv("RUN_ARCHIVE_WORKER_IN_LIFESPAN", "false")
+    monkeypatch.setattr(main_module, "run_webhook_worker_in_lifespan", False)
+    monkeypatch.setattr(main_module, "run_archive_worker_in_lifespan", False)
+    monkeypatch.setattr(main_module, "archive_worker", None)
 
     class FakeConnection:
         async def run_sync(self, _operation) -> None:
@@ -153,7 +160,14 @@ def mock_redis_state(monkeypatch):
     yield
 
 
-def test_ingest_log_returns_202_for_valid_payload() -> None:
+@pytest.fixture
+def owned_ingestion_scope():
+    app.dependency_overrides[require_ingestion_api_key] = lambda: DataScope("tenant-test", 101)
+    yield
+    app.dependency_overrides.pop(require_ingestion_api_key, None)
+
+
+def test_ingest_log_returns_202_for_valid_payload(owned_ingestion_scope) -> None:
     with patch.dict("os.environ", {"INGEST_API_KEY": VALID_KEY}, clear=False):
         response = client.post("/ingest-log", json=valid_payload(), headers=auth_headers())
 
@@ -164,7 +178,7 @@ def test_ingest_log_returns_202_for_valid_payload() -> None:
     assert body["queue_size"] >= 0
 
 
-def test_ingest_log_rejects_missing_logs(monkeypatch) -> None:
+def test_ingest_log_rejects_missing_logs(monkeypatch, owned_ingestion_scope) -> None:
     monkeypatch.setattr(main_module.app.state, "redis", MockRedis(), raising=False)
     with patch.dict("os.environ", {"INGEST_API_KEY": VALID_KEY}, clear=False):
         response = client.post(
@@ -199,12 +213,12 @@ def test_ingest_log_rejects_invalid_api_key(monkeypatch) -> None:
     assert VALID_KEY not in response.text
 
 
-def test_ingest_log_accepts_key_from_ingest_api_keys() -> None:
+def test_ingest_log_rejects_static_key_without_authoritative_owner() -> None:
     with patch.dict("os.environ", {"INGEST_API_KEYS": "first-key, second-key"}, clear=False):
         response = client.post("/ingest-log", json=valid_payload(), headers=auth_headers("second-key"))
 
-    assert response.status_code == 202
-    assert response.json()["accepted"] is True
+    assert response.status_code == 403
+    assert response.json() == {"detail": "legacy_ingestion_key_has_no_owner"}
 
 
 def test_ingest_log_rejects_when_guard_is_not_configured() -> None:
@@ -239,7 +253,7 @@ def test_unauthorized_ingest_does_not_enqueue_logs(monkeypatch) -> None:
     assert len(calls) == 0
 
 
-def test_ingest_log_preserves_queue_full_response(monkeypatch) -> None:
+def test_ingest_log_preserves_queue_full_response(monkeypatch, owned_ingestion_scope) -> None:
     class MockRedisPipeline:
         def xadd(self, *args, **kwargs):
             pass

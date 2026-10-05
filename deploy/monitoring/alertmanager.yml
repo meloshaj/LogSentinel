@@ -1,0 +1,15 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: [alertname, component, service, severity]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+  receiver: logsentinel-operator
+
+receivers:
+  - name: logsentinel-operator
+    webhook_configs:
+      - url: http://alert-relay:8080/alert
+        send_resolved: true

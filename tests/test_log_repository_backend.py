@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +21,17 @@ def mock_engine():
     asyncpg_conn = AsyncMock()
     raw_conn.driver_connection = asyncpg_conn
     conn.get_raw_connection.return_value = raw_conn
+    async def execute(statement, *args, **kwargs):
+        params = statement.compile().params
+        indexes = sorted({key.rsplit("_m", 1)[1] for key in params if key.startswith("event_id_m")}, key=int)
+        if indexes:
+            return [SimpleNamespace(
+                tenant_id=params[f"tenant_id_m{i}"],
+                owner_user_id=params[f"owner_user_id_m{i}"],
+                event_id=params[f"event_id_m{i}"],
+            ) for i in indexes]
+        return MagicMock()
+    conn.execute.side_effect = execute
     
     return engine, conn, asyncpg_conn
 
@@ -33,6 +45,7 @@ async def test_bulk_insert_live_logs_only(mock_engine):
     now = datetime.now(timezone.utc)
     logs = [
         ParsedLog(
+            tenant_id="test-tenant", owner_user_id=101,
             id=f"TEST_LIVE_{i}",
             timestamp=now,
             service="test_svc",
@@ -54,8 +67,8 @@ async def test_bulk_insert_live_logs_only(mock_engine):
     assert args[0] == "logs"
     assert len(kwargs["records"]) == 3
     
-    # Verify execute (insert) was NOT called
-    conn.execute.assert_not_called()
+    # One ledger claim plus one durable feature-contribution row per event.
+    assert conn.execute.call_count == 4
     # Verify commit was called
     conn.commit.assert_called_once()
 
@@ -71,15 +84,19 @@ async def test_bulk_insert_mixed_logs(mock_engine):
     # 2 live logs, 2 late logs
     logs = [
         ParsedLog(
+            tenant_id="test-tenant", owner_user_id=101,
             id="TEST_LIVE_1", timestamp=now, service="test", raw_message="msg", template_id="T1", level="INFO", parameters=[], metadata={}
         ),
         ParsedLog(
+            tenant_id="test-tenant", owner_user_id=101,
             id="TEST_LIVE_2", timestamp=now, service="test", raw_message="msg", template_id="T1", level="INFO", parameters=[], metadata={}
         ),
         ParsedLog(
+            tenant_id="test-tenant", owner_user_id=101,
             id="TEST_LATE_1", timestamp=old_time, service="test", raw_message="msg", template_id="T1", level="INFO", parameters=[], metadata={}
         ),
         ParsedLog(
+            tenant_id="test-tenant", owner_user_id=101,
             id="TEST_LATE_2", timestamp=old_time, service="test", raw_message="msg", template_id="T1", level="INFO", parameters=[], metadata={}
         ),
     ]
@@ -91,11 +108,12 @@ async def test_bulk_insert_mixed_logs(mock_engine):
     kwargs = asyncpg_conn.copy_records_to_table.call_args.kwargs
     assert len(kwargs["records"]) == 2
     # Ensure they are the live ones
-    assert kwargs["records"][0][1] == "TEST_LIVE_1"
-    assert kwargs["records"][1][1] == "TEST_LIVE_2"
+    assert kwargs["records"][0][2] == "TEST_LIVE_1"
+    assert kwargs["records"][1][2] == "TEST_LIVE_2"
     
     # Verify execute was called for the late logs
-    conn.execute.assert_called_once()
+    # Ledger + one late-log insert + four idempotent feature registrations.
+    assert conn.execute.call_count == 6
     
     # Verify commit
     conn.commit.assert_called_once()
@@ -110,6 +128,7 @@ async def test_bulk_insert_late_logs_only(mock_engine):
     
     logs = [
         ParsedLog(
+            tenant_id="test-tenant", owner_user_id=101,
             id="TEST_LATE_1", timestamp=old_time, service="test", raw_message="msg", template_id="T1", level="INFO", parameters=[], metadata={}
         )
     ]
@@ -120,7 +139,7 @@ async def test_bulk_insert_late_logs_only(mock_engine):
     asyncpg_conn.copy_records_to_table.assert_not_called()
     
     # execute should be called
-    conn.execute.assert_called_once()
+    assert conn.execute.call_count == 3
     conn.commit.assert_called_once()
 
 def test_partition_log_batch_timezone_handling():
@@ -152,6 +171,7 @@ async def test_late_logs_sub_batching(mock_engine):
     # 1200 late logs
     logs = [
         ParsedLog(
+            tenant_id="test-tenant", owner_user_id=101,
             id=f"TEST_LATE_{i}", timestamp=old_time, service="test", raw_message="msg", template_id="T1", level="INFO", parameters=[], metadata={}
         )
         for i in range(1200)
@@ -162,6 +182,6 @@ async def test_late_logs_sub_batching(mock_engine):
     # copy_records_to_table should NOT be called
     asyncpg_conn.copy_records_to_table.assert_not_called()
     
-    # execute should be called 3 times (500, 500, 200)
-    assert conn.execute.call_count == 3
+    # Ledger plus three late-log sub-batches and 1200 feature registrations.
+    assert conn.execute.call_count == 1204
     conn.commit.assert_called_once()

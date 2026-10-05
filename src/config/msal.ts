@@ -64,17 +64,37 @@ function isSameOriginUrl(value: string, requiredPath?: string): boolean {
   }
 }
 
+function isSupportedRedirectUrl(value: string): boolean {
+  return (
+    isSameOriginUrl(value, "/redirect.html") ||
+    isSameOriginUrl(value, "/auth/callback")
+  );
+}
+
 export const msalConfig = {
-  enabled: readBoolean(import.meta.env.VITE_MICROSOFT_AUTH_ENABLED),
-  clientId: import.meta.env.VITE_MICROSOFT_SPA_CLIENT_ID?.trim() || "",
-  authority: import.meta.env.VITE_MICROSOFT_AUTHORITY?.trim() || "",
-  apiScope: import.meta.env.VITE_MICROSOFT_API_SCOPE?.trim() || "",
+  enabled: import.meta.env.VITE_MICROSOFT_AUTH_ENABLED?.trim()
+    ? readBoolean(import.meta.env.VITE_MICROSOFT_AUTH_ENABLED)
+    : Boolean(import.meta.env.VITE_AZURE_CLIENT_ID?.trim()),
+  clientId:
+    import.meta.env.VITE_MICROSOFT_SPA_CLIENT_ID?.trim() ||
+    import.meta.env.VITE_AZURE_CLIENT_ID?.trim() ||
+    "",
+  authority:
+    import.meta.env.VITE_MICROSOFT_AUTHORITY?.trim() ||
+    import.meta.env.VITE_AZURE_AUTHORITY?.trim() ||
+    "",
+  apiScope:
+    import.meta.env.VITE_MICROSOFT_API_SCOPE?.trim() ||
+    import.meta.env.VITE_AZURE_SCOPES?.trim() ||
+    "",
   redirectUri: sanitizeSameOriginUrl(
-    import.meta.env.VITE_MICROSOFT_REDIRECT_URI?.trim(),
-    "/redirect.html",
+      import.meta.env.VITE_MICROSOFT_REDIRECT_URI?.trim() ||
+      import.meta.env.VITE_AZURE_REDIRECT_URI?.trim(),
+    "/auth/callback",
   ),
   postLogoutRedirectUri: sanitizeSameOriginUrl(
-    import.meta.env.VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI?.trim(),
+    import.meta.env.VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI?.trim() ||
+      import.meta.env.VITE_AZURE_POST_LOGOUT_REDIRECT_URI?.trim(),
     "/login",
   ),
 };
@@ -108,7 +128,7 @@ export const isMsalConfigured = (): boolean => {
     UUID_RE.test(msalConfig.clientId) &&
     isSupportedAuthority(msalConfig.authority) &&
     isValidMicrosoftApiScope(msalConfig.apiScope) &&
-    isSameOriginUrl(msalConfig.redirectUri, "/redirect.html") &&
+    isSupportedRedirectUrl(msalConfig.redirectUri) &&
     isSameOriginUrl(msalConfig.postLogoutRedirectUri)
   );
 };

@@ -37,6 +37,13 @@ import {
 import type { ReactNode } from "react";
 import type { LogEntry, LogLevel } from "../types/monitoring";
 import type { TelemetryEvent } from "../types/telemetry";
+import {
+  loadingState,
+  staleState,
+  successState,
+  unavailableState,
+  type OperationalDataState,
+} from "../types/operational";
 import { FEATURE_FLAGS } from "../config/features";
 import { mockTelemetry } from "../services/mockTelemetry";
 import {
@@ -45,6 +52,7 @@ import {
   clearAuthToken,
   fetchAuthenticated,
   getAuthToken,
+  refreshSession,
 } from "../utils/auth";
 
 // ---------------------------------------------------------------------------
@@ -74,12 +82,16 @@ export type BlastRadiusNode = {
 };
 
 export type TrackingLoopEvent = {
+  id?: number;
   window_id: string;
   anomaly_score: number;
   severity: string;
   status: string;
   blast_radius?: BlastRadiusNode[] | null;
   suspected_root_service?: string | null;
+  root_cause_confidence?: number | null;
+  created_at?: string | null;
+  history?: Array<{ actor_user_id: number; previous_status: string; new_status: string; note?: string | null; created_at: string }>;
 };
 
 export type PerformanceEvent = {
@@ -94,7 +106,7 @@ export type PerformanceEvent = {
 // Connection state
 // ---------------------------------------------------------------------------
 
-export type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
+export type ConnectionState = "connecting" | "live" | "reconnecting" | "offline" | "stale" | "auth_required" | "failed";
 
 // ---------------------------------------------------------------------------
 // Context shape
@@ -109,6 +121,9 @@ interface TelemetryContextValue {
   // Backfill state
   isBackfillLoading: boolean;
   backfillError: string | null;
+  logDataState: OperationalDataState<LogEntry[]>;
+  trackingLoopsDataState: OperationalDataState<TrackingLoopEvent[]>;
+  lastTelemetryAt: string | null;
 
   // Connection
   connectionState: ConnectionState;
@@ -137,11 +152,14 @@ const TelemetryContext = createContext<TelemetryContextValue | null>(null);
 // Helpers
 // ---------------------------------------------------------------------------
 
-function getTimestamp() {
-  return `${new Date().toTimeString().slice(0, 8)}.${String(Date.now() % 1000).padStart(3, "0")}`;
+function formatEventTimestamp(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return null;
+  return `${date.toTimeString().slice(0, 8)}.${String(date.getMilliseconds()).padStart(3, "0")}`;
 }
 
-function normalizeLevel(level: unknown): LogLevel {
+function normalizeLevel(level: unknown): LogLevel | null {
   if (
     level === "INFO" ||
     level === "WARN" ||
@@ -152,7 +170,18 @@ function normalizeLevel(level: unknown): LogLevel {
   ) {
     return level;
   }
-  return "INFO";
+  return null;
+}
+
+function safeTelemetryError(error: unknown): string {
+  if (error instanceof AuthenticationError) return "Authentication required";
+  if (error instanceof Error && /^HTTP 403\b/.test(error.message)) {
+    return "Telemetry is not available for this scope";
+  }
+  if (error instanceof Error && /^HTTP 401\b/.test(error.message)) {
+    return "Authentication required";
+  }
+  return "Telemetry service unavailable";
 }
 
 function buildSocketCandidates(): string[] {
@@ -217,25 +246,19 @@ function logEntryFromParsedPayload(
 
   if (!message) return null;
 
-  const levelRaw = typeof payload.level === "string" ? payload.level.toUpperCase() : "INFO";
+  const levelRaw = typeof payload.level === "string" ? payload.level.toUpperCase() : null;
+  const level = normalizeLevel(levelRaw);
+  const timestamp = formatEventTimestamp(envelope.timestamp);
+  const backendId = typeof payload.id === "string" && payload.id ? payload.id : null;
+  const service = typeof payload.service === "string" && payload.service ? payload.service : null;
+  if (!level || !timestamp || !backendId || !service) return null;
 
   // Use the backend-assigned ULID directly — it is guaranteed non-null.
-  const backendId =
-    typeof payload.id === "string" && payload.id
-      ? payload.id
-      : `ws-fallback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
   return {
     id: backendId,
-    timestamp:
-      typeof envelope.timestamp === "string"
-        ? new Date(envelope.timestamp).toTimeString().slice(0, 8) +
-          "." +
-          String(new Date(envelope.timestamp as string).getMilliseconds()).padStart(3, "0")
-        : getTimestamp(),
-    level: normalizeLevel(levelRaw),
-    service:
-      typeof payload.service === "string" && payload.service ? payload.service : "backend",
+    timestamp,
+    level,
+    service,
     message,
     template_id:
       typeof payload.template_id === "string" ? payload.template_id : undefined,
@@ -244,9 +267,9 @@ function logEntryFromParsedPayload(
         ? (payload.metadata as Record<string, unknown>)
         : undefined,
     latency_ms:
-      typeof envelope.timestamp === "string"
-        ? Math.max(0, Date.now() - new Date(envelope.timestamp).getTime())
-        : 0,
+      typeof payload.latency_ms === "number" && Number.isFinite(payload.latency_ms)
+        ? payload.latency_ms
+        : undefined,
   };
 }
 
@@ -265,37 +288,19 @@ function logEntryFromBackendRecord(record: Record<string, unknown>): LogEntry | 
 
   if (!message) return null;
 
-  const levelRaw = typeof record.level === "string" ? record.level.toUpperCase() : "INFO";
+  const levelRaw = typeof record.level === "string" ? record.level.toUpperCase() : null;
+  const level = normalizeLevel(levelRaw);
 
-  let timestampStr: string;
-  if (typeof record.timestamp === "string") {
-    try {
-      const dt = new Date(record.timestamp);
-      timestampStr =
-        dt.toTimeString().slice(0, 8) +
-        "." +
-        String(dt.getMilliseconds()).padStart(3, "0");
-    } catch {
-      timestampStr = getTimestamp();
-    }
-  } else {
-    timestampStr = getTimestamp();
-  }
-
-  // Backend guarantees a non-null ULID `id` on every record.
-  const backendId =
-    typeof record.id === "string" && record.id
-      ? record.id
-      : `rest-fallback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const timestampStr = formatEventTimestamp(record.timestamp);
+  const service = typeof record.service === "string" && record.service ? record.service : null;
+  const backendId = typeof record.id === "string" && record.id ? record.id : null;
+  if (!level || !timestampStr || !service || !backendId) return null;
 
   return {
     id: backendId,
     timestamp: timestampStr,
-    level: normalizeLevel(levelRaw),
-    service:
-      typeof record.service === "string" && record.service
-        ? record.service
-        : "backend",
+    level,
+    service,
     message,
     template_id:
       typeof record.template_id === "string" ? record.template_id : undefined,
@@ -303,7 +308,10 @@ function logEntryFromBackendRecord(record: Record<string, unknown>): LogEntry | 
       typeof record.metadata === "object" && record.metadata !== null
         ? (record.metadata as Record<string, unknown>)
         : undefined,
-    latency_ms: 0,
+    latency_ms:
+      typeof record.latency_ms === "number" && Number.isFinite(record.latency_ms)
+        ? record.latency_ms
+        : undefined,
   };
 }
 
@@ -367,8 +375,16 @@ function isTrackingLoopEvent(value: unknown): value is TrackingLoopEvent {
   if (!isRecord(value)) return false;
   return (
     typeof value.window_id === "string" &&
+    value.window_id.length > 0 &&
     typeof value.anomaly_score === "number" &&
-    (typeof value.severity === "string" || typeof value.severity === "undefined") &&
+    Number.isFinite(value.anomaly_score) &&
+    typeof value.severity === "string" &&
+    value.severity.length > 0 &&
+    typeof value.status === "string" &&
+    value.status.length > 0 &&
+    (value.created_at === undefined ||
+      value.created_at === null ||
+      (typeof value.created_at === "string" && Number.isFinite(new Date(value.created_at).getTime()))) &&
     (value.blast_radius === undefined ||
       value.blast_radius === null ||
       isBlastRadius(value.blast_radius)) &&
@@ -376,6 +392,33 @@ function isTrackingLoopEvent(value: unknown): value is TrackingLoopEvent {
       value.suspected_root_service === null ||
       typeof value.suspected_root_service === "string")
   );
+}
+
+function trackingLoopFromAnomaly(value: Record<string, unknown>): TrackingLoopEvent | null {
+  if (
+    typeof value.window_id !== "string" ||
+    !value.window_id ||
+    typeof value.anomaly_score !== "number" ||
+    !Number.isFinite(value.anomaly_score) ||
+    typeof value.severity !== "string" ||
+    !value.severity
+  ) {
+    return null;
+  }
+
+  return {
+    window_id: value.window_id,
+    anomaly_score: value.anomaly_score,
+    severity: value.severity,
+    status: "triggered",
+    suspected_root_service:
+      typeof value.service === "string"
+        ? value.service
+        : typeof value.suspected_root_service === "string"
+          ? value.suspected_root_service
+          : null,
+    blast_radius: isBlastRadius(value.blast_radius) ? value.blast_radius : null,
+  };
 }
 
 function isPerformanceEvent(value: unknown): value is PerformanceEvent {
@@ -411,7 +454,9 @@ async function fetchBackfillLogs(): Promise<LogEntry[]> {
       }
       const data = (await response.json()) as Record<string, unknown>;
       const rawLogs = data.logs;
-      if (!Array.isArray(rawLogs)) return [];
+      if (!Array.isArray(rawLogs)) {
+        throw new Error("Telemetry response schema invalid");
+      }
 
       const entries: LogEntry[] = [];
       for (const raw of rawLogs) {
@@ -445,7 +490,9 @@ async function fetchBackfillTrackingLoops(): Promise<TrackingLoopEvent[]> {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
       const data = await response.json();
-      if (!Array.isArray(data)) return [];
+      if (!Array.isArray(data)) {
+        throw new Error("Tracking-loop response schema invalid");
+      }
 
       const entries: TrackingLoopEvent[] = [];
       for (const raw of data) {
@@ -478,6 +525,13 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   // ---- Backfill state ----
   const [isBackfillLoading, setIsBackfillLoading] = useState(true);
   const [backfillError, setBackfillError] = useState<string | null>(null);
+  const [logDataState, setLogDataState] = useState<OperationalDataState<LogEntry[]>>(
+    loadingState<LogEntry[]>("REST logs + telemetry stream"),
+  );
+  const [trackingLoopsDataState, setTrackingLoopsDataState] = useState<
+    OperationalDataState<TrackingLoopEvent[]>
+  >(loadingState<TrackingLoopEvent[]>("REST tracking-loop history + telemetry stream"));
+  const [lastTelemetryAt, setLastTelemetryAt] = useState<string | null>(null);
   const backfillCompleteRef = useRef(false);
 
   /**
@@ -488,7 +542,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   const wsBufferRef = useRef<LogEntry[]>([]);
 
   // ---- Connection state ----
-  const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
+  const [connectionState, setConnectionState] = useState<ConnectionState>(navigator.onLine ? "connecting" : "offline");
   const [connectionUrl, setConnectionUrl] = useState<string | null>(null);
 
   // ---- Raw telemetry events (for LiveTelemetryStatus) ----
@@ -509,8 +563,9 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   // ---- Socket refs ----
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
+  const stableConnectionTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef<number>(0);
-  const connectionStateRef = useRef<ConnectionState>("connecting");
+  const connectionStateRef = useRef<ConnectionState>(navigator.onLine ? "connecting" : "offline");
   const activeCandidateRef = useRef(0);
 
   const socketCandidates = useMemo(buildSocketCandidates, []);
@@ -519,13 +574,26 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const timer = setInterval(() => {
       if (pendingTrackingUpdates.current.length > 0) {
+        const updates = pendingTrackingUpdates.current;
         setActiveTrackingLoops((prev) => {
           const next = { ...prev };
-          pendingTrackingUpdates.current.forEach((e) => {
+          updates.forEach((e) => {
             next[e.window_id] = e;
           });
           return next;
         });
+        setTrackingLoopsDataState((previous) => {
+          const current = previous.data ?? [];
+          const byWindow = new Map(current.map((loop) => [loop.window_id, loop]));
+          updates.forEach((loop) => byWindow.set(loop.window_id, loop));
+          return successState(
+            Array.from(byWindow.values()),
+            new Date().toISOString(),
+            "WebSocket telemetry",
+            byWindow.size === 0,
+          );
+        });
+        setLastTelemetryAt(new Date().toISOString());
         pendingTrackingUpdates.current = [];
       }
 
@@ -561,6 +629,12 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
         const merged = deduplicateAndMerge(prev, batch);
         return merged;
       });
+      const telemetryUpdatedAt = new Date().toISOString();
+      setLogDataState((previous) => {
+        const merged = deduplicateAndMerge(previous.data ?? [], batch);
+        return successState(merged, telemetryUpdatedAt, "WebSocket telemetry", false);
+      });
+      setLastTelemetryAt(telemetryUpdatedAt);
 
       // Highlight new entries
       for (const entry of batch) {
@@ -656,15 +730,8 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
                 status: "triggered",
               });
             } else if (innerType === "anomaly.detected" && isRecord(innerPayload)) {
-              const p = innerPayload as Record<string, unknown>;
-              pendingTrackingUpdates.current.push({
-                window_id: typeof p.window_id === "string" ? p.window_id : `anom-${Date.now()}`,
-                anomaly_score: typeof p.anomaly_score === "number" ? p.anomaly_score : 0.85,
-                severity: typeof p.severity === "string" ? p.severity : "critical",
-                status: "triggered",
-                suspected_root_service: typeof p.service === "string" ? p.service : typeof p.suspected_root_service === "string" ? p.suspected_root_service : null,
-                blast_radius: isBlastRadius(p.blast_radius) ? p.blast_radius : null,
-              });
+              const anomaly = trackingLoopFromAnomaly(innerPayload);
+              if (anomaly) pendingTrackingUpdates.current.push(anomaly);
             } else if (
               innerType === "infrastructure.performance.alert" &&
               isPerformanceEvent(innerPayload)
@@ -682,15 +749,8 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
           status: "triggered",
         });
       } else if (eventType === "anomaly.detected" && isRecord(event.payload)) {
-        const p = event.payload as Record<string, unknown>;
-        pendingTrackingUpdates.current.push({
-          window_id: typeof p.window_id === "string" ? p.window_id : `anom-${Date.now()}`,
-          anomaly_score: typeof p.anomaly_score === "number" ? p.anomaly_score : 0.85,
-          severity: typeof p.severity === "string" ? p.severity : "critical",
-          status: "triggered",
-          suspected_root_service: typeof p.service === "string" ? p.service : typeof p.suspected_root_service === "string" ? p.suspected_root_service : null,
-          blast_radius: isBlastRadius(p.blast_radius) ? p.blast_radius : null,
-        });
+        const anomaly = trackingLoopFromAnomaly(event.payload);
+        if (anomaly) pendingTrackingUpdates.current.push(anomaly);
       } else if (
         eventType === "infrastructure.performance.alert" &&
         isPerformanceEvent(event.payload)
@@ -705,47 +765,63 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    Promise.all([
-      fetchBackfillLogs(),
-      fetchBackfillTrackingLoops(),
-    ])
-      .then(([restLogs, restTrackingLoops]) => {
+    Promise.allSettled([fetchBackfillLogs(), fetchBackfillTrackingLoops()])
+      .then((results) => {
         if (cancelled) return;
 
-        // Populate tracking loops
-        if (restTrackingLoops.length > 0) {
-          setActiveTrackingLoops((prev) => {
-            const next = { ...prev };
-            restTrackingLoops.forEach((loop) => {
+        const [logsResult, trackingResult] = results;
+        const refreshedAt = new Date().toISOString();
+        const bufferedWsLogs = [...wsBufferRef.current];
+        wsBufferRef.current = [];
+
+        if (logsResult.status === "fulfilled") {
+          const merged = deduplicateAndMerge(logsResult.value, bufferedWsLogs);
+          setLogs(merged);
+          setTotalLogCount((previous) => previous + merged.length);
+          setLogDataState(
+            successState(
+              merged,
+              refreshedAt,
+              bufferedWsLogs.length > 0 ? "REST + WebSocket telemetry" : "REST logs",
+              merged.length === 0,
+            ),
+          );
+          if (merged.length > 0) setLastTelemetryAt(refreshedAt);
+        } else if (bufferedWsLogs.length > 0) {
+          setLogs(deduplicateAndMerge(bufferedWsLogs));
+          setTotalLogCount((previous) => previous + bufferedWsLogs.length);
+          setLogDataState(successState(bufferedWsLogs, refreshedAt, "WebSocket telemetry", false));
+          setLastTelemetryAt(refreshedAt);
+        } else {
+          setLogDataState(unavailableState("REST logs", safeTelemetryError(logsResult.reason)));
+        }
+
+        if (trackingResult.status === "fulfilled") {
+          const loops = trackingResult.value;
+          setActiveTrackingLoops((previous) => {
+            const next = { ...previous };
+            loops.forEach((loop) => {
               next[loop.window_id] = loop;
             });
             return next;
           });
+          setTrackingLoopsDataState(
+            successState(loops, refreshedAt, "REST tracking-loop history", loops.length === 0),
+          );
+        } else {
+          setTrackingLoopsDataState(
+            unavailableState("REST tracking-loop history", safeTelemetryError(trackingResult.reason)),
+          );
         }
+
+        const failures = [logsResult, trackingResult].filter(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        );
+        setBackfillError(failures.length > 0 ? safeTelemetryError(failures[0].reason) : null);
+        setIsBackfillLoading(false);
+        backfillCompleteRef.current = true;
 
         // Atomic merge: REST logs ∪ wsBufferRef
-        const bufferedWsLogs = [...wsBufferRef.current];
-        wsBufferRef.current = [];
-        const merged = deduplicateAndMerge(restLogs, bufferedWsLogs);
-
-        setLogs(merged);
-        setTotalLogCount(prev => prev + merged.length);
-        setIsBackfillLoading(false);
-        backfillCompleteRef.current = true;
-      })
-      .catch((err) => {
-        if (cancelled) return;
-
-        setBackfillError(err instanceof Error ? err.message : String(err));
-        setIsBackfillLoading(false);
-
-        // Even on failure, flush any buffered WS logs so the live stream works
-        const bufferedWsLogs = [...wsBufferRef.current];
-        wsBufferRef.current = [];
-        if (bufferedWsLogs.length > 0) {
-          setLogs(deduplicateAndMerge(bufferedWsLogs));
-        }
-        backfillCompleteRef.current = true;
       });
 
     return () => {
@@ -764,7 +840,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
     }
 
     if (FEATURE_FLAGS.ENABLE_DEMO_MODE) {
-      updateConnectionState("connected");
+      updateConnectionState("live");
       setConnectionUrl("mock://in-browser-telemetry-emitter");
       mockTelemetry.start();
       const unsubscribe = mockTelemetry.subscribe((event) => {
@@ -787,12 +863,22 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    const clearStableConnectionTimer = () => {
+      if (stableConnectionTimerRef.current !== null) {
+        window.clearTimeout(stableConnectionTimerRef.current);
+        stableConnectionTimerRef.current = null;
+      }
+    };
+
     const scheduleReconnect = (nextIndex: number) => {
       clearReconnectTimer();
 
+      if (!navigator.onLine) { updateConnectionState("offline"); return; }
+
       const attempt = reconnectAttemptsRef.current;
+      if (attempt >= 8) { updateConnectionState("failed"); return; }
       const backoffMs = Math.min(30000, RECONNECT_DELAY_MS * Math.pow(1.5, attempt));
-      const jitter = Math.random() * 1000;
+      const jitter = Math.random() * Math.min(1000, backoffMs * 0.25);
       const delay = backoffMs + jitter;
 
       reconnectAttemptsRef.current += 1;
@@ -808,13 +894,13 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
 
       const candidate = socketCandidates[index];
       if (!candidate) {
-        updateConnectionState("error");
+        updateConnectionState("failed");
         setConnectionUrl(null);
         return;
       }
 
       clearReconnectTimer();
-      updateConnectionState("connecting");
+      updateConnectionState(reconnectAttemptsRef.current > 0 ? "reconnecting" : "connecting");
       setConnectionUrl(candidate);
       activeCandidateRef.current = index;
 
@@ -823,7 +909,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
       // the token-free candidate so it cannot be rendered or logged accidentally.
       const authenticatedCandidate = authenticatedWebSocketUrl(candidate);
       if (!authenticatedCandidate) {
-        updateConnectionState("error");
+        updateConnectionState("auth_required");
         return;
       }
 
@@ -832,9 +918,61 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
 
       socket.onopen = () => {
         if (cancelled || socketRef.current !== socket) return;
-        reconnectAttemptsRef.current = 0;
-        updateConnectionState("connected");
+        updateConnectionState("live");
         setConnectionUrl(candidate);
+        clearStableConnectionTimer();
+        stableConnectionTimerRef.current = window.setTimeout(() => {
+          stableConnectionTimerRef.current = null;
+          if (socketRef.current === socket && socket.readyState === WebSocket.OPEN) reconnectAttemptsRef.current = 0;
+        }, 10000);
+        // WebSocket is notification transport. Reconcile durable history after every reconnect.
+        void Promise.allSettled([fetchBackfillLogs(), fetchBackfillTrackingLoops()]).then((results) => {
+          if (cancelled || socketRef.current !== socket) return;
+          const [logsResult, trackingResult] = results;
+          const reconciledAt = new Date().toISOString();
+
+          if (logsResult.status === "fulfilled") {
+            setLogs((current) => deduplicateAndMerge(current, logsResult.value));
+            setLogDataState((previous) => {
+              const merged = deduplicateAndMerge(previous.data ?? [], logsResult.value);
+              return successState(merged, reconciledAt, "REST reconciliation", merged.length === 0);
+            });
+            if (logsResult.value.length > 0) setLastTelemetryAt(reconciledAt);
+          } else {
+            setLogDataState((previous) =>
+              previous.data
+                ? staleState(previous.data, previous.lastUpdated, previous.source, safeTelemetryError(logsResult.reason))
+                : unavailableState("REST reconciliation", safeTelemetryError(logsResult.reason)),
+            );
+          }
+
+          if (trackingResult.status === "fulfilled") {
+            setActiveTrackingLoops((current) => {
+              const next = { ...current };
+              trackingResult.value.forEach((incident) => { next[incident.window_id] = incident; });
+              return next;
+            });
+            setTrackingLoopsDataState(
+              successState(
+                trackingResult.value,
+                reconciledAt,
+                "REST reconciliation",
+                trackingResult.value.length === 0,
+              ),
+            );
+          } else {
+            setTrackingLoopsDataState((previous) =>
+              previous.data
+                ? staleState(previous.data, previous.lastUpdated, previous.source, safeTelemetryError(trackingResult.reason))
+                : unavailableState("REST reconciliation", safeTelemetryError(trackingResult.reason)),
+            );
+          }
+
+          const failure = [logsResult, trackingResult].find(
+            (result): result is PromiseRejectedResult => result.status === "rejected",
+          );
+          setBackfillError(failure ? safeTelemetryError(failure.reason) : null);
+        });
         
         // Send the authentication handshake
         const token = getAuthToken();
@@ -844,7 +982,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
           // If no token is available, clear credential and trigger disconnect flow
           clearAuthToken();
           reconnectEnabled = false;
-          updateConnectionState("error");
+          updateConnectionState("auth_required");
           socket.close();
         }
       };
@@ -865,7 +1003,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
           connect(index + 1);
           return;
         }
-        updateConnectionState("error");
+        updateConnectionState("stale");
       };
 
       socket.onclose = (closeEvent) => {
@@ -878,28 +1016,47 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
         // credential and stop the reconnect loop; REST backfill follows the
         // same clear-and-surface-auth-error contract.
         if (closeEvent.code === 1008) {
-          clearAuthToken();
-          reconnectEnabled = false;
-          updateConnectionState("error");
+          updateConnectionState("auth_required");
+          void refreshSession().then((token) => {
+            if (cancelled) return;
+            if (token) scheduleReconnect(0);
+            else { clearAuthToken(); reconnectEnabled = false; updateConnectionState("auth_required"); }
+          });
           return;
         }
 
-        if (connectionStateRef.current === "connected") {
-          updateConnectionState("disconnected");
+        if (connectionStateRef.current === "live") {
+          updateConnectionState("stale");
           scheduleReconnect(activeCandidateRef.current);
           return;
         }
-
-        connect(index + 1);
+        scheduleReconnect(index + 1 < socketCandidates.length ? index + 1 : 0);
       };
     };
+
+    const handleOffline = () => {
+      clearReconnectTimer();
+      clearStableConnectionTimer();
+      updateConnectionState("offline");
+      socketRef.current?.close();
+    };
+    const handleOnline = () => {
+      if (cancelled || !reconnectEnabled) return;
+      reconnectAttemptsRef.current = 0;
+      scheduleReconnect(0);
+    };
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
 
     connect(0);
 
     return () => {
       cancelled = true;
       reconnectEnabled = false;
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
       clearReconnectTimer();
+      clearStableConnectionTimer();
 
       const socket = socketRef.current;
       socketRef.current = null;
@@ -936,6 +1093,9 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
       totalLogCount,
       isBackfillLoading,
       backfillError,
+      logDataState,
+      trackingLoopsDataState,
+      lastTelemetryAt,
       connectionState,
       connectionUrl,
       latestEvent,
@@ -953,6 +1113,9 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
       totalLogCount,
       isBackfillLoading,
       backfillError,
+      logDataState,
+      trackingLoopsDataState,
+      lastTelemetryAt,
       connectionState,
       connectionUrl,
       latestEvent,
@@ -969,7 +1132,7 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
   return (
     <TelemetryContext.Provider value={value}>
       {/* WebSocket disconnection / error banner */}
-      {(connectionState === "disconnected" || connectionState === "error") && (
+      {connectionState !== "live" && connectionState !== "connecting" && (
         <div
           role="alert"
           style={{
@@ -987,24 +1150,22 @@ export function TelemetryProvider({ children }: { children: ReactNode }) {
             fontWeight: 600,
             fontFamily:
               'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-            color: connectionState === "error" ? "#f85149" : "#d29922",
+            color: connectionState === "failed" || connectionState === "auth_required" ? "#f85149" : "#d29922",
             background:
-              connectionState === "error"
+              connectionState === "failed" || connectionState === "auth_required"
                 ? "rgba(248,81,73,0.12)"
                 : "rgba(210,153,34,0.12)",
             borderBottom:
-              connectionState === "error"
+              connectionState === "failed" || connectionState === "auth_required"
                 ? "1px solid rgba(248,81,73,0.25)"
                 : "1px solid rgba(210,153,34,0.25)",
           }}
         >
           <span style={{ fontSize: 14 }}>
-            {connectionState === "error" ? "⚠" : "⟳"}
+            {connectionState === "failed" || connectionState === "auth_required" ? "⚠" : "⟳"}
           </span>
           <span>
-            {connectionState === "error"
-              ? "Telemetry connection lost — live data unavailable"
-              : "Reconnecting to telemetry stream…"}
+            {connectionState === "offline" ? "Browser offline — telemetry is stale" : connectionState === "auth_required" ? "Session expired — sign in is required" : connectionState === "failed" ? "Telemetry reconnect limit reached — reload to retry" : connectionState === "stale" ? "Telemetry disconnected — displayed data is stale" : "Reconnecting to telemetry stream…"}
           </span>
         </div>
       )}

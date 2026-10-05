@@ -405,10 +405,21 @@ class TestJWTSessionInvalidation:
     def test_jwt_contains_iat_claim(self):
         """JWTs should include an iat (issued-at) claim."""
         import jwt as pyjwt
-        from backend.app.security.auth import JWT_SECRET_KEY, create_access_token
+        from backend.app.security.auth import (
+            JWT_AUDIENCE,
+            JWT_ISSUER,
+            JWT_SECRET_KEY,
+            create_access_token,
+        )
 
         token = create_access_token(data={"sub": "test@example.com"})
-        payload = pyjwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
+        payload = pyjwt.decode(
+            token,
+            JWT_SECRET_KEY,
+            algorithms=["HS256"],
+            issuer=JWT_ISSUER,
+            audience=JWT_AUDIENCE,
+        )
 
         assert "iat" in payload
         assert "exp" in payload
@@ -479,11 +490,9 @@ class TestJWTSessionInvalidation:
     @pytest.mark.asyncio
     async def test_get_current_user_null_password_changed_at(self):
         """Verify get_current_user skips validation when password_changed_at is None."""
-        import jwt as pyjwt
         from backend.app.core.orm import UserRecord
         from backend.app.security.auth import (
-            JWT_ALGORITHM,
-            JWT_SECRET_KEY,
+            create_access_token,
             get_current_user,
         )
         from fastapi.security import HTTPAuthorizationCredentials
@@ -496,11 +505,7 @@ class TestJWTSessionInvalidation:
         mock_result.scalar_one_or_none.return_value = user
         mock_db.execute = AsyncMock(return_value=mock_result)
 
-        token = pyjwt.encode(
-            {"sub": user.email, "exp": time.time() + 3600, "iat": time.time()},
-            JWT_SECRET_KEY,
-            algorithm=JWT_ALGORITHM,
-        )
+        token = create_access_token({"sub": user.email})
         creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
         # Should not raise any AttributeError

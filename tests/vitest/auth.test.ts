@@ -4,6 +4,7 @@ import {
   getAuthToken,
   clearAuthToken,
   isAuthTokenValid,
+  getAuthErrorMessage,
 } from '../../src/utils/auth';
 
 describe('Remember Me (Auth Utils)', () => {
@@ -12,18 +13,18 @@ describe('Remember Me (Auth Utils)', () => {
     sessionStorage.clear();
   });
 
-  it('Email/Google/Microsoft checked stores internal JWT in localStorage', () => {
+  it('keeps access JWT in memory when remember-me is checked', () => {
     // 31, 33, 34
     setAuthToken('test-token', true);
-    expect(localStorage.getItem('authToken')).toBe('test-token');
+    expect(localStorage.getItem('authToken')).toBeNull();
     expect(sessionStorage.getItem('authToken')).toBeNull();
     expect(getAuthToken()).toBe('test-token');
   });
 
-  it('Email/Google/Microsoft unchecked stores internal JWT in sessionStorage', () => {
+  it('keeps access JWT in memory when remember-me is unchecked', () => {
     // 32, 33, 34
     setAuthToken('test-token', false);
-    expect(sessionStorage.getItem('authToken')).toBe('test-token');
+    expect(sessionStorage.getItem('authToken')).toBeNull();
     expect(localStorage.getItem('authToken')).toBeNull();
     expect(getAuthToken()).toBe('test-token');
   });
@@ -43,26 +44,28 @@ describe('Remember Me (Auth Utils)', () => {
     localStorage.setItem('authToken', 'old-local-token');
     sessionStorage.setItem('authToken', 'old-session-token');
     setAuthToken('new-token', true);
-    // local should have new, session should be cleared
-    expect(localStorage.getItem('authToken')).toBe('new-token');
+    expect(localStorage.getItem('authToken')).toBeNull();
     expect(sessionStorage.getItem('authToken')).toBeNull();
     
     // Now switch to session
     setAuthToken('newer-token', false);
-    expect(sessionStorage.getItem('authToken')).toBe('newer-token');
+    expect(sessionStorage.getItem('authToken')).toBeNull();
     expect(localStorage.getItem('authToken')).toBeNull();
   });
 
-  it('preserves the legacy persistent default for callers without Remember Me', () => {
+  it('does not persist callers without Remember Me', () => {
     setAuthToken('registration-token');
-    expect(localStorage.getItem('authToken')).toBe('registration-token');
+    expect(localStorage.getItem('authToken')).toBeNull();
     expect(sessionStorage.getItem('authToken')).toBeNull();
   });
 
-  it('reads legacy localStorage deterministically when both stores contain a token', () => {
+  it('ignores and removes legacy browser tokens', () => {
     localStorage.setItem('authToken', 'legacy-local-token');
     sessionStorage.setItem('authToken', 'session-token');
-    expect(getAuthToken()).toBe('legacy-local-token');
+    setAuthToken('memory-token');
+    expect(getAuthToken()).toBe('memory-token');
+    expect(localStorage.getItem('authToken')).toBeNull();
+    expect(sessionStorage.getItem('authToken')).toBeNull();
   });
 
   it('clears the legacy login flag with every session reset', () => {
@@ -86,5 +89,18 @@ describe('Remember Me (Auth Utils)', () => {
     expect(isAuthTokenValid(`header.${encode({ sub: 'user' })}.signature`)).toBe(false);
     expect(isAuthTokenValid('not-a-jwt')).toBe(false);
     expect(isAuthTokenValid(null)).toBe(false);
+  });
+
+  it('does not surface credential-bearing infrastructure details to the UI', async () => {
+    const response = new Response(
+      JSON.stringify({
+        detail: 'database failed postgresql://user:SENTINEL_PASSWORD@db/logsentinel token=SENTINEL_TOKEN',
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } },
+    );
+
+    await expect(getAuthErrorMessage(response, 'Authentication is temporarily unavailable')).resolves.toBe(
+      'Authentication is temporarily unavailable',
+    );
   });
 });

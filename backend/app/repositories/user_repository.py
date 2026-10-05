@@ -6,6 +6,7 @@ AsyncSession ORM adapter.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import logging
 from datetime import datetime, timezone
 
@@ -13,7 +14,13 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.email_identity import canonicalize_email
-from ..core.orm import UserRecord
+from ..core.orm import (
+    AuthSessionRecord,
+    RefreshTokenRecord,
+    TenantMembershipRecord,
+    UserRecord,
+)
+from ..security.tenants import provision_external_identity, provision_tenant
 from ..core.user_status import ACTIVE, PENDING_VERIFICATION
 
 logger = logging.getLogger("logsentinel.user_repository")
@@ -56,12 +63,32 @@ class UserRepository:
         hashed_password: str | None = None,
         full_name: str | None = None,
         organization: str | None = None,
-        tenant_id: str = "default",
+        tenant_id: str | None = None,
         status: str = ACTIVE,
         commit: bool = True,
+        provider: str | None = None,
+        issuer: str | None = None,
+        provider_tenant_id: str | None = None,
+        provider_subject: str | None = None,
+        verified_email: str | None = None,
     ) -> UserRecord:
         """Persist a user, optionally leaving commit control to the caller."""
         now = datetime.now(timezone.utc)
+        if tenant_id is not None:
+            raise ValueError(
+                "Tenant enrollment requires a verified provider mapping or invitation"
+            )
+        if provider is None:
+            tenant_id, role = await provision_tenant(db)
+        else:
+            tenant_id, role = await provision_external_identity(
+                db,
+                provider=provider,
+                issuer=issuer or "",
+                provider_subject=provider_subject or "",
+                provider_tenant_id=provider_tenant_id,
+                verified_email=verified_email or email,
+            )
         new_user = UserRecord(
             email=canonicalize_email(email),
             hashed_password=hashed_password,
@@ -69,9 +96,16 @@ class UserRepository:
             organization=organization,
             tenant_id=tenant_id,
             status=status,
+            role=role,
             email_verified_at=now if status == ACTIVE else None,
         )
         db.add(new_user)
+        await db.flush()
+        db.add(
+            TenantMembershipRecord(
+                tenant_id=tenant_id, user_id=new_user.id, role=role, status="active"
+            )
+        )
         if commit:
             await db.commit()
             await db.refresh(new_user)
@@ -90,6 +124,14 @@ class UserRepository:
     ) -> UserRecord:
         """Update a user's hashed password and commit."""
         user.hashed_password = hashed_password
+        user.password_changed_at = datetime.now(timezone.utc)
+        from sqlalchemy import update
+
+        await db.execute(
+            update(AuthSessionRecord)
+            .where(AuthSessionRecord.user_id == user.id)
+            .values(revoked_at=datetime.now(timezone.utc))
+        )
         await db.commit()
         await db.refresh(user)
         logger.info("Password updated for user_id=%s", user.id)
@@ -116,6 +158,8 @@ class UserRepository:
         db: AsyncSession,
         user: UserRecord,
         hashed_password: str,
+        commit: bool = True,
+        after_password_update: Callable[[], None] | None = None,
     ) -> UserRecord:
         """Update password and set password_changed_at for JWT invalidation.
 
@@ -124,9 +168,33 @@ class UserRepository:
         """
         user.hashed_password = hashed_password
         user.password_changed_at = func.date_trunc("second", func.now())
-        await db.commit()
-        await db.refresh(user)
-        logger.info("Password updated with timestamp for user: id=%s", user.id)
+        if after_password_update is not None:
+            after_password_update()
+        from sqlalchemy import update
+
+        await db.execute(
+            update(AuthSessionRecord)
+            .where(AuthSessionRecord.user_id == user.id)
+            .values(revoked_at=datetime.now(timezone.utc))
+        )
+        await db.execute(
+            update(RefreshTokenRecord)
+            .where(
+                RefreshTokenRecord.session_id.in_(
+                    select(AuthSessionRecord.id).where(
+                        AuthSessionRecord.user_id == user.id
+                    )
+                ),
+                RefreshTokenRecord.revoked_at.is_(None),
+            )
+            .values(revoked_at=datetime.now(timezone.utc))
+        )
+        if commit:
+            await db.commit()
+            await db.refresh(user)
+        else:
+            await db.flush()
+        logger.info("Password update staged with timestamp for user: id=%s", user.id)
         return user
 
     @staticmethod

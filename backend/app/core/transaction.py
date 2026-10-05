@@ -23,6 +23,8 @@ from typing import Any, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..security.redaction import sanitize_error_text
+
 logger = logging.getLogger("logsentinel.transaction")
 
 P = TypeVar("P")
@@ -54,10 +56,9 @@ async def async_transactional(
     except Exception as exc:
         await session.rollback()
         logger.error(
-            "Transaction rolled back — %s: %s",
+            "Transaction rolled back — exception_type=%s detail=%s",
             type(exc).__name__,
-            exc,
-            exc_info=True,
+            sanitize_error_text(exc),
         )
         raise
 
@@ -94,11 +95,10 @@ def transactional(
         except Exception as exc:
             await session.rollback()
             logger.error(
-                "Transaction rolled back in %s — %s: %s",
+                "Transaction rolled back in %s — exception_type=%s detail=%s",
                 func.__qualname__,
                 type(exc).__name__,
-                exc,
-                exc_info=True,
+                sanitize_error_text(exc),
             )
             raise
 

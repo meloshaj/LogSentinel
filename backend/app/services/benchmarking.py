@@ -160,7 +160,7 @@ class BenchmarkingCollector:
             # Observability must never turn a completed sink into a failed
             # sink.  The in-memory collector remains authoritative if the
             # optional Prometheus integration is unavailable.
-            logger.debug("Benchmarking Prometheus update unavailable", exc_info=True)
+            logger.debug("Benchmarking Prometheus update unavailable")
 
     def _trigger_event(self, metric_name: str, current_value: float, threshold: float):
         """Create and enqueue a PerformanceEvent to the event manager."""

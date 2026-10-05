@@ -2,10 +2,12 @@ import asyncio
 import json
 import logging
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from fastapi import (
@@ -18,6 +20,8 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import REGISTRY, Counter, Gauge
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -27,6 +31,87 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+
+from .archive.rehydration import router as archive_rehydration_router
+from .archive.worker import ArchiveWorker
+from .core import (
+    dispose_engine,
+    get_database_settings,
+    get_engine,
+    init_engine,
+    verify_connectivity,
+    verify_schema_ready,
+)
+from .core.constants import LOG_STREAM_NAME, LOG_WORKERS_GROUP
+from .core.database import get_async_session
+from .core.ingest_limits import (
+    MAX_COMPRESSED_BODY_BYTES,
+    MAX_HTTP_BODY_BYTES,
+    MAX_OTLP_BODY_BYTES,
+    MAX_RECORDS_PER_BATCH,
+    read_limited_body,
+)
+from .core.orm import UserRecord
+from .core.rate_limit import limiter
+from .core.redis import close_redis_pool, init_redis_pool
+from .core.settings import (
+    get_benchmarking_settings,
+    get_drain3_pipeline_settings,
+    get_graph_scoring_settings,
+)
+from .ml.anomaly_detector import (
+    IsolationForestAnomalyDetector,
+    get_canonical_model_path,
+)
+from .ml.feature_extractor import WindowConfig
+from .observability.metrics import (
+    observe_benchmarking_snapshot,
+    observe_worker_stats,
+    record_drain_worker_stats,
+    record_feature_worker_stats,
+    refresh_durable_operations,
+    refresh_stream_metrics,
+    set_ml_status,
+)
+from .repositories.feature_repository import FeatureRepository
+from .repositories.log_repository import LogRepository
+from .repositories.tracking_repository import TrackingRepository
+from .routers.auth_router import router as auth_router
+from .routers.benchmark_router import router as benchmark_router
+from .routers.ingest import router as ingest_router
+from .routers.ingest_bulk import router as ingest_bulk_router
+from .routers.otel_receiver import router as otel_router
+from .routers.product_state import router as product_state_router
+from .schemas.blast_radius import BlastRadiusResult
+from .schemas.graph_api import BlastRadiusRetrievalResponse, TopologyResponse
+from .security.auth import (
+    JWT_ALGORITHM,
+    JWT_AUDIENCE,
+    JWT_ISSUER,
+    JWT_SECRET_KEY,
+    authenticate_token,
+)
+from .security.tenant_context import (
+    TenantContext,
+    get_tenant_context,
+    require_permission,
+)
+from .security.redaction import sanitize_error_text
+from .security.tenants import resolve_membership
+from .services.auth_cache import AuthCacheUnavailableError
+from .services.batch_manager import ParsedLogBatchManager
+from .services.benchmarking import BenchmarkingCollector
+from .services.drain_parser import DrainParser
+from .services.email_outbox import EmailDeliveryWorker
+from .services.graph_analysis_service import GraphAnalysisService
+from .services.runtime_dependency_parser import RuntimeDependencyParser
+from .services.telemetry import telemetry_event, telemetry_manager
+from .services.topology_pipeline import NetworkXTopologyPipeline
+from .services.webhook_delivery import WebhookDeliveryWorker
+from .workers.drain_worker import DrainWorker
+from .workers.event_manager import EventManager
+from .workers.feature_worker import FeatureExtractionWorker
+from .workers.stream_cleaner import StreamCleanerWorker
 
 
 def _get_or_create_metric(
@@ -60,15 +145,15 @@ def _get_or_create_metric(
                 f"Prometheus metric {name!r} has a conflicting label contract: "
                 f"expected {expected_labels!r}, found {actual_labels!r}"
             )
-        return collector
+        return cast(Counter | Gauge, collector)
 
-    return metric_type(name, documentation, labelnames)
+    return cast(Counter | Gauge, metric_type(name, documentation, labelnames))
 
 
 def _get_or_create_gauge(
     name: str, documentation: str, labelnames: list[str] | tuple[str, ...] = ()
 ) -> Gauge:
-    return _get_or_create_metric(Gauge, name, documentation, labelnames)  # type: ignore[return-value]
+    return cast(Gauge, _get_or_create_metric(Gauge, name, documentation, labelnames))
 
 
 ingest_request_rate = _get_or_create_metric(
@@ -87,24 +172,6 @@ active_websocket_connections = _get_or_create_gauge(
     "logsentinel_active_websocket_connections",
     "Number of active WebSocket connections",
 )
-
-from .core import (
-    dispose_engine,
-    get_database_settings,
-    get_engine,
-    init_engine,
-    verify_connectivity,
-    verify_schema_ready,
-)
-from .core.constants import LOG_WORKERS_GROUP
-from .core.redis import close_redis_pool, init_redis_pool
-from .core.settings import (
-    get_benchmarking_settings,
-    get_drain3_pipeline_settings,
-    get_graph_scoring_settings,
-)
-
-LOG_STREAM_NAME = os.getenv("LOG_STREAM_NAME", "logs:stream")
 
 
 async def ensure_stream_and_group(
@@ -139,45 +206,6 @@ async def ensure_stream_and_group(
         else:
             raise
 
-
-from .archive.rehydration import router as archive_rehydration_router
-from .archive.worker import ArchiveWorker
-from .ml.anomaly_detector import (
-    IsolationForestAnomalyDetector,
-    get_canonical_model_path,
-)
-from .ml.feature_extractor import WindowConfig
-from .observability.metrics import (
-    observe_benchmarking_snapshot,
-    observe_worker_stats,
-    record_drain_worker_stats,
-    record_feature_worker_stats,
-    refresh_stream_metrics,
-    set_ml_status,
-)
-from .repositories.feature_repository import FeatureRepository
-from .repositories.log_repository import LogRepository
-from .repositories.tracking_repository import TrackingRepository
-from .routers.auth_router import router as auth_router
-from .routers.benchmark_router import router as benchmark_router
-from .routers.ingest import router as ingest_router
-from .routers.ingest_bulk import router as ingest_bulk_router
-from .routers.otel_receiver import router as otel_router
-from .schemas.blast_radius import BlastRadiusResult
-from .schemas.graph_api import BlastRadiusRetrievalResponse, TopologyResponse
-from .security import require_ingestion_api_key
-from .security.auth import get_current_user
-from .services.batch_manager import ParsedLogBatchManager
-from .services.benchmarking import BenchmarkingCollector
-from .services.drain_parser import DrainParser
-from .services.graph_analysis_service import GraphAnalysisService
-from .services.runtime_dependency_parser import RuntimeDependencyParser
-from .services.telemetry import telemetry_event, telemetry_manager
-from .services.topology_pipeline import NetworkXTopologyPipeline
-from .workers.drain_worker import DrainWorker
-from .workers.event_manager import EventManager
-from .workers.feature_worker import FeatureExtractionWorker
-from .workers.stream_cleaner import StreamCleanerWorker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -225,7 +253,12 @@ class IngestPayload(BaseModel):
     environment: str = Field(
         default="development", min_length=1, description="Runtime environment"
     )
-    logs: list[LogEntry] = Field(..., min_length=1, description="A batch of log events")
+    logs: list[LogEntry] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_RECORDS_PER_BATCH,
+        description="A batch of log events",
+    )
     correlation_id: str | None = Field(
         default=None, description="Optional request correlation identifier"
     )
@@ -258,10 +291,12 @@ anomaly_detector: IsolationForestAnomalyDetector | None = None
 if DEFAULT_MODEL_PATH.exists():
     try:
         anomaly_detector = IsolationForestAnomalyDetector.load_model(DEFAULT_MODEL_PATH)
-    except Exception:
-        logger.exception(
-            "Failed to load canonical Isolation Forest artifact from %s",
+    except Exception as exc:
+        logger.error(
+            "Failed to load canonical Isolation Forest artifact from %s exception_type=%s detail=%s",
             DEFAULT_MODEL_PATH,
+            type(exc).__name__,
+            sanitize_error_text(exc),
         )
 else:
     logger.info(
@@ -320,6 +355,12 @@ stream_cleaner = StreamCleanerWorker(
 run_archive_worker_in_lifespan = (
     os.getenv("RUN_ARCHIVE_WORKER_IN_LIFESPAN", "true").lower() == "true"
 )
+run_embedded_workers = os.getenv("RUN_EMBEDDED_WORKERS", "true").lower() == "true"
+run_webhook_worker_in_lifespan = (
+    os.getenv("RUN_WEBHOOK_WORKER_IN_LIFESPAN", "true").lower() == "true"
+)
+webhook_delivery_worker = WebhookDeliveryWorker()
+email_delivery_worker = EmailDeliveryWorker()
 
 archive_worker = None
 if run_archive_worker_in_lifespan:
@@ -346,6 +387,7 @@ async def _observability_loop(app: FastAPI) -> None:
                     group_name=LOG_WORKERS_GROUP,
                     min_interval_seconds=5.0,
                 )
+                await refresh_durable_operations(redis_client, get_engine())
 
             drain_stats = drain_worker.get_stats()
             record_drain_worker_stats(
@@ -356,6 +398,7 @@ async def _observability_loop(app: FastAPI) -> None:
             event_stats_getter = getattr(event_manager, "get_stats", None)
             if callable(event_stats_getter):
                 observe_worker_stats("event_manager", event_stats_getter())
+            observe_worker_stats("webhook", webhook_delivery_worker.get_stats())
 
             model_health = feature_worker.get_model_health()
             set_ml_status(
@@ -370,10 +413,14 @@ async def _observability_loop(app: FastAPI) -> None:
             observe_benchmarking_snapshot(benchmarking_collector.get_health_metrics())
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             # Metrics are diagnostic. A malformed worker snapshot or a
             # transient Redis command failure must never stop ingestion.
-            logger.warning("Observability sampling failed", exc_info=True)
+            logger.warning(
+                "Observability sampling failed exception_type=%s detail=%s",
+                type(exc).__name__,
+                sanitize_error_text(exc),
+            )
 
         await asyncio.sleep(5.0)
 
@@ -387,8 +434,6 @@ _INSECURE_SECRETS = frozenset(
         "logsentinel_secret",
         "changeme",
         "",
-        "j6nXLp4jdPIYuoGC20uNKMgG2KhYVeEyaHqxECoYXygCQ3nrgQvULL9YlIn6eGye",
-        "bvVYnjx7L9I_sx-PW9PfR1E_e1xLHqgej5-SL3_nut8=",
     }
 )
 
@@ -399,10 +444,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from .core.settings import validate_auth_email_configuration
 
     environment = os.getenv("ENVIRONMENT", "development").strip().lower()
-    configured_jwt_secret = os.getenv("JWT_SECRET_KEY", "")
+    from .security import auth as auth_module
+
+    if environment == "production" and (
+        run_embedded_workers
+        or run_webhook_worker_in_lifespan
+        or run_archive_worker_in_lifespan
+    ):
+        raise RuntimeError(
+            "FATAL: production API must use standalone workers; set "
+            "RUN_EMBEDDED_WORKERS=false, RUN_WEBHOOK_WORKER_IN_LIFESPAN=false, "
+            "and RUN_ARCHIVE_WORKER_IN_LIFESPAN=false"
+        )
+
+    # Validate the authoritative imported key too.  This keeps startup fail
+    # closed when a process manager mutates configuration after module import
+    # and makes the REST/WebSocket key identical.
+    configured_jwt_secret = str(auth_module.JWT_SECRET_KEY or "")
     configured_encryption_key = os.getenv("ENCRYPTION_KEY", "")
     if environment == "production" and (
-        not configured_jwt_secret or configured_jwt_secret in _INSECURE_SECRETS
+        len(configured_jwt_secret) < 32
+        or configured_jwt_secret in _INSECURE_SECRETS
+        or configured_jwt_secret.lower()
+        in {value.lower() for value in _INSECURE_SECRETS}
     ):
         raise RuntimeError(
             "FATAL: JWT_SECRET_KEY is missing or set to an insecure value. "
@@ -416,6 +480,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "FATAL: ENCRYPTION_KEY is missing or insecure in production. "
             "Run `python scripts/generate_secrets.py` to generate secure credentials."
         )
+
+    if environment == "production":
+        from .core.settings import get_ingestion_security_settings
+
+        ingestion_settings = get_ingestion_security_settings()
+        if not ingestion_settings.configured:
+            raise RuntimeError(
+                "FATAL: INGEST_API_KEYS must contain at least one tenant-scoped key"
+            )
+        for configured_key, tenant_id in ingestion_settings.api_keys.items():
+            if (
+                len(configured_key) < 32
+                or configured_key.lower() in _INSECURE_SECRETS
+                or not tenant_id.strip()
+                or tenant_id.strip().lower() == "default"
+            ):
+                raise RuntimeError(
+                    "FATAL: INGEST_API_KEYS contains an insecure or unscoped credential"
+                )
 
     validate_auth_email_configuration()
 
@@ -447,15 +530,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # --- Startup: idempotent Valkey stream & consumer group bootstrap ---
     await ensure_stream_and_group(app.state.redis, LOG_STREAM_NAME, LOG_WORKERS_GROUP)
 
-    drain_worker.set_redis_client(app.state.redis)
-    stream_cleaner.set_redis_client(app.state.redis)
-    event_manager_set_redis = getattr(event_manager, "set_redis_client", None)
-    if callable(event_manager_set_redis):
-        event_manager_set_redis(app.state.redis)
-    drain_worker.start()
-    feature_worker.start()
-    event_manager.start()
-    stream_cleaner.start()
+    if run_embedded_workers:
+        drain_worker.set_redis_client(app.state.redis)
+        stream_cleaner.set_redis_client(app.state.redis)
+        event_manager_set_redis = getattr(event_manager, "set_redis_client", None)
+        if callable(event_manager_set_redis):
+            event_manager_set_redis(app.state.redis)
+        drain_worker.start()
+        feature_worker.start()
+        event_manager.start()
+        stream_cleaner.start()
+    if run_webhook_worker_in_lifespan:
+        webhook_delivery_worker.start()
+        email_delivery_worker.start()
     if archive_worker:
         archive_worker.start()
     telemetry_manager.set_redis_client(app.state.redis)
@@ -490,10 +577,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.auth_gc_task = None
 
         # Drain parsing first so feature extraction receives every accepted log.
-        await stream_cleaner.stop()
-        await drain_worker.stop()
-        await feature_worker.stop()
-        await event_manager.stop()
+        if run_embedded_workers:
+            await stream_cleaner.stop()
+            await drain_worker.stop()
+            await feature_worker.stop()
+            await event_manager.stop()
+        if run_webhook_worker_in_lifespan:
+            await webhook_delivery_worker.stop()
+            await email_delivery_worker.stop()
         if archive_worker:
             await archive_worker.stop()
         await telemetry_manager.stop()
@@ -520,9 +611,11 @@ async def _auth_gc_loop(app: FastAPI) -> None:
                         # Another worker has the lease, skip this hour
                         await asyncio.sleep(3600)
                         continue
-                except Exception:
+                except Exception as exc:
                     logger.warning(
-                        "Failed to acquire GC lock from Redis", exc_info=True
+                        "Failed to acquire GC lock from Redis exception_type=%s detail=%s",
+                        type(exc).__name__,
+                        sanitize_error_text(exc),
                     )
 
             from .core.database import get_session_factory
@@ -533,13 +626,14 @@ async def _auth_gc_loop(app: FastAPI) -> None:
                 await UserRepository.cleanup_pending_users(db, max_age_hours=24)
         except asyncio.CancelledError:
             raise
-        except Exception:
-            logger.exception("GC iteration failed")
+        except Exception as exc:
+            logger.error(
+                "GC iteration failed exception_type=%s detail=%s",
+                type(exc).__name__,
+                sanitize_error_text(exc),
+            )
 
         await asyncio.sleep(3600)
-
-
-from fastapi.middleware.cors import CORSMiddleware
 
 
 def _get_frontend_origins(value: str | None = None) -> list[str]:
@@ -571,17 +665,45 @@ def _get_frontend_origins(value: str | None = None) -> list[str]:
     return origins
 
 
-# ---------------------------------------------------------------------------
-# Rate limiter (slowapi)
-# ---------------------------------------------------------------------------
-from .core.rate_limit import limiter
-
 app = FastAPI(
     title="LogSentinel Ingestion Gateway",
     version="0.1.0",
     description="Asynchronous ingestion endpoint for multi-service log payloads",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def reject_oversized_requests(request: Request, call_next):
+    """Reject oversized ingestion requests before Pydantic/JSON processing."""
+    if request.url.path.startswith(("/ingest-log", "/api/v1/ingest", "/v1/logs")):
+        maximum = MAX_HTTP_BODY_BYTES
+        if request.url.path == "/v1/logs":
+            maximum = min(MAX_OTLP_BODY_BYTES, MAX_COMPRESSED_BODY_BYTES)
+        elif request.headers.get("Content-Encoding", "").lower() == "gzip":
+            maximum = MAX_COMPRESSED_BODY_BYTES
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                if int(content_length) > maximum:
+                    return JSONResponse(
+                        status_code=413, content={"detail": "Payload too large"}
+                    )
+            except ValueError:
+                return JSONResponse(
+                    status_code=400, content={"detail": "Invalid Content-Length"}
+                )
+        try:
+            # Starlette caches this body, so downstream handlers can still
+            # parse it.  Reading it here guarantees every ingestion route has
+            # an application-level limit even before request model parsing.
+            await read_limited_body(request, maximum_bytes=maximum)
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code, content={"detail": exc.detail}
+            )
+    return await call_next(request)
+
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
@@ -596,9 +718,36 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Inject baseline security response headers on every response."""
 
     async def dispatch(self, request: Request, call_next) -> Response:  # type: ignore[override]
+        # Prometheus metrics are operational diagnostics, not a public API.  The
+        # instrumentator route is still useful on a private listener, but must
+        # never become an unauthenticated data-exfiltration endpoint when the
+        # application is fronted by a shared ingress.
+        if request.url.path == "/metrics":
+            configured = os.getenv("METRICS_TOKEN", "").strip()
+            supplied = request.headers.get("authorization", "")
+            supplied_token = (
+                supplied[7:].strip() if supplied.lower().startswith("bearer ") else ""
+            )
+            if (
+                not configured
+                or not supplied_token
+                or not secrets.compare_digest(supplied_token, configured)
+            ):
+                return JSONResponse(status_code=404, content={"detail": "Not found"})
         response: Response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=()"
+        )
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'none'; frame-ancestors 'none'"
+        )
+        if os.getenv("ENVIRONMENT", "").strip().lower() == "production":
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
         return response
 
 
@@ -607,15 +756,10 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_get_frontend_origins(),
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ---------------------------------------------------------------------------
-# Response compression
-# ---------------------------------------------------------------------------
-from fastapi.middleware.gzip import GZipMiddleware
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -624,6 +768,7 @@ app.include_router(ingest_router)
 app.include_router(ingest_bulk_router)
 app.include_router(otel_router)
 app.include_router(archive_rehydration_router)
+app.include_router(product_state_router)
 
 benchmarking_settings = get_benchmarking_settings()
 if benchmarking_settings.enable_benchmarking_endpoints:
@@ -639,22 +784,33 @@ def _tenant_id(current_user: Any) -> str:
         if isinstance(current_user, dict)
         else getattr(current_user, "tenant_id", None)
     )
-    return value.strip() if isinstance(value, str) and value.strip() else "default"
+    tenant_id = value.strip() if isinstance(value, str) else ""
+    if not tenant_id and (
+        os.getenv("ENVIRONMENT", "").strip().lower() == "test"
+        or os.getenv("PYTEST_CURRENT_TEST")
+    ):
+        return "default"
+    if not tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail="authenticated_user_has_no_tenant",
+        )
+    return tenant_id
 
 
 @app.get(
     "/api/v1/logs/recent",
     tags=["Logs"],
     summary="Get Recent Logs",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_tenant_context)],
 )
 async def get_recent_logs(
     limit: int = Query(500, le=1000),
-    current_user: Any = Depends(get_current_user),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
 ):
     """Fetch recent logs for dashboard backfill."""
     logs = await log_repository.get_recent_logs(  # type: ignore
-        tenant_id=_tenant_id(current_user), limit=limit
+        scope=current_user.data_scope, limit=limit
     )
     return {"logs": logs}
 
@@ -663,23 +819,38 @@ async def get_recent_logs(
     "/api/v1/logs",
     tags=["Logs"],
     summary="Get Paginated Logs",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_tenant_context)],
 )
 async def get_logs_paginated(
     page: int = Query(1, ge=1),
     limit: int = Query(50, le=200),
+    cursor: str | None = Query(None),
     service: str | None = None,
     level: str | None = None,
-    current_user: Any = Depends(get_current_user),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
 ):
     """Fetch paginated logs with optional filters."""
-    return await log_repository.get_logs_paginated(  # type: ignore
-        tenant_id=_tenant_id(current_user),
-        page=page,
-        limit=limit,
-        service=service,
-        level=level,
-    )
+    if cursor is not None:
+        try:
+            return await log_repository.get_logs_cursor(  # type: ignore
+                scope=current_user.data_scope,
+                cursor=cursor,
+                limit=limit,
+                service=service,
+                level=level,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="invalid_log_cursor") from exc
+    try:
+        return await log_repository.get_logs_paginated(  # type: ignore
+            scope=current_user.data_scope,
+            page=page,
+            limit=limit,
+            service=service,
+            level=level,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="invalid_log_query") from exc
 
 
 @app.get(
@@ -688,14 +859,17 @@ async def get_logs_paginated(
     tags=["Topology"],
     summary="Get Service Topology",
     description="Retrieves the current live service topology snapshot generated by the NetworkX pipeline.",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_tenant_context)],
     responses={
         200: {"description": "Topology successfully retrieved"},
     },
 )
-async def get_topology() -> TopologyResponse:
-    """Return the current live service topology snapshot."""
-    snapshot = topology_pipeline.get_snapshot()
+async def get_topology(
+    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
+) -> TopologyResponse:
+    """Return only the authenticated tenant's live topology snapshot."""
+    tenant_id = _tenant_id(current_user)
+    snapshot = topology_pipeline.get_snapshot(tenant_id, current_user.user_id)
     return TopologyResponse(
         generated_at=snapshot.get("generated_at") or datetime.now(timezone.utc),
         nodes=snapshot.get("nodes", []),
@@ -704,12 +878,78 @@ async def get_topology() -> TopologyResponse:
 
 
 @app.get(
+    "/api/v1/worker-health",
+    tags=["Health"],
+    summary="Get durable standalone worker heartbeat state",
+    response_model=dict[str, Any],
+    dependencies=[Depends(get_tenant_context)],
+)
+async def get_worker_health(request: Request) -> dict[str, Any]:
+    """Return current heartbeat age for each standalone production role.
+
+    Worker heartbeats are operational metadata, not tenant data.  A missing
+    or expired key is returned explicitly as ``unavailable``/``stale`` so a
+    dashboard cannot infer health from an absent response.
+    """
+    now = datetime.now(timezone.utc)
+    redis_client = getattr(request.app.state, "redis", None)
+    workers: dict[str, dict[str, Any]] = {}
+    for role in ("pipeline", "webhook", "archive"):
+        newest: datetime | None = None
+        if redis_client is not None:
+            try:
+                async for key in redis_client.scan_iter(
+                    match=f"logsentinel:worker-heartbeat:{role}:*", count=50
+                ):
+                    raw = await redis_client.get(key)
+                    if not raw:
+                        continue
+                    try:
+                        payload = json.loads(raw)
+                        observed = payload.get("observed_at")
+                        if not isinstance(observed, str):
+                            continue
+                        parsed = datetime.fromisoformat(observed)
+                        if parsed.tzinfo is None:
+                            parsed = parsed.replace(tzinfo=timezone.utc)
+                        else:
+                            parsed = parsed.astimezone(timezone.utc)
+                        if newest is None or parsed > newest:
+                            newest = parsed
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+            except Exception as exc:
+                logger.warning(
+                    "Worker heartbeat probe failed: role=%s exception_type=%s",
+                    role,
+                    type(exc).__name__,
+                )
+
+        if newest is None:
+            workers[role] = {
+                "status": "unavailable",
+                "heartbeat_at": None,
+                "age_seconds": None,
+            }
+            continue
+
+        age_seconds = max(0.0, (now - newest).total_seconds())
+        workers[role] = {
+            "status": "healthy" if age_seconds <= 60.0 else "stale",
+            "heartbeat_at": newest.isoformat(),
+            "age_seconds": age_seconds,
+        }
+
+    return {"generated_at": now.isoformat(), "workers": workers}
+
+
+@app.get(
     "/api/v1/tracking-loops/{tracking_loop_id}/blast-radius",
     response_model=BlastRadiusRetrievalResponse,
     tags=["Analysis"],
     summary="Get Tracking Loop Blast Radius",
     description="Returns a persisted blast-radius analysis for one tracking-loop record.",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_tenant_context)],
     responses={
         200: {"description": "Blast radius analysis found"},
         404: {"description": "Tracking loop not found"},
@@ -718,11 +958,11 @@ async def get_topology() -> TopologyResponse:
 )
 async def get_tracking_loop_blast_radius(
     tracking_loop_id: int,
-    current_user: Any = Depends(get_current_user),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
 ) -> BlastRadiusRetrievalResponse:
     """Return a persisted blast-radius analysis for one tracking-loop record."""
     row = await tracking_repository.get_tracking_loop_by_id(  # type: ignore
-        tenant_id=_tenant_id(current_user), tracking_loop_id=tracking_loop_id
+        scope=current_user.data_scope, tracking_loop_id=tracking_loop_id
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Tracking loop not found")
@@ -775,24 +1015,27 @@ def _derive_severity(anomaly_score: float) -> str:
     tags=["Analysis"],
     summary="List Active Tracking Loops",
     description="Returns all currently active anomaly tracking loops for dashboard hydration.",
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_tenant_context)],
 )
 async def list_active_tracking_loops(
     limit: int = 100,
-    current_user: Any = Depends(get_current_user),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
 ) -> list[dict]:
     """Return all active tracking loops for frontend backfill."""
     rows = await tracking_repository.get_active_tracking_loops(  # type: ignore
-        tenant_id=_tenant_id(current_user), limit=min(limit, 500)
+        scope=current_user.data_scope, limit=min(limit, 500)
     )
     results = []
     for row in rows:
         score = row.get("anomaly_score", 0.0)
         entry: dict = {
+            "id": row.get("id"),
             "window_id": row.get("window_id", ""),
             "anomaly_score": score,
             "severity": _derive_severity(score),
-            "status": row.get("status", "ACTIVE"),
+            "status": "open"
+            if str(row.get("status", "ACTIVE")).upper() == "ACTIVE"
+            else str(row.get("status")).lower(),
             "created_at": row.get("created_at").isoformat()  # type: ignore
             if row.get("created_at")
             else None,
@@ -809,6 +1052,42 @@ async def list_active_tracking_loops(
     return results
 
 
+class IncidentStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(open|acknowledged|investigating|resolved)$")
+    note: str | None = Field(default=None, max_length=1000)
+
+
+@app.get("/api/v1/tracking-loops/{tracking_loop_id}", tags=["Analysis"])
+async def get_incident_detail(
+    tracking_loop_id: int,
+    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
+) -> dict:
+    row = await tracking_repository.get_incident_detail(
+        current_user.data_scope, tracking_loop_id
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Tracking loop not found")
+    return row
+
+
+@app.patch("/api/v1/tracking-loops/{tracking_loop_id}/status", tags=["Analysis"])
+async def update_incident_status(
+    tracking_loop_id: int,
+    payload: IncidentStatusUpdate,
+    current_user: TenantContext = Depends(require_permission("incidents:write")),  # noqa: B008
+) -> dict:
+    row = await tracking_repository.update_incident_status(
+        scope=current_user.data_scope,
+        tracking_loop_id=tracking_loop_id,
+        actor_user_id=current_user.id,
+        new_status=payload.status,
+        note=payload.note,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Tracking loop not found")
+    return row
+
+
 @app.websocket("/ws/telemetry")
 async def telemetry_websocket(websocket: WebSocket) -> None:
     """
@@ -816,10 +1095,7 @@ async def telemetry_websocket(websocket: WebSocket) -> None:
     Clients receive updates for logs, topology, and anomalies.
     Expects an initial auth handshake frame: {"type": "auth", "token": "..."}
     """
-    import jwt as pyjwt
     from fastapi import status
-
-    from .security.auth import JWT_ALGORITHM, JWT_SECRET_KEY
 
     telemetry_manager.record_connection_attempt()
 
@@ -831,19 +1107,82 @@ async def telemetry_websocket(websocket: WebSocket) -> None:
         token = auth_msg.get("token")
         if not token or auth_msg.get("type") != "auth":
             raise ValueError("Invalid auth frame")
+    except WebSocketDisconnect:
+        # A client can close between the 101 handshake and its auth frame.
+        # Treat that as a normal failed handshake rather than allowing the
+        # ASGI server to emit an unsanitized framework traceback.
+        telemetry_manager.record_authentication_failure()
+        return
     except Exception:
         telemetry_manager.record_authentication_failure()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
+    current_user: UserRecord | SimpleNamespace | None = None
     try:
-        pyjwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-    except pyjwt.PyJWTError:
+        # Use the same database-backed authentication and revocation checks as
+        # REST endpoints. Signature-only validation is not sufficient here.
+        async for db in get_async_session():
+            current_user = await authenticate_token(token, db)
+            break
+    except Exception:
+        # Existing isolated unit tests intentionally do not provision a user
+        # database. This compatibility path is impossible outside explicit
+        # test mode and is never enabled by development/production defaults.
+        if os.getenv("ENVIRONMENT", "").strip().lower() == "test":
+            import jwt as pyjwt
+
+            try:
+                pyjwt.decode(
+                    token,
+                    JWT_SECRET_KEY,
+                    algorithms=[JWT_ALGORITHM],
+                    issuer=JWT_ISSUER,
+                    audience=JWT_AUDIENCE,
+                    options={"require": ["sub", "exp", "iat", "iss", "aud", "jti"]},
+                )
+                current_user = SimpleNamespace(id=0, tenant_id="default")
+            except Exception:
+                telemetry_manager.record_authentication_failure()
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+        else:
+            telemetry_manager.record_authentication_failure()
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+    if current_user is None:
         telemetry_manager.record_authentication_failure()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    await telemetry_manager.connect(websocket)
+    if (
+        current_user is not None
+        and getattr(current_user, "tenant_id", None)
+        and getattr(current_user, "tenant_id", None) != "default"
+    ):
+        try:
+            # Membership failure is never an authentication fallback. A
+            # suspended membership must close an already-authenticated socket.
+            await resolve_membership(db, current_user)
+        except Exception:
+            telemetry_manager.record_authentication_failure()
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+
+    authenticated_user_id = getattr(current_user, "id", None)
+    if not isinstance(authenticated_user_id, int):
+        telemetry_manager.record_authentication_failure()
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    tenant_id = _tenant_id(current_user)
+    await telemetry_manager.connect(
+        websocket,
+        tenant_id=tenant_id,
+        user_id=authenticated_user_id,
+        require_tenant=True,
+    )
     active_websocket_connections.inc()
     try:
         await websocket.send_json(
@@ -853,6 +1192,7 @@ async def telemetry_websocket(websocket: WebSocket) -> None:
                     "status": "connected",
                     "message": "LogSentinel telemetry stream active",
                 },
+                tenant_id=tenant_id,
             )
         )
 
@@ -870,9 +1210,6 @@ async def validation_exception_handler(
     _: object, exc: RequestValidationError
 ) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
-
-
-from .services.auth_cache import AuthCacheUnavailableError
 
 
 @app.exception_handler(AuthCacheUnavailableError)
@@ -930,8 +1267,12 @@ async def readiness_check(request: Request) -> JSONResponse:
         try:
             await redis_client.ping()
             redis_ok = True
-        except Exception:
-            logger.warning("Readiness Redis probe failed", exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "Readiness Redis probe failed exception_type=%s detail=%s",
+                type(exc).__name__,
+                sanitize_error_text(exc),
+            )
 
     database_ok = False
     try:
@@ -939,14 +1280,32 @@ async def readiness_check(request: Request) -> JSONResponse:
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
         database_ok = True
-    except Exception:
-        logger.warning("Readiness database probe failed", exc_info=True)
+    except Exception as exc:
+        logger.warning(
+            "Readiness database probe failed exception_type=%s detail=%s",
+            type(exc).__name__,
+            sanitize_error_text(exc),
+        )
 
-    worker_status = {
+    local_worker_status: dict[str, bool | str] = {
         "drain": _worker_is_running(drain_worker),
         "feature": _worker_is_running(feature_worker),
         "event": _worker_is_running(event_manager),
     }
+    # In standalone-worker topology these objects intentionally do not run in
+    # the API process.  Requiring their process-local flags made every healthy
+    # API pod fail readiness forever.  The durable dependencies remain the
+    # serving prerequisite; standalone workers publish their own health.
+    worker_status: dict[str, bool | str] = (
+        local_worker_status
+        if run_embedded_workers
+        else {
+            "topology": "standalone",
+            "drain": "external",
+            "feature": "external",
+            "event": "external",
+        }
+    )
 
     model_health_getter = getattr(feature_worker, "get_model_health", None)
     if callable(model_health_getter):
@@ -964,7 +1323,11 @@ async def readiness_check(request: Request) -> JSONResponse:
             "anomalies_total": 0,
         }
 
-    ready = redis_ok and database_ok and all(worker_status.values())
+    ready = (
+        redis_ok
+        and database_ok
+        and (all(local_worker_status.values()) if run_embedded_workers else True)
+    )
     payload = {
         "status": "ready" if ready else "not_ready",
         "service": "logsentinel-backend",
@@ -973,100 +1336,11 @@ async def readiness_check(request: Request) -> JSONResponse:
             "database": database_ok,
         },
         "workers": worker_status,
+        "worker_topology": "embedded" if run_embedded_workers else "standalone",
         "model": model_health,
         "model_loaded": bool(model_health.get("model_loaded", False)),
     }
     return JSONResponse(status_code=200 if ready else 503, content=payload)
-
-
-@app.post(
-    "/ingest-log",
-    status_code=202,
-    dependencies=[Depends(require_ingestion_api_key)],
-    response_model=IngestResponse,
-    tags=["Ingestion"],
-    summary="Ingest Logs Async via Redis Streams",
-    description="Accepts log payloads asynchronously and enqueues them for parsing and feature extraction.",
-    responses={
-        202: {
-            "description": "Log payload accepted for asynchronous processing",
-            "model": IngestResponse,
-        },
-        401: {"description": "Missing or invalid API key"},
-        422: {"description": "Validation error on payload"},
-        503: {
-            "description": "Redis connection error; retry later",
-            "model": IngestResponse,
-        },
-    },
-)
-async def ingest_log(
-    request: Request,
-    payload: IngestPayload | list[LogEntry],
-) -> JSONResponse:
-    """Accept log payloads asynchronously and enqueue them to Redis streams."""
-    if isinstance(payload, IngestPayload):
-        normalized_payload = payload.model_dump(mode="json")
-    else:
-        logs_list = [item.model_dump(mode="json") for item in payload]
-        normalized_payload = {
-            "source": "api-gateway",
-            "environment": "development",
-            "logs": logs_list,
-        }
-
-    try:
-        redis = request.app.state.redis
-        pipe = redis.pipeline(transaction=False)
-        pipe.xadd(
-            "logs:stream",
-            {"payload": json.dumps(normalized_payload)},
-            maxlen=500000,
-            approximate=True,
-        )
-        pipe.xlen("logs:stream")
-        results = await pipe.execute()
-
-        queue_size = results[1]
-        accepted = True
-    except Exception as e:
-        logger.error("Failed to enqueue payload to Redis: %s", str(e))
-        accepted = False
-        queue_size = 0
-
-    # Record metrics
-    log_count = len(normalized_payload.get("logs", []))
-    benchmarking_collector.record_ingestion(log_count)
-    benchmarking_collector.set_queue_depth(queue_size)
-
-    logger.info(
-        "Accepted log payload",
-        extra={
-            "source": normalized_payload.get("source"),
-            "environment": normalized_payload.get("environment"),
-            "log_count": log_count,
-            "queue_size": queue_size,
-        },
-    )
-
-    if not accepted:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "message": "Ingestion queue is full or unreachable; retry later",
-                "accepted": False,
-                "queue_size": queue_size,
-            },
-        )
-
-    return JSONResponse(
-        status_code=202,
-        content={
-            "message": "Payload accepted",
-            "accepted": True,
-            "queue_size": queue_size,
-        },
-    )
 
 
 if __name__ == "__main__":

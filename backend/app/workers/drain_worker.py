@@ -16,9 +16,12 @@ from typing import Any
 
 from drain3.redis_persistence import RedisPersistence
 from redis.asyncio import Redis
+from redis.typing import EncodableT
 
 from ..models import ParsedLog
+from ..core.constants import LOG_STREAM_NAME, LOG_WORKERS_GROUP
 from ..schemas.alerting import IncidentAlertPayload
+from ..schemas.stream import StreamEnvelope
 from ..services.alerting import dispatch_incident_alert
 from ..services.batch_manager import ParsedLogBatchManager
 from ..services.drain_parser import (
@@ -31,10 +34,21 @@ from ..services.runtime_dependency_parser import (
     TraceObservation,
 )
 from ..services.telemetry import telemetry_event, telemetry_manager
+from ..core.pipeline_identity import logical_telemetry_id
+from ..repositories.log_repository import (
+    PersistResult,
+    PersistResults,
+    PersistStatus,
+)
+from ..security.redaction import redact_text, redact_value
+from ..security.tenant_boundary import (
+    assert_tenant_identity,
+    reject_untrusted_tenant_fields,
+)
 
 logger = logging.getLogger("logsentinel.drain_worker")
 
-DLQ_STREAM_NAME = "logs:dlq"
+DLQ_STREAM_NAME = f"{LOG_STREAM_NAME}:dlq"
 MAX_PARSE_RETRIES = 3
 
 
@@ -116,8 +130,8 @@ class DrainWorker:
         )
         self.queue_drain_timeout_seconds: float = queue_drain_timeout_seconds
         self.benchmarking_collector: Any = benchmarking_collector
-        self.stream_name: str = "logs:stream"
-        self.group_name: str = "log_workers"
+        self.stream_name: str = LOG_STREAM_NAME
+        self.group_name: str = LOG_WORKERS_GROUP
         self.dlq_stream_name: str = dlq_stream_name
         self.max_retries: int = max_retries
         self._retry_counts: dict[str, int] = {}
@@ -167,7 +181,7 @@ class DrainWorker:
                 self.parser._miner.persistence_handler = previous
                 logger.warning(
                     "Drain3 Redis state hand-off failed; retaining local state: %s",
-                    exc,
+                    redact_text(str(exc)),
                 )
 
     def start(self) -> None:
@@ -243,11 +257,12 @@ class DrainWorker:
                 count = await self.redis_client.incr(redis_key)
                 await self.redis_client.expire(redis_key, 86400)
                 return int(count)
-            except Exception:
+            except Exception as exc:
                 logger.debug(
-                    "Redis retry counter unavailable for %s; using local fallback",
+                    "Redis retry counter unavailable for %s; using local fallback exception_type=%s detail=%s",
                     key,
-                    exc_info=True,
+                    type(exc).__name__,
+                    redact_text(str(exc)),
                 )
 
         count = self._retry_counts.get(key, 0) + 1
@@ -265,11 +280,12 @@ class DrainWorker:
             redis_key = f"retry:drain:{key}"
             try:
                 await self.redis_client.delete(redis_key)
-            except Exception:
+            except Exception as exc:
                 logger.debug(
-                    "Unable to clear Redis retry counter for %s",
+                    "Unable to clear Redis retry counter for %s exception_type=%s detail=%s",
                     key,
-                    exc_info=True,
+                    type(exc).__name__,
+                    redact_text(str(exc)),
                 )
 
         self._retry_counts.pop(key, None)
@@ -281,30 +297,49 @@ class DrainWorker:
         log_id: str,
         metadata: dict[str, Any] | None = None,
         message_id: str | None = None,
+        trusted_tenant_id: str | None = None,
     ) -> str | None:
         """Forward a poisoned payload and error traceback to the dead-letter queue (logs:dlq)."""
         self.dlq_count += 1
-        dlq_entry: dict[str, str] = {
-            "payload": raw_payload,
-            "error": error_traceback,
+        tenant_id = str(trusted_tenant_id or "").strip()
+        dlq_stream = (
+            f"{self.dlq_stream_name}:{tenant_id}" if tenant_id else self.dlq_stream_name
+        )
+        dlq_entry: dict[EncodableT, EncodableT] = {
+            "payload": redact_text(raw_payload),
+            "error": redact_text(error_traceback),
             "log_id": str(log_id),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         if metadata:
             try:
-                dlq_entry["metadata"] = json.dumps(metadata)
+                safe_metadata = dict(metadata)
+                safe_metadata.pop("tenant_id", None)
+                dlq_entry["metadata"] = json.dumps(redact_value(safe_metadata))
             except Exception:
-                dlq_entry["metadata"] = str(metadata)
+                dlq_entry["metadata"] = redact_text(str(metadata))
         if message_id:
             dlq_entry["stream_message_id"] = str(message_id)
 
         if self.redis_client:
             try:
-                return await self.redis_client.xadd(self.dlq_stream_name, dlq_entry)  # type: ignore
-            except Exception:
-                logger.exception(
-                    "Failed to write poison pill to DLQ stream '%s'",
+                stream_message_id = await self.redis_client.xadd(
+                    dlq_stream, dlq_entry, maxlen=10000, approximate=True
+                )
+                expire = getattr(self.redis_client, "expire", None)
+                if callable(expire):
+                    await expire(dlq_stream, 7 * 24 * 60 * 60)
+                return (
+                    stream_message_id.decode()
+                    if isinstance(stream_message_id, bytes)
+                    else stream_message_id
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to write poison pill to DLQ stream '%s' exception_type=%s detail=%s",
                     self.dlq_stream_name,
+                    type(exc).__name__,
+                    redact_text(str(exc)),
                 )
         return None
 
@@ -315,8 +350,13 @@ class DrainWorker:
         try:
             await self.redis_client.xack(self.stream_name, self.group_name, message_id)
             return True
-        except Exception:
-            logger.exception("Failed to XACK stream message %s", message_id)
+        except Exception as exc:
+            logger.error(
+                "Failed to XACK stream message %s exception_type=%s detail=%s",
+                message_id,
+                type(exc).__name__,
+                redact_text(str(exc)),
+            )
             return False
 
     async def _retry_or_route_stream_failure(
@@ -326,7 +366,8 @@ class DrainWorker:
         raw_payload: str,
         error_traceback: str,
         error_message: str,
-        snippet: str,
+        metadata: dict[str, Any] | None = None,
+        trusted_tenant_id: str | None = None,
     ) -> StreamMessageOutcome:
         """Keep a failed delivery pending or atomically route it to the DLQ.
 
@@ -334,20 +375,21 @@ class DrainWorker:
         ACKing a message merely because it reached the retry threshold while
         the terminal sink was unavailable.
         """
+        safe_error_message = redact_text(error_message)
+        safe_error_traceback = redact_text(error_traceback)
         retry_key = f"msg:{message_id}"
         retry_count = await self._increment_retry_count(retry_key)
         if retry_count < self.max_retries:
             logger.error(
-                "%s for message %s (attempt %d/%d). Payload snippet: %s",
-                error_message,
+                "%s for message %s (attempt %d/%d)",
+                safe_error_message,
                 message_id,
                 retry_count,
                 self.max_retries,
-                snippet,
                 extra={
                     "message_id": message_id,
-                    "payload_snippet": snippet,
-                    "error": error_message,
+                    "payload_redacted": True,
+                    "error": safe_error_message,
                     "retry_count": retry_count,
                 },
             )
@@ -355,9 +397,11 @@ class DrainWorker:
 
         dlq_id = await self._forward_to_dlq(
             raw_payload=raw_payload,
-            error_traceback=error_traceback,
+            error_traceback=safe_error_traceback,
             log_id=f"msg-{message_id}",
+            metadata=metadata,
             message_id=message_id,
+            trusted_tenant_id=trusted_tenant_id,
         )
         if dlq_id is None:
             logger.error(
@@ -379,15 +423,14 @@ class DrainWorker:
 
         await self._clear_retry_count(retry_key)
         logger.error(
-            "Poison message %s (attempt %d) was terminally routed to DLQ '%s'. Payload snippet: %s",
+            "Poison message %s (attempt %d) was terminally routed to DLQ '%s'",
             message_id,
             retry_count,
             self.dlq_stream_name,
-            snippet,
             extra={
                 "message_id": message_id,
-                "payload_snippet": snippet,
-                "error": error_message,
+                "payload_redacted": True,
+                "error": safe_error_message,
                 "retry_count": retry_count,
                 "dlq_stream": self.dlq_stream_name,
             },
@@ -408,15 +451,12 @@ class DrainWorker:
                 raw_payload="",
                 error_traceback="Stream entry did not contain a payload field",
                 error_message="Stream entry did not contain a payload",
-                snippet="",
             )
 
         if isinstance(payload_raw, bytes):
             payload_str = payload_raw.decode("utf-8", errors="replace")
         else:
             payload_str = str(payload_raw)
-
-        snippet = payload_str[:200]
 
         try:
             payload = json.loads(payload_str)
@@ -425,17 +465,41 @@ class DrainWorker:
             return await self._retry_or_route_stream_failure(
                 message_id=message_id,
                 raw_payload=payload_str,
-                error_traceback=traceback.format_exc(),
-                error_message=f"JSON decode failed: {exc}",
-                snippet=snippet,
+                error_traceback=redact_text(traceback.format_exc()),
+                error_message=f"JSON decode failed: {redact_text(str(exc))}",
             )
+
+        envelope: StreamEnvelope | None = None
+        try:
+            envelope = StreamEnvelope.model_validate(payload)
+        except Exception as exc:
+            # Legacy unwrapped stream records are accepted only by old unit
+            # tests. A real worker must fail closed because such records have
+            # no authenticated tenant authority.
+            import os
+
+            if not (
+                os.getenv("ENVIRONMENT", "").strip().lower() == "test"
+                or os.getenv("PYTEST_CURRENT_TEST")
+            ):
+                self.error_count += 1
+                return await self._retry_or_route_stream_failure(
+                    message_id=message_id,
+                    raw_payload=payload_str,
+                    error_traceback=redact_text(traceback.format_exc()),
+                    error_message=f"Invalid trusted stream envelope: {type(exc).__name__}",
+                )
 
         try:
             parsed_logs = await self.process_one(
-                payload,
+                envelope.payload if envelope is not None else payload,
                 message_id=message_id,
                 _raise_on_parser_error=True,
                 _persist_before_ack=True,
+                trusted_tenant_id=envelope.tenant_id if envelope is not None else None,
+                trusted_owner_user_id=envelope.owner_user_id
+                if envelope is not None
+                else None,
             )
             if not parsed_logs:
                 self.error_count += 1
@@ -444,7 +508,14 @@ class DrainWorker:
                     raw_payload=payload_str,
                     error_traceback="No supported log entries were extracted from the stream payload",
                     error_message="No supported log entries were extracted",
-                    snippet=snippet,
+                    metadata=(
+                        envelope.payload
+                        if envelope and isinstance(envelope.payload, dict)
+                        else None
+                    ),
+                    trusted_tenant_id=envelope.tenant_id
+                    if envelope is not None
+                    else None,
                 )
 
             if not await self._ack_stream_message(message_id):
@@ -458,9 +529,14 @@ class DrainWorker:
             return await self._retry_or_route_stream_failure(
                 message_id=message_id,
                 raw_payload=payload_str,
-                error_traceback=traceback.format_exc(),
-                error_message=f"Drain worker failed processing: {exc}",
-                snippet=snippet,
+                error_traceback=redact_text(traceback.format_exc()),
+                error_message=f"Drain worker failed processing: {redact_text(str(exc))}",
+                metadata=(
+                    envelope.payload
+                    if envelope and isinstance(envelope.payload, dict)
+                    else None
+                ),
+                trusted_tenant_id=envelope.tenant_id if envelope is not None else None,
             )
 
     async def run(self) -> None:
@@ -480,7 +556,11 @@ class DrainWorker:
             )
         except Exception as e:
             if "BUSYGROUP" not in str(e):
-                logger.exception("Failed to create consumer group")
+                logger.error(
+                    "Failed to create consumer group exception_type=%s detail=%s",
+                    type(e).__name__,
+                    redact_text(str(e)),
+                )
                 raise
 
         logger.info("Drain worker %s started consuming logs", self.consumer_name)
@@ -504,11 +584,13 @@ class DrainWorker:
                             await self._process_stream_message(message_id, entry)  # type: ignore
                         except asyncio.CancelledError:
                             raise
-                        except Exception:
+                        except Exception as exc:
                             self.error_count += 1
-                            logger.exception(
-                                "Unexpected error processing stream message %s",
+                            logger.error(
+                                "Unexpected error processing stream message %s exception_type=%s detail=%s",
                                 message_id,
+                                type(exc).__name__,
+                                redact_text(str(exc)),
                             )
 
                 # Trim the stream periodically to prevent unbounded growth
@@ -517,13 +599,22 @@ class DrainWorker:
                         self.stream_name, maxlen=500000, approximate=True
                     )
                 except Exception as e:
-                    logger.warning("Failed to trim %s: %s", self.stream_name, str(e))
+                    logger.warning(
+                        "Failed to trim %s exception_type=%s detail=%s",
+                        self.stream_name,
+                        type(e).__name__,
+                        redact_text(str(e)),
+                    )
 
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 self.error_count += 1
-                logger.exception("Drain worker XREADGROUP error")
+                logger.error(
+                    "Drain worker XREADGROUP error exception_type=%s detail=%s",
+                    type(exc).__name__,
+                    redact_text(str(exc)),
+                )
                 await asyncio.sleep(1)
 
     async def recover_pending_messages(self) -> None:
@@ -560,15 +651,22 @@ class DrainWorker:
                                 await self._process_stream_message(message_id, entry)
                             except asyncio.CancelledError:
                                 raise
-                            except Exception:
+                            except Exception as exc:
                                 self.error_count += 1
-                                logger.exception(
-                                    "Failed processing claimed message %s", message_id
+                                logger.error(
+                                    "Failed processing claimed message %s exception_type=%s detail=%s",
+                                    message_id,
+                                    type(exc).__name__,
+                                    redact_text(str(exc)),
                                 )
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error("Error in recover_pending_messages: %s", str(e))
+                logger.error(
+                    "Error in recover_pending_messages exception_type=%s detail=%s",
+                    type(e).__name__,
+                    redact_text(str(e)),
+                )
 
     async def process_one(
         self,
@@ -577,23 +675,20 @@ class DrainWorker:
         *,
         _raise_on_parser_error: bool = False,
         _persist_before_ack: bool = False,
+        trusted_tenant_id: str | None = None,
+        trusted_owner_user_id: int | None = None,
     ) -> list[ParsedLog]:
         """Process one queued payload or log entry."""
-        import time
-
         start_time = time.perf_counter()
 
-        baseline_flushed_records = 0
-        if _persist_before_ack:
-            baseline_stats = self.batch_manager.get_stats()
-            baseline_flushed_records = int(
-                baseline_stats.get("flushed_record_count", 0)
-            )
-
         parsed_logs: list[ParsedLog] = []
+        downstream_logs: list[ParsedLog] = []
+        deferred_traces: list[tuple[ParsedLog, Any]] = []
         errors_before_extract = self.error_count
 
-        extracted_messages = self._extract_log_messages(item)
+        extracted_messages = self._extract_log_messages(
+            item, trusted_tenant_id=trusted_tenant_id
+        )
         for raw_message, metadata in extracted_messages:
             log_id = (
                 metadata.get("id")
@@ -602,14 +697,22 @@ class DrainWorker:
                 or f"raw-{hash(raw_message)}"
             )
             retry_key = str(log_id)
-            snippet = (
-                raw_message[:200]
-                if isinstance(raw_message, str)
-                else str(raw_message)[:200]
-            )
-
             try:
-                parsed = self.parser.parse(raw_message, metadata=metadata)
+                if trusted_tenant_id is None:
+                    parsed = self.parser.parse(raw_message, metadata=metadata)
+                else:
+                    parsed = self.parser.parse(
+                        raw_message,
+                        metadata=metadata,
+                        trusted_tenant_id=trusted_tenant_id,
+                        trusted_owner_user_id=trusted_owner_user_id,
+                    )
+                if trusted_tenant_id is not None:
+                    assert_tenant_identity(
+                        trusted_tenant_id,
+                        parsed.tenant_id,
+                        boundary="parsed-log",
+                    )
                 await self._clear_retry_count(retry_key, metadata)
             except Exception as exc:
                 self.error_count += 1
@@ -618,7 +721,7 @@ class DrainWorker:
                     # Raising here prevents the outer loop from ACKing a parser
                     # failure as if the whole payload had succeeded.
                     raise
-                tb_str = traceback.format_exc()
+                tb_str = redact_text(traceback.format_exc())
                 retry_count = await self._increment_retry_count(retry_key, metadata)
 
                 if retry_count >= self.max_retries:
@@ -630,6 +733,7 @@ class DrainWorker:
                         log_id=str(log_id),
                         metadata=metadata,
                         message_id=message_id,
+                        trusted_tenant_id=trusted_tenant_id,
                     )
                     await self._clear_retry_count(retry_key, metadata)
 
@@ -638,102 +742,116 @@ class DrainWorker:
                             await self.redis_client.xack(
                                 self.stream_name, self.group_name, message_id
                             )
-                        except Exception:
-                            logger.exception(
-                                "Failed to XACK poisoned message %s from %s",
+                        except Exception as ack_exc:
+                            logger.error(
+                                "Failed to XACK poisoned message %s from %s exception_type=%s detail=%s",
                                 message_id,
                                 self.stream_name,
+                                type(ack_exc).__name__,
+                                redact_text(str(ack_exc)),
                             )
 
                     logger.error(
-                        "Poison pill detected for log ID %s (failed %d consecutive times). Routed to DLQ '%s'. Payload snippet: %s",
+                        "Poison pill detected for log ID %s (failed %d consecutive times). Routed to DLQ '%s'",
                         log_id,
                         retry_count,
                         self.dlq_stream_name,
-                        snippet,
                         extra={
                             "log_id": str(log_id),
-                            "payload_snippet": snippet,
-                            "error": str(exc),
-                            "traceback": tb_str,
+                            "payload_redacted": True,
+                            "error": redact_text(str(exc)),
+                            "error_type": type(exc).__name__,
                             "retry_count": retry_count,
                             "dlq_stream": self.dlq_stream_name,
                         },
                     )
                 else:
                     logger.error(
-                        "Drain parser failed for log ID %s (attempt %d/%d). Payload snippet: %s",
+                        "Drain parser failed for log ID %s (attempt %d/%d)",
                         log_id,
                         retry_count,
                         self.max_retries,
-                        snippet,
                         extra={
                             "log_id": str(log_id),
-                            "payload_snippet": snippet,
-                            "error": str(exc),
-                            "traceback": tb_str,
+                            "payload_redacted": True,
+                            "error": redact_text(str(exc)),
+                            "error_type": type(exc).__name__,
                             "retry_count": retry_count,
                         },
-                        exc_info=True,
                     )
                 continue
 
             trace_observation = self._extract_trace_observation(parsed)
-            self._recent_parsed_logs.append(parsed)
-            await self.batch_manager.add(parsed)
-            self.processed_count += 1
-            self.last_processed_at = datetime.now(timezone.utc).isoformat()
+            if _persist_before_ack:
+                # Stream deliveries use a private batch so no downstream
+                # callback can run until PostgreSQL returns typed acceptance.
+                parsed_logs.append(parsed)
+                deferred_traces.append((parsed, trace_observation))
+                continue
+
+            await self._activate_parsed_log(
+                parsed,
+                trace_observation,
+                trusted_tenant_id=trusted_tenant_id,
+                schedule_error_alert=True,
+                add_to_batch=True,
+            )
             parsed_logs.append(parsed)
-            self._schedule_log_parsed_event(parsed)
-            if trace_observation is not None:
-                self._record_trace_observation(trace_observation)
-
-            # Trigger base alert for errors (which will be deduplicated)
-            if parsed.level.lower() == "error":
-                payload = IncidentAlertPayload(
-                    incident_id=parsed.id,
-                    root_cause_service=parsed.service,
-                    triggering_template=parsed.template_text or parsed.raw_message,
-                    affected_services=[],
-                    propagation_chain=[parsed.service],
-                    confidence_score=0.5,
-                    is_critical=False,
-                )
-                asyncio.create_task(
-                    dispatch_incident_alert(payload, redis_client=self.redis_client)
-                )
-
-            # Notify subscribers (e.g., feature extraction worker)
-            if self._on_log_parsed:
-                try:
-                    self._on_log_parsed(parsed)
-                except Exception:
-                    logger.exception("Log parsed callback failed")
+            downstream_logs.append(parsed)
 
         if _persist_before_ack and parsed_logs:
-            if not await self._flush_batch_before_stream_ack(
-                parsed_count=len(parsed_logs),
-                baseline_flushed_records=baseline_flushed_records,
-            ):
+            persistence_results = await self._persist_stream_batch(parsed_logs)
+            if len(persistence_results) != len(parsed_logs):
                 raise RuntimeError(
-                    "Parsed log persistence did not complete; stream message remains retryable"
+                    "raw persistence returned incomplete per-event results"
                 )
+            for parsed, result, (_, trace_observation) in zip(
+                parsed_logs, persistence_results, deferred_traces
+            ):
+                if result.status == PersistStatus.FAILED:
+                    raise RuntimeError("raw persistence failed for stream event")
+                if result.status == PersistStatus.NEWLY_INSERTED:
+                    await self._activate_parsed_log(
+                        parsed,
+                        trace_observation,
+                        trusted_tenant_id=trusted_tenant_id,
+                        schedule_error_alert=False,
+                        add_to_batch=False,
+                    )
+                    downstream_logs.append(parsed)
 
-        if parsed_logs:
-            event = telemetry_event(
-                "batch_processed",
-                {
-                    "count": len(parsed_logs),
-                    "worker": self.consumer_name,
-                },
-            )
-            asyncio.create_task(telemetry_manager.broadcast(event))
+        if downstream_logs:
+            for tenant_id, owner_user_id in sorted(
+                {(log.tenant_id, log.owner_user_id) for log in downstream_logs}
+            ):
+                event = telemetry_event(
+                    "batch_processed",
+                    {
+                        "count": sum(
+                            log.tenant_id == tenant_id
+                            and log.owner_user_id == owner_user_id
+                            for log in downstream_logs
+                        ),
+                        "worker": self.consumer_name,
+                    },
+                    tenant_id=tenant_id,
+                    owner_user_id=owner_user_id,
+                    logical_id="|".join(
+                        sorted(
+                            str(log.event_id or log.id)
+                            for log in downstream_logs
+                            if log.tenant_id == tenant_id
+                            and log.owner_user_id == owner_user_id
+                        )
+                    ),
+                )
+                asyncio.create_task(telemetry_manager.broadcast(event))
 
         if not parsed_logs and self.error_count == errors_before_extract:
             self.error_count += 1
             logger.warning(
-                "Drain worker could not extract any log messages from queued item: %r",
-                item,
+                "Drain worker could not extract any log messages from queued item",
+                extra={"payload_redacted": True},
             )
 
         if self.benchmarking_collector:
@@ -752,13 +870,88 @@ class DrainWorker:
                     if parser_miner.persistence_handler is not None:
                         parser_miner.save_state("periodic")
                 except Exception as e:
-                    logger.error("Failed to save Drain3 snapshot: %s", e)
+                    logger.error(
+                        "Failed to save Drain3 snapshot: %s", redact_text(str(e))
+                    )
                 finally:
                     parser_miner.persistence_handler = persistence_handler
             self._logs_since_snapshot = 0
             self._last_snapshot_time = now
 
         return parsed_logs
+
+    async def _persist_stream_batch(
+        self, parsed_logs: list[ParsedLog]
+    ) -> PersistResults:
+        """Persist raw rows and return one explicit result per source event."""
+        success, result = await self.batch_manager.persist_batch(parsed_logs)
+        if not success:
+            raise RuntimeError(
+                "Parsed log persistence or downstream registration failed; "
+                "stream message remains retryable"
+            )
+        if isinstance(result, PersistResults):
+            return result
+        # Compatibility sinks used by older unit tests returned an integer or
+        # a simple success marker. Such a sink cannot report replays, so its
+        # result is conservatively treated as newly accepted for this delivery.
+        return PersistResults(
+            PersistResult(
+                tenant_id=parsed.tenant_id,
+                event_id=str(parsed.event_id or parsed.id),
+                status=PersistStatus.NEWLY_INSERTED,
+            )
+            for parsed in parsed_logs
+        )
+
+    async def _activate_parsed_log(
+        self,
+        parsed: ParsedLog,
+        trace_observation: Any,
+        *,
+        trusted_tenant_id: str | None,
+        schedule_error_alert: bool,
+        add_to_batch: bool,
+    ) -> None:
+        """Run downstream callbacks only after raw acceptance is established."""
+        self._recent_parsed_logs.append(parsed)
+        if add_to_batch:
+            await self.batch_manager.add(parsed)
+        self.processed_count += 1
+        self.last_processed_at = datetime.now(timezone.utc).isoformat()
+        self._schedule_log_parsed_event(parsed)
+        if trace_observation is not None:
+            self._record_trace_observation(trace_observation)
+
+        if schedule_error_alert and parsed.level.lower() == "error":
+            payload = IncidentAlertPayload(
+                tenant_id=parsed.tenant_id,
+                owner_user_id=parsed.owner_user_id,
+                incident_id=parsed.event_id or parsed.id,
+                root_cause_service=parsed.service,
+                triggering_template=parsed.template_text or parsed.raw_message,
+                affected_services=[],
+                propagation_chain=[parsed.service],
+                confidence_score=0.5,
+                is_critical=False,
+            )
+            if trusted_tenant_id is not None:
+                assert_tenant_identity(
+                    trusted_tenant_id,
+                    payload.tenant_id,
+                    boundary="incident-alert",
+                )
+            await dispatch_incident_alert(payload, redis_client=self.redis_client)
+
+        if self._on_log_parsed:
+            try:
+                self._on_log_parsed(parsed)
+            except Exception as exc:
+                logger.error(
+                    "Log parsed callback failed after durable acceptance exception_type=%s detail=%s",
+                    type(exc).__name__,
+                    redact_text(str(exc)),
+                )
 
     async def _flush_batch_before_stream_ack(
         self,
@@ -783,7 +976,7 @@ class DrainWorker:
             logger.error(
                 "Parsed log persistence is not durable yet; pending_records=%d error=%s",
                 pending_records,
-                sink_error,
+                redact_text(str(sink_error)),
             )
             return False
 
@@ -839,26 +1032,43 @@ class DrainWorker:
             return int(queue_size())
         return None
 
-    def _extract_log_messages(self, item: Any) -> list[tuple[str, dict[str, Any]]]:
+    def _extract_log_messages(
+        self,
+        item: Any,
+        *,
+        trusted_tenant_id: str | None = None,
+    ) -> list[tuple[str, dict[str, Any]]]:
         if isinstance(item, str):
             return [(item, {})]
 
         if not isinstance(item, dict):
             return []
 
-        parent_metadata = self._metadata_from_payload(item)
+        if trusted_tenant_id is not None:
+            reject_untrusted_tenant_fields(item, path="stream_payload")
+        parent_metadata = self._metadata_from_payload(
+            item, trusted_tenant_id=trusted_tenant_id
+        )
         logs = item.get("logs")
 
         if isinstance(logs, list):
             extracted: list[tuple[str, dict[str, Any]]] = []
             for entry in logs:
-                entry_messages = self._extract_entry(entry, parent_metadata)
+                entry_messages = self._extract_entry(
+                    entry,
+                    parent_metadata,
+                    trusted_tenant_id=trusted_tenant_id,
+                )
                 if not entry_messages:
                     self._record_unsupported(entry)
                 extracted.extend(entry_messages)
             return extracted
 
-        entry_messages = self._extract_entry(item, parent_metadata)
+        entry_messages = self._extract_entry(
+            item,
+            parent_metadata,
+            trusted_tenant_id=trusted_tenant_id,
+        )
         if not entry_messages:
             self._record_unsupported(item)
         return entry_messages
@@ -867,6 +1077,8 @@ class DrainWorker:
         self,
         entry: Any,
         parent_metadata: dict[str, Any],
+        *,
+        trusted_tenant_id: str | None = None,
     ) -> list[tuple[str, dict[str, Any]]]:
         if isinstance(entry, str):
             return [(entry, dict(parent_metadata))]
@@ -881,6 +1093,8 @@ class DrainWorker:
         metadata = dict(parent_metadata)
         nested_metadata = entry.get("metadata")
         if isinstance(nested_metadata, dict):
+            if trusted_tenant_id is not None:
+                reject_untrusted_tenant_fields(nested_metadata, path="event_metadata")
             metadata.update(nested_metadata)
 
         for source_key, target_key in (
@@ -889,7 +1103,7 @@ class DrainWorker:
             ("level", "level"),
             ("timestamp", "timestamp"),
             ("correlation_id", "correlation_id"),
-            ("tenant_id", "tenant_id"),
+            ("event_id", "event_id"),
         ):
             value = entry.get(source_key)
             if value is not None:
@@ -897,12 +1111,21 @@ class DrainWorker:
 
         return [(raw_message, metadata)]
 
-    def _metadata_from_payload(self, item: dict[str, Any]) -> dict[str, Any]:
+    def _metadata_from_payload(
+        self,
+        item: dict[str, Any],
+        *,
+        trusted_tenant_id: str | None = None,
+    ) -> dict[str, Any]:
         metadata: dict[str, Any] = {}
-        for key in ("source", "environment", "correlation_id", "tenant_id"):
+        for key in ("source", "environment", "correlation_id"):
             value = item.get(key)
             if value is not None:
                 metadata[key] = value
+        if trusted_tenant_id is None and item.get("tenant_id") is not None:
+            # Compatibility for direct legacy helper callers. Stream
+            # messages always provide trusted_tenant_id and never use this.
+            metadata["tenant_id"] = item["tenant_id"]
         return metadata
 
     def _find_message(self, entry: dict[str, Any]) -> str | None:
@@ -914,7 +1137,10 @@ class DrainWorker:
 
     def _record_unsupported(self, item: Any) -> None:
         self.error_count += 1
-        logger.warning("Drain worker found unsupported log entry shape: %r", item)
+        logger.warning(
+            "Drain worker found unsupported log entry shape: %s",
+            redact_text(str(redact_value(item))),
+        )
 
     def _schedule_log_parsed_event(self, parsed: ParsedLog) -> None:
         event = telemetry_event(
@@ -928,11 +1154,15 @@ class DrainWorker:
                 "template_id": parsed.template_id,
                 "template": parsed.template_text,
                 "correlation_id": parsed.correlation_id,
-                "raw_message": getattr(
-                    parsed, "message", getattr(parsed, "raw", parsed.raw_message)
-                ),
-                "metadata": parsed.metadata,
             },
+            tenant_id=parsed.tenant_id,
+            owner_user_id=parsed.owner_user_id,
+            logical_id=logical_telemetry_id(
+                "raw-log-parsed",
+                parsed.tenant_id,
+                str(parsed.event_id or parsed.id),
+                owner_user_id=parsed.owner_user_id,
+            ),
         )
 
         try:
@@ -947,8 +1177,12 @@ class DrainWorker:
             return None
         try:
             return self.runtime_dependency_parser.extract(parsed)
-        except Exception:
-            logger.exception("Runtime dependency trace extraction failed")
+        except Exception as exc:
+            logger.error(
+                "Runtime dependency trace extraction failed exception_type=%s detail=%s",
+                type(exc).__name__,
+                redact_text(str(exc)),
+            )
             return None
 
     def _record_trace_observation(self, observation: TraceObservation) -> None:
@@ -957,5 +1191,9 @@ class DrainWorker:
             return
         try:
             self._on_trace_observation(observation)
-        except Exception:
-            logger.exception("Trace observation callback failed")
+        except Exception as exc:
+            logger.error(
+                "Trace observation callback failed exception_type=%s detail=%s",
+                type(exc).__name__,
+                redact_text(str(exc)),
+            )

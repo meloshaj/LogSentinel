@@ -24,6 +24,8 @@ from backend.app.ml.feature_extractor import WindowConfig
 from backend.app.models import FeatureVector, ParsedLog
 from backend.app.repositories.feature_repository import FeatureRepository
 from backend.app.repositories.log_repository import LogRepository
+from backend.app.security.data_scope import DataScope
+from backend.app.security.ingest_guard import require_ingestion_api_key
 from backend.app.services.batch_manager import ParsedLogBatchManager
 from backend.app.services.drain_parser import DrainParser
 from backend.app.services.runtime_dependency_parser import RuntimeDependencyParser
@@ -34,6 +36,15 @@ from backend.app.workers.feature_worker import FeatureExtractionWorker
 pytestmark = pytest.mark.asyncio
 
 INGEST_API_KEY = "resilience-ingest-key"
+
+
+@pytest.fixture(autouse=True)
+def _owned_ingestion_key_override():
+    main_module.app.dependency_overrides[require_ingestion_api_key] = lambda: DataScope(
+        "resilience-tenant", 101
+    )
+    yield
+    main_module.app.dependency_overrides.pop(require_ingestion_api_key, None)
 
 
 

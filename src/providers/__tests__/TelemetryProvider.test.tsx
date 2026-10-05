@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from "@testing-library/react";
 import { TelemetryProvider, useTelemetryContext, deduplicateAndMerge } from "../TelemetryProvider";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { LogEntry } from "../../types/monitoring";
+import { clearAuthToken, setAuthToken } from "../../utils/auth";
 
 // ---------------------------------------------------------------------------
 // Mocking
@@ -14,7 +15,7 @@ class MockWebSocket {
   onopen?: () => void;
   onmessage?: (event: { data: string }) => void;
   onerror?: () => void;
-  onclose?: () => void;
+  onclose?: (event: { code: number }) => void;
   readyState = 1; // OPEN
 
   constructor(public url: string) {
@@ -35,7 +36,7 @@ beforeEach(() => {
   fetchMock = vi.fn();
   (globalThis as any).fetch = fetchMock;
   (globalThis as any).WebSocket = MockWebSocket;
-  localStorage.setItem("authToken", "test-token");
+  setAuthToken("test-token");
   vi.useFakeTimers({ shouldAdvanceTime: true });
 });
 
@@ -43,6 +44,7 @@ afterEach(() => {
   vi.runOnlyPendingTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  clearAuthToken();
 });
 
 // ---------------------------------------------------------------------------
@@ -50,12 +52,13 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 const TestConsumer = () => {
-  const { logs, isBackfillLoading, backfillError } = useTelemetryContext();
+  const { logs, isBackfillLoading, backfillError, connectionState } = useTelemetryContext();
   return (
     <div>
       <div data-testid="loading">{isBackfillLoading ? "true" : "false"}</div>
       <div data-testid="error">{backfillError || "none"}</div>
       <div data-testid="log-count">{logs.length}</div>
+      <div data-testid="connection-state">{connectionState}</div>
       <div data-testid="log-ids">{logs.map((l) => l.id).join(",")}</div>
       <ul data-testid="logs">
         {logs.map((log) => (
@@ -158,6 +161,12 @@ describe("deduplicateAndMerge (ULID-based)", () => {
 // ---------------------------------------------------------------------------
 
 describe("TelemetryProvider", () => {
+  const successfulBackfill = () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ logs: [] }),
+  });
+
   it("attaches the current JWT to protected REST backfill and WebSocket requests", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
@@ -175,7 +184,7 @@ describe("TelemetryProvider", () => {
       vi.advanceTimersByTime(20);
     });
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2));
 
     for (const call of fetchMock.mock.calls) {
       const headers = call[1]?.headers as Headers;
@@ -186,6 +195,50 @@ describe("TelemetryProvider", () => {
     const socketUrl = new URL(mockWsInstances[0].url);
     expect(socketUrl.searchParams.has("token")).toBe(false);
     expect(mockWsInstances[0].url).not.toContain("Bearer");
+  });
+
+  it("marks browser-offline data stale and reconnects after the browser returns online", async () => {
+    fetchMock.mockResolvedValue(successfulBackfill());
+    render(<TelemetryProvider><TestConsumer /></TelemetryProvider>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    expect(screen.getByTestId("connection-state")).toHaveTextContent("live");
+
+    act(() => window.dispatchEvent(new Event("offline")));
+    expect(screen.getByTestId("connection-state")).toHaveTextContent("offline");
+
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3020); });
+    expect(mockWsInstances.length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByTestId("connection-state")).toHaveTextContent("live");
+  });
+
+  it("refreshes an expired session before reconnecting and stops on refresh rejection", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    document.cookie = "logsentinel_csrf=test-csrf; path=/";
+    fetchMock.mockImplementation((input: string | URL) => {
+      if (String(input).endsWith("/api/auth/refresh")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ access_token: "fresh-token" }) });
+      }
+      return Promise.resolve(successfulBackfill());
+    });
+    render(<TelemetryProvider><TestConsumer /></TelemetryProvider>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(20); });
+    act(() => mockWsInstances[0].onclose?.({ code: 1008 }));
+    await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(3020); });
+    expect(mockWsInstances.length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByTestId("connection-state")).toHaveTextContent("live");
+
+    fetchMock.mockImplementation((input: string | URL) => {
+      if (String(input).endsWith("/api/auth/refresh")) {
+        return Promise.resolve({ ok: false, status: 401, json: async () => ({}) });
+      }
+      return Promise.resolve(successfulBackfill());
+    });
+    const current = mockWsInstances[mockWsInstances.length - 1];
+    act(() => current.onclose?.({ code: 1008 }));
+    await act(async () => { await Promise.resolve(); await vi.advanceTimersByTimeAsync(60000); });
+    expect(screen.getByTestId("connection-state")).toHaveTextContent("auth_required");
   });
 
   it("Test 1: Deduplication when REST and WebSocket push logs with the same ULID", async () => {
@@ -382,7 +435,7 @@ describe("TelemetryProvider", () => {
 
     // Should show error
     const errorText = screen.getByTestId("error").textContent;
-    expect(errorText).toContain("HTTP 500: Internal Server Error");
+    expect(errorText).toBe("Telemetry service unavailable");
 
     // WS logs buffered during the fail should still flush and render
     expect(screen.getByTestId("log-count").textContent).toBe("1");

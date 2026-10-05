@@ -16,6 +16,11 @@ from drain3.redis_persistence import RedisPersistence
 from drain3.template_miner_config import TemplateMinerConfig
 
 from ..models import ParsedLog
+from ..security.redaction import sanitize_error_text
+from ..security.tenant_boundary import (
+    TenantBoundaryViolation,
+    reject_untrusted_tenant_fields,
+)
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "drain3.ini"
 # ``backend/app`` is writable by the non-root image user (the backend image
@@ -165,7 +170,7 @@ class DrainParser:
                 logger.warning(
                     "Drain3 Redis state unavailable; using local state file %s: %s",
                     self.state_path,
-                    exc,
+                    sanitize_error_text(exc),
                 )
                 self._miner = TemplateMiner(
                     persistence_handler=file_pers, config=config
@@ -173,7 +178,12 @@ class DrainParser:
                 self.redis_client = None
 
     def parse(
-        self, raw_message: str, metadata: dict[str, Any] | None = None
+        self,
+        raw_message: str,
+        metadata: dict[str, Any] | None = None,
+        *,
+        trusted_tenant_id: str | None = None,
+        trusted_owner_user_id: int | None = None,
     ) -> ParsedLog:
         """
         Mine a log template and return a validated ParsedLog instance.
@@ -191,7 +201,16 @@ class DrainParser:
             template_text, raw_message
         )
 
-        metadata_dict: dict[str, Any] = metadata or {}
+        metadata_dict: dict[str, Any] = dict(metadata or {})
+        if trusted_tenant_id is not None:
+            trusted_tenant_id = str(trusted_tenant_id).strip()
+            if not trusted_tenant_id or trusted_tenant_id == "default":
+                raise TenantBoundaryViolation("missing trusted stream tenant")
+            # A parser must not accept tenant authority from its metadata
+            # argument when called from the authenticated stream path.
+            reject_untrusted_tenant_fields(metadata_dict, path="event_metadata")
+            if trusted_owner_user_id is None or int(trusted_owner_user_id) <= 0:
+                raise TenantBoundaryViolation("missing trusted stream owner")
 
         # Extract timestamp from metadata or use current time
         timestamp: Any = metadata_dict.get("timestamp")
@@ -208,10 +227,14 @@ class DrainParser:
         if timestamp.tzinfo is None:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
 
+        event_id = metadata_dict.get("event_id") or metadata_dict.get("id")
+        if event_id is not None:
+            event_id = str(event_id)
         log_id = ulid.from_timestamp(timestamp).str
 
         return ParsedLog(
             id=log_id,
+            event_id=event_id,
             timestamp=timestamp,
             service=metadata_dict.get("service", "unknown"),
             level=metadata_dict.get("level", "info"),
@@ -224,7 +247,14 @@ class DrainParser:
             source=metadata_dict.get("source"),
             environment=metadata_dict.get("environment"),
             correlation_id=metadata_dict.get("correlation_id"),
-            tenant_id=str(metadata_dict.get("tenant_id") or "default"),
+            tenant_id=trusted_tenant_id
+            if trusted_tenant_id is not None
+            else str(metadata_dict.get("tenant_id") or "default"),
+            owner_user_id=(
+                int(trusted_owner_user_id)
+                if trusted_owner_user_id is not None
+                else int(metadata_dict.get("owner_user_id") or 0)
+            ),
             metadata=metadata_dict,
             parsed_at=datetime.now(timezone.utc),
         )

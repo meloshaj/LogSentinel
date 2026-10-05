@@ -18,7 +18,7 @@ def get_ingest_api_key() -> str:
     if not api_key:
         raise SystemExit(
             "INGEST_API_KEY is required for the ingestion demo. "
-            'Set it in PowerShell with: $env:INGEST_API_KEY="dev-local-key"'
+            'Set it in PowerShell with: $env:INGEST_API_KEY="<tenant-scoped-key>"'
         )
     return api_key
 

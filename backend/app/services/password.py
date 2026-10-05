@@ -52,10 +52,12 @@ _hasher = PasswordHasher(
 # ---------------------------------------------------------------------------
 # HMAC key for verification code hashing
 # ---------------------------------------------------------------------------
-_HMAC_KEY: bytes = (
-    os.getenv("JWT_SECRET_KEY")
-    or "j6nXLp4jdPIYuoGC20uNKMgG2KhYVeEyaHqxECoYXygCQ3nrgQvULL9YlIn6eGye"
-).encode("utf-8")
+_hmac_secret = os.getenv("JWT_SECRET_KEY")
+if not _hmac_secret:
+    raise RuntimeError(
+        "JWT_SECRET_KEY must be configured before password services load"
+    )
+_HMAC_KEY: bytes = _hmac_secret.encode("utf-8")
 
 
 # ---------------------------------------------------------------------------

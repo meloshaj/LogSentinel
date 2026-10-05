@@ -19,6 +19,9 @@ export function useLiveLogs() {
     connectionUrl,
     totalLogCount,
     isBackfillLoading,
+    backfillError,
+    logDataState,
+    lastTelemetryAt,
   } = useTelemetryContext();
 
   const [paused, setPaused] = useState(false);
@@ -33,6 +36,9 @@ export function useLiveLogs() {
     filteredLogs,
     totalLogCount,
     isBackfillLoading,
+    backfillError,
+    dataState: logDataState,
+    lastTelemetryAt,
     newIds,
     paused,
     setFilter,

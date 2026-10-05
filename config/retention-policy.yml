@@ -1,0 +1,356 @@
+schema_version: "1.0"
+policy_version: "proposal-20260918-01"
+effective_date: null
+approval:
+  status: "pending"
+  marker: null
+  reference: null
+  approved_at: null
+owner: "LogSentinel data-governance operator"
+mode:
+  dry_run: true
+  destructive_apply_enabled: false
+  max_runtime_seconds: 300
+  default_batch_size: 500
+  lock_key: "logsentinel-retention-v1"
+
+# This is a safety proposal, not an operator-approved policy. Durations below
+# are intentionally inert until approval.status, approval.marker/reference,
+# effective_date, and destructive_apply_enabled are changed by an operator.
+storage_classes:
+  postgres.raw_logs:
+    enabled: true
+    kind: authoritative
+    scope: tenant_owner
+    retention_duration: 90d
+    grace_period: 2d
+    batch_size: 500
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [archive_object_and_manifest_consistent, no_active_recovery_dependency]
+    owner: application-data-owner
+  postgres.feature_inputs:
+    enabled: true
+    kind: derived
+    scope: tenant_owner
+    retention_duration: 30d
+    grace_period: 2d
+    batch_size: 500
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [downstream_feature_state_not_needed]
+    owner: pipeline-owner
+  postgres.feature_windows:
+    enabled: true
+    kind: derived
+    scope: tenant_owner
+    retention_duration: 90d
+    grace_period: 2d
+    batch_size: 500
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [children_deleted_first]
+    owner: analytics-owner
+  postgres.anomaly_events:
+    enabled: true
+    kind: derived
+    scope: tenant_owner
+    retention_duration: 180d
+    grace_period: 2d
+    batch_size: 500
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [feature_window_dependency]
+    owner: analytics-owner
+  postgres.tracking_loops:
+    enabled: true
+    kind: derived
+    scope: tenant_owner
+    retention_duration: 365d
+    grace_period: 2d
+    batch_size: 500
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [history_dependency, feature_window_dependency]
+    owner: incident-owner
+  postgres.incidents:
+    enabled: true
+    kind: audit
+    scope: tenant_owner
+    retention_duration: 730d
+    grace_period: 7d
+    batch_size: 250
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [open_incidents_protected, incident_history_protected]
+    owner: incident-owner
+  postgres.pipeline_ledger:
+    enabled: true
+    kind: authoritative
+    scope: tenant_owner
+    retention_duration: 30d
+    grace_period: 2d
+    batch_size: 500
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [deduplication_horizon_approved]
+    owner: pipeline-owner
+  postgres.pipeline_outbox:
+    enabled: true
+    kind: authoritative
+    scope: tenant_owner
+    retention_duration: 30d
+    grace_period: 2d
+    batch_size: 250
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [terminal_status_only, no_active_lease]
+    owner: delivery-owner
+  postgres.email_outbox:
+    enabled: true
+    kind: authoritative
+    scope: tenant_owner
+    retention_duration: 30d
+    grace_period: 2d
+    batch_size: 250
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [terminal_status_only, no_active_lease]
+    owner: delivery-owner
+  postgres.security_audit:
+    enabled: false
+    kind: audit
+    scope: tenant
+    retention_duration: 730d
+    grace_period: 30d
+    batch_size: 250
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [explicit_security-retention-approval]
+    owner: security-owner
+  postgres.auth_sessions:
+    enabled: false
+    kind: security
+    scope: owner
+    retention_duration: 90d
+    grace_period: 7d
+    batch_size: 250
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [expired-or-revoked-only]
+    owner: security-owner
+  postgres.auth_refresh_tokens:
+    enabled: false
+    kind: security
+    scope: owner
+    retention_duration: 90d
+    grace_period: 7d
+    batch_size: 250
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [expired-or-revoked-only]
+    owner: security-owner
+  postgres.password_reset_tokens:
+    enabled: false
+    kind: security
+    scope: owner
+    retention_duration: 90d
+    grace_period: 7d
+    batch_size: 100
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [terminal-state-only, never-issued, never-non-expired]
+    owner: security-owner
+  postgres.migration_ledger:
+    enabled: false
+    kind: control
+    scope: global
+    retention_duration: never
+    grace_period: never
+    batch_size: 0
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: retain_forever
+    dependency_guards: [never-delete]
+    owner: migration-owner
+  archive.payloads:
+    enabled: true
+    kind: authoritative
+    scope: tenant_owner
+    retention_duration: 730d
+    grace_period: 7d
+    batch_size: 100
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [object_exists, manifest_exists, checksum_verified, database_reference_consistent]
+    owner: archive-owner
+  archive.manifests:
+    enabled: true
+    kind: audit
+    scope: tenant_owner
+    retention_duration: 730d
+    grace_period: 7d
+    batch_size: 100
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [object_deleted_or_retained_together, rehydration_not_active]
+    owner: archive-owner
+  archive.rehydration_sessions:
+    enabled: true
+    kind: derived
+    scope: tenant_owner
+    retention_duration: 1d
+    grace_period: 1d
+    batch_size: 100
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_if_hold_metadata_exists
+    dependency_guards: [expired-session-only, staging-table-cleaned]
+    owner: archive-owner
+  recovery.logical_backups:
+    enabled: true
+    kind: recovery
+    scope: global
+    retention_duration: 30d
+    grace_period: 7d
+    batch_size: 10
+    minimum_recovery_points: 3
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [valid-manifest, checksum-verified, remote-verified, newest-valid-protected, minimum-valid-count]
+    owner: recovery-owner
+  recovery.pitr_bases:
+    enabled: true
+    kind: recovery
+    scope: global
+    retention_duration: 90d
+    grace_period: 14d
+    batch_size: 2
+    minimum_recovery_points: 2
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [manifest-last, independently-usable-newer-base, wal-chain-protected, minimum-valid-base-count]
+    owner: recovery-owner
+  recovery.wal:
+    enabled: true
+    kind: recovery
+    scope: global
+    retention_duration: chain-derived
+    grace_period: 14d
+    batch_size: 100
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [oldest-retained-base-chain, no-retained-recovery-path-depends-on-object]
+    owner: recovery-owner
+  valkey.stream:
+    enabled: false
+    kind: cache
+    scope: global
+    retention_duration: chain-derived
+    grace_period: 2d
+    batch_size: 1000
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [consumer-groups-caught-up, postgres-converged, not-only-recovery-copy]
+    owner: pipeline-owner
+  valkey.dlq:
+    enabled: false
+    kind: audit
+    scope: global
+    retention_duration: never
+    grace_period: never
+    batch_size: 0
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: retain_forever
+    dependency_guards: [separate-approved-dlq-policy, operator-review]
+    owner: pipeline-owner
+  valkey.auth_cache:
+    enabled: true
+    kind: cache
+    scope: owner
+    retention_duration: 1d
+    grace_period: 1d
+    batch_size: 1000
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [not-authoritative-security-state]
+    owner: security-owner
+  valkey.rate_limit:
+    enabled: true
+    kind: cache
+    scope: owner
+    retention_duration: 1d
+    grace_period: 1d
+    batch_size: 1000
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [not-authoritative-security-state]
+    owner: platform-owner
+  monitoring.prometheus:
+    enabled: true
+    kind: cache
+    scope: global
+    retention_duration: 7d
+    grace_period: 1d
+    batch_size: 0
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: retain_by_runtime_bound
+    dependency_guards: [size_bound_512MiB]
+    owner: monitoring-owner
+  monitoring.alertmanager:
+    enabled: true
+    kind: state
+    scope: global
+    retention_duration: operator-managed
+    grace_period: 1d
+    batch_size: 0
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: retain_by_runtime_bound
+    dependency_guards: [persistent-state-volume]
+    owner: monitoring-owner
+  local.rollback_snapshots:
+    enabled: true
+    kind: recovery
+    scope: global
+    retention_duration: 30d
+    grace_period: 7d
+    batch_size: 10
+    minimum_recovery_points: 2
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [active-release-protected, previous-known-good-protected, incident-hold-protected]
+    owner: release-operator
+  local.staging:
+    enabled: true
+    kind: derived
+    scope: global
+    retention_duration: 7d
+    grace_period: 2d
+    batch_size: 10
+    minimum_recovery_points: 0
+    dry_run: true
+    legal_hold_behavior: protect_by_default
+    dependency_guards: [not-active, not-referenced-by-deployment, safe-prefix-only]
+    owner: release-operator

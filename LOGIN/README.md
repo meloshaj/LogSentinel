@@ -1,11 +1,9 @@
 
-  # Login Authentication Interface
+# Archived Login UI Prototype
 
-  A modern, responsive authentication interface with login and registration forms.
+This directory is a design prototype retained for reference. It is not part of
+the supported LogSentinel application, production build, deployment, or CI
+contract. Its SSO controls are visual placeholders and must not be presented as
+working authentication.
 
-  ## Running the code
-
-  Run `npm i` to install the dependencies.
-
-  Run `npm run dev` to start the development server.
-  
+The supported authentication UI lives under `src/pages` in the repository root.

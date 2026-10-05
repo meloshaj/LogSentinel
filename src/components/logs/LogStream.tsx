@@ -4,6 +4,7 @@ import { LOG_LEVEL_COLORS, SERVICE_TEXT_COLORS } from "../../constants/statusCon
 import { useLiveLogs } from "../../hooks/useLiveLogs";
 import { filterLogEntries } from "../../utils/logFilters";
 import type { LogEntry } from "../../types/monitoring";
+import { OperationalStateNotice } from "../common/OperationalState";
 
 const LOG_FILTERS = ["ALL", "ERROR", "WARN", "INFO", "DEBUG"] as const;
 
@@ -42,14 +43,14 @@ export interface LogStreamProps {
 }
 
 export function LogStream({ serviceFilter = "All Services", searchQuery = "" }: LogStreamProps) {
-  const { connectionState, connectionUrl, filter, filteredLogs, newIds, paused, setFilter, setPaused } = useLiveLogs();
+  const { connectionState, connectionUrl, filter, filteredLogs, newIds, paused, setFilter, setPaused, dataState } = useLiveLogs();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const displayedLogs = filterLogEntries(filteredLogs, serviceFilter, searchQuery);
 
   const connectionLabel =
-    connectionState === "connected" ? "CONNECTED" : connectionState === "connecting" ? "CONNECTING" : connectionState === "disconnected" ? "DISCONNECTED" : "ERROR";
-  const connectionTone = connectionState === "connected" ? "text-[#3fb950]" : connectionState === "connecting" ? "text-[#d29922]" : "text-[#f85149]";
+    connectionState.toUpperCase();
+  const connectionTone = connectionState === "live" ? "text-[#3fb950]" : connectionState === "connecting" || connectionState === "reconnecting" ? "text-[#d29922]" : "text-[#f85149]";
 
   useEffect(() => {
     if (!paused && scrollRef.current) {
@@ -105,6 +106,20 @@ export function LogStream({ serviceFilter = "All Services", searchQuery = "" }: 
         style={{ scrollBehavior: "smooth" }}
         aria-live={paused ? "off" : "polite"}
       >
+        {displayedLogs.length === 0 && filteredLogs.length > 0 && (
+          <div className="flex h-full items-center justify-center text-[#7d8590]" role="status">
+            <span style={{ fontSize: "12px" }}>No log records match the current filters.</span>
+          </div>
+        )}
+        {displayedLogs.length === 0 && filteredLogs.length === 0 && (
+          <OperationalStateNotice
+            state={dataState}
+            connectionState={connectionState}
+            emptyMessage="No log records were returned."
+            errorMessage="Log telemetry is unavailable."
+            className="m-3 h-[calc(100%-1.5rem)] justify-center"
+          />
+        )}
         {displayedLogs.map((entry) => (
           <LogRow key={entry.id} entry={entry} isNew={newIds.has(entry.id)} />
         ))}

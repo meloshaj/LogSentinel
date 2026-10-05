@@ -9,7 +9,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault(
     "JWT_SECRET_KEY",
-    "j6nXLp4jdPIYuoGC20uNKMgG2KhYVeEyaHqxECoYXygCQ3nrgQvULL9YlIn6eGye",
+    "test-only-root-secret-key-32-bytes-minimum",
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +35,8 @@ def make_parsed_log():
     def _make_parsed_log(**overrides) -> ParsedLog:
         default_data = {
             "id": str(uuid.uuid4()),
+            "tenant_id": "tenant-test",
+            "owner_user_id": 101,
             "service": "auth-service",
             "level": "INFO",
             "raw_message": "User authenticated successfully",

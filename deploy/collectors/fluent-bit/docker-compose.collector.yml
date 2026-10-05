@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   fluent-bit:
-    image: fluent/fluent-bit:3.0
+    image: fluent/fluent-bit:3.0.6
     container_name: logsentinel-fluent-bit
     volumes:
       - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
@@ -11,6 +11,6 @@ services:
     environment:
       - LOGSENTINEL_HOST=${LOGSENTINEL_HOST:-localhost}
       - LOGSENTINEL_PORT=${LOGSENTINEL_PORT:-8000}
-      - LOGSENTINEL_API_KEY=${LOGSENTINEL_API_KEY:-dev-local-key}
+      - LOGSENTINEL_API_KEY=${LOGSENTINEL_API_KEY:?LOGSENTINEL_API_KEY must be set}
     network_mode: "host" # Useful for reaching localhost backends
     restart: always
