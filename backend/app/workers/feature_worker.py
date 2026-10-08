@@ -13,20 +13,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from ..core.pipeline_identity import logical_telemetry_id
 from ..ml.anomaly_detector import IsolationForestAnomalyDetector
-from ..ml.model_registry import load_active_detector, load_registered_detector
 from ..ml.feature_extractor import (
     SlidingWindowFeatureExtractor as SlidingWindowExtractor,
 )
 from ..ml.feature_extractor import WindowConfig
+from ..ml.model_registry import load_active_detector, load_registered_detector
 from ..models import FeatureVector, ParsedLog
 from ..observability.metrics import FEATURE_FAILURES_TOTAL, FEATURE_RETRIES_TOTAL
-from ..security.tenant_boundary import TenantBoundaryViolation
-from ..security.redaction import sanitize_error_text
 from ..repositories.feature_repository import FeatureRepository
+from ..security.redaction import sanitize_error_text
+from ..security.tenant_boundary import TenantBoundaryViolation
 from ..services.durable_queue import DurableQueue
 from ..services.telemetry import telemetry_event, telemetry_manager
-from ..core.pipeline_identity import logical_telemetry_id
 from .event_manager import EventManager
 
 logger = logging.getLogger("logsentinel.feature_worker")

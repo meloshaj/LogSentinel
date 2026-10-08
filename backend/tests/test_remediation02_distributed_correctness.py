@@ -5,7 +5,6 @@ import os
 from datetime import datetime, timezone
 
 import pytest
-
 from backend.app.schemas.alerting import IncidentAlertPayload
 from backend.app.services.alerting import alert_namespace
 from backend.app.services.drain_parser import DrainParser

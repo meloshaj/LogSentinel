@@ -12,7 +12,7 @@ from ..core.settings import get_archive_settings
 from ..security.redaction import sanitize_error_text
 from .manifest import generate_sidecar_manifest
 from .rehydration import cleanup_expired_rehydration_sessions
-from .s3_client import get_s3_client, run_storage_io, read_object
+from .s3_client import get_s3_client, read_object, run_storage_io
 from .serializer import async_serialize_to_parquet
 from .verifier import ArchiveVerifier
 

@@ -13,8 +13,8 @@ from sqlalchemy import select
 from ..core.database import get_async_session
 from ..core.orm import TenantRecord, UserRecord
 from .auth import get_current_user
-from .tenants import resolve_membership
 from .data_scope import DataScope
+from .tenants import resolve_membership
 
 
 @dataclass(frozen=True, slots=True)

@@ -27,8 +27,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..core.database import get_engine
 from ..schemas.alerting import IncidentAlertPayload
-from ..security.tenant_boundary import TenantBoundaryViolation
 from ..security.data_scope import DataScope
+from ..security.tenant_boundary import TenantBoundaryViolation
 from ..services.alerting import enqueue_incident_alert
 
 logger = logging.getLogger("logsentinel.tracking_repository")

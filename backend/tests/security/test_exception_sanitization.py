@@ -7,7 +7,6 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from backend.app.core import database as database_module
 from backend.app.core import redis as redis_module
 from backend.app.core.transaction import async_transactional
@@ -16,7 +15,6 @@ from backend.app.security.redaction import (
     sanitize_error_text,
 )
 from backend.app.workers.drain_worker import DrainWorker
-
 
 SENTINELS = {
     "db_password": "SENTINEL_DB_PASSWORD",

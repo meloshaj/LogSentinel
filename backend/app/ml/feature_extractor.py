@@ -16,8 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..models import FeatureVector, LogWindow, ParsedLog
 from ..core.pipeline_identity import feature_window_id
+from ..models import FeatureVector, LogWindow, ParsedLog
 
 logger = logging.getLogger("logsentinel.feature_extractor")
 

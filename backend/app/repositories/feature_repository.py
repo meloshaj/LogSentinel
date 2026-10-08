@@ -25,14 +25,14 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB, VARCHAR
-from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..core.database import get_engine
 from ..core.pipeline_orm import window_inputs
 from ..models import FeatureVector
-from ..security.tenant_boundary import TenantBoundaryViolation
 from ..security.data_scope import DataScope
+from ..security.tenant_boundary import TenantBoundaryViolation
 from ..services.durable_queue import enqueue
 
 logger = logging.getLogger("logsentinel.feature_repository")

@@ -14,7 +14,6 @@ from sqlalchemy import text
 
 from ..archive.s3_client import get_s3_client, read_object, run_storage_io
 from ..core.database import get_engine
-
 from .anomaly_detector import FEATURE_COLUMNS, IsolationForestAnomalyDetector
 
 FEATURE_SCHEMA_VERSION = "logsentinel-feature-schema-v1"
@@ -65,7 +64,7 @@ def configured_artifact_store(base_path: str | Path) -> ModelArtifactStore:
 
 
 def tenant_hash(tenant_id: str, owner_user_id: int) -> str:
-    return hashlib.sha256(f"{tenant_id}:{owner_user_id}".encode("utf-8")).hexdigest()[
+    return hashlib.sha256(f"{tenant_id}:{owner_user_id}".encode()).hexdigest()[
         :32
     ]
 
@@ -86,7 +85,7 @@ class PromotionLock:
         self.timeout_seconds = timeout_seconds
         self._fd: int | None = None
 
-    def __enter__(self) -> "PromotionLock":
+    def __enter__(self) -> PromotionLock:
         deadline = time.monotonic() + self.timeout_seconds
         self.path.parent.mkdir(parents=True, exist_ok=True)
         while True:

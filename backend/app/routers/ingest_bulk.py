@@ -5,7 +5,6 @@ import uuid
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import ValidationError
 
-from ..core.rate_limit import limiter
 from ..core.constants import LOG_STREAM_NAME
 from ..core.ingest_limits import (
     MAX_COMPRESSED_BODY_BYTES,
@@ -16,6 +15,7 @@ from ..core.ingest_limits import (
     read_limited_body,
     validate_bounded_structure,
 )
+from ..core.rate_limit import limiter
 from ..schemas.ingest import BulkIngestPayload, BulkIngestResponse, BulkLogEntry
 from ..schemas.stream import StreamEnvelope
 from ..security import require_ingestion_api_key

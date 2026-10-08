@@ -1,15 +1,15 @@
 """Ordinary PostgreSQL queue tables; these must never become hypertables."""
 
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     DateTime,
+    Index,
     Integer,
     MetaData,
     String,
     Table,
     UniqueConstraint,
-    CheckConstraint,
-    Index,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB

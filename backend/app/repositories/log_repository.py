@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 import asyncio
+import base64
 import json
 import logging
 from collections.abc import Sequence
@@ -16,26 +16,26 @@ from sqlalchemy import (
     and_,
     delete,
     insert,
-    select,
     or_,
+    select,
 )
-from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..core.database import get_engine
 from ..core.orm import LogRecord
 from ..core.pipeline_identity import feature_contribution_key
-from ..models import ParsedLog
 from ..core.pipeline_orm import ledger
+from ..models import ParsedLog
 from ..observability.metrics import (
     DOWNSTREAM_REGISTRATION_FAILURES,
     RAW_ACCEPTED_TOTAL,
     RAW_REPLAY_TOTAL,
 )
-from ..services.alerting import enqueue_incident_alert
-from ..services.durable_queue import enqueue
 from ..schemas.alerting import IncidentAlertPayload
 from ..security.data_scope import DataScope
+from ..services.alerting import enqueue_incident_alert
+from ..services.durable_queue import enqueue
 
 logs_table = LogRecord.__table__
 logger = logging.getLogger("logsentinel.log_repository")

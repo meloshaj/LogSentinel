@@ -53,9 +53,7 @@ def build_sample_feature_vectors(
     recovery_count = max(1, sample_count // 5)
     steady_count = sample_count - recovery_count
     vectors = _build_steady_healthy_vectors(steady_count, seed=seed)
-    vectors.extend(
-        _build_recovery_healthy_vectors(recovery_count, seed=seed + 100_003)
-    )
+    vectors.extend(_build_recovery_healthy_vectors(recovery_count, seed=seed + 100_003))
     random.Random(seed + 7).shuffle(vectors)
     return vectors
 
@@ -79,9 +77,7 @@ def _build_steady_healthy_vectors(
     sample_count: int, *, seed: int
 ) -> list[FeatureVector]:
     rng = random.Random(seed)
-    base_time = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(
-        days=seed % 365
-    )
+    base_time = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(days=seed % 365)
     vectors: list[FeatureVector] = []
     session_index = 0
 
@@ -161,9 +157,7 @@ def _build_recovery_healthy_vectors(
     sample_count: int, *, seed: int
 ) -> list[FeatureVector]:
     rng = random.Random(seed)
-    base_time = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(
-        days=seed % 365
-    )
+    base_time = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(days=seed % 365)
     vectors: list[FeatureVector] = []
     session_index = 0
 

@@ -11,7 +11,7 @@ scikit-learn==1.9.0
 networkx==3.6.1
 bcrypt==5.0.0
 argon2-cffi==25.1.0
-pyjwt[crypto]==2.13.0
+pyjwt[crypto]==2.15.0
 email-validator==2.3.0
 google-auth==2.56.2
 requests==2.34.2

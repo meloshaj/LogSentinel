@@ -18,10 +18,21 @@ from drain3.redis_persistence import RedisPersistence
 from redis.asyncio import Redis
 from redis.typing import EncodableT
 
-from ..models import ParsedLog
 from ..core.constants import LOG_STREAM_NAME, LOG_WORKERS_GROUP
+from ..core.pipeline_identity import logical_telemetry_id
+from ..models import ParsedLog
+from ..repositories.log_repository import (
+    PersistResult,
+    PersistResults,
+    PersistStatus,
+)
 from ..schemas.alerting import IncidentAlertPayload
 from ..schemas.stream import StreamEnvelope
+from ..security.redaction import redact_text, redact_value
+from ..security.tenant_boundary import (
+    assert_tenant_identity,
+    reject_untrusted_tenant_fields,
+)
 from ..services.alerting import dispatch_incident_alert
 from ..services.batch_manager import ParsedLogBatchManager
 from ..services.drain_parser import (
@@ -34,17 +45,6 @@ from ..services.runtime_dependency_parser import (
     TraceObservation,
 )
 from ..services.telemetry import telemetry_event, telemetry_manager
-from ..core.pipeline_identity import logical_telemetry_id
-from ..repositories.log_repository import (
-    PersistResult,
-    PersistResults,
-    PersistStatus,
-)
-from ..security.redaction import redact_text, redact_value
-from ..security.tenant_boundary import (
-    assert_tenant_identity,
-    reject_untrusted_tenant_fields,
-)
 
 logger = logging.getLogger("logsentinel.drain_worker")
 

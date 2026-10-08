@@ -3,15 +3,15 @@
 import abc
 import asyncio
 import functools
-import time
-from concurrent.futures import ThreadPoolExecutor
 import os
 import tempfile
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import BinaryIO
 
-from botocore.exceptions import ClientError
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from ..core.settings import get_archive_settings
 

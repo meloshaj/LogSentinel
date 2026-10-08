@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from backend.app.core.orm import PasswordResetTokenRecord
 from backend.app.routers.auth_router import reset_password
 from backend.app.services.password_reset import (

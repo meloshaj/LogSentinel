@@ -4,7 +4,6 @@ import logging
 
 import httpx
 import pytest
-
 from backend.app.security.redaction import (
     MAX_SANITIZED_ERROR_LENGTH,
     sanitize_error_text,

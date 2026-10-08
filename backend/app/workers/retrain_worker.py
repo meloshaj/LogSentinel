@@ -12,10 +12,10 @@ from pathlib import Path
 import asyncpg
 
 from ..core.settings import get_database_settings
-from ..security.redaction import sanitize_error_text
 from ..ml.anomaly_detector import IsolationForestAnomalyDetector
 from ..ml.model_registry import promote_detector
 from ..models import FeatureVector
+from ..security.redaction import sanitize_error_text
 
 # Add backend directory to sys.path if running as a standalone script
 _worker_dir = Path(__file__).resolve().parent

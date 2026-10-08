@@ -6,8 +6,6 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
-
 from backend.app.core.orm import TenantMembershipRecord
 from backend.app.models import FeatureVector
 from backend.app.schemas.stream import StreamEnvelope
@@ -28,6 +26,7 @@ from backend.app.security.tenant_context import (
 )
 from backend.app.security.tenants import provision_external_identity, resolve_membership
 from backend.app.workers.drain_worker import DrainWorker
+from fastapi import HTTPException
 
 
 @pytest.mark.parametrize(

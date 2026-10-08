@@ -1,8 +1,8 @@
 """Serializer for Hot/Cold Storage Architecture."""
 
+import asyncio
 import hashlib
 import json
-import asyncio
 from typing import Any
 
 import pyarrow as pa

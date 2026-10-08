@@ -27,7 +27,7 @@ class DataScope:
         object.__setattr__(self, "owner_user_id", int(self.owner_user_id))
 
     @classmethod
-    def from_principal(cls, principal: Any) -> "DataScope":
+    def from_principal(cls, principal: Any) -> DataScope:
         return cls(
             tenant_id=str(principal.tenant_id),
             owner_user_id=int(principal.user_id),

@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
+from ..core.constants import LOG_STREAM_NAME
 from ..core.dependencies import get_redis_client
 from ..core.ingest_limits import (
     MAX_COMPRESSED_BODY_BYTES,
@@ -19,7 +20,6 @@ from ..core.ingest_limits import (
     validate_bounded_structure,
 )
 from ..core.rate_limit import limiter
-from ..core.constants import LOG_STREAM_NAME
 from ..schemas.otel import (
     ExportLogsPartialSuccess,
     ExportLogsServiceRequest,

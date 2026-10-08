@@ -20,7 +20,7 @@ from ..core.database import get_engine
 from ..core.settings import get_archive_settings
 from ..security.redaction import sanitize_error_text
 from ..security.tenant_context import TenantContext, get_tenant_context
-from .s3_client import get_s3_client, run_storage_io, read_object
+from .s3_client import get_s3_client, read_object, run_storage_io
 
 logger = logging.getLogger("logsentinel.archive.rehydration")
 
@@ -50,9 +50,7 @@ def _require_archive_role(tenant: TenantContext) -> None:
 
 
 def _request_key(tenant_id: str, owner_user_id: int, archive_ids: list[str]) -> str:
-    material = f"{tenant_id}:{owner_user_id}:{','.join(sorted(archive_ids))}".encode(
-        "utf-8"
-    )
+    material = f"{tenant_id}:{owner_user_id}:{','.join(sorted(archive_ids))}".encode()
     return hashlib.sha256(material).hexdigest()
 
 
@@ -101,7 +99,7 @@ async def _cleanup_failed_session(staging_table: str, reason: str) -> None:
 @router.post("/query", response_model=RehydrationResponse)
 async def rehydrate_archives(
     request: RehydrationRequest,
-    tenant: TenantContext = Depends(get_tenant_context),  # noqa: B008
+    tenant: TenantContext = Depends(get_tenant_context),
 ) -> RehydrationResponse:
     """Stream bounded Parquet data into a tenant-owned staging table."""
     _require_archive_role(tenant)

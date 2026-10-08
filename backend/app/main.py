@@ -91,12 +91,12 @@ from .security.auth import (
     JWT_SECRET_KEY,
     authenticate_token,
 )
+from .security.redaction import sanitize_error_text
 from .security.tenant_context import (
     TenantContext,
     get_tenant_context,
     require_permission,
 )
-from .security.redaction import sanitize_error_text
 from .security.tenants import resolve_membership
 from .services.auth_cache import AuthCacheUnavailableError
 from .services.batch_manager import ParsedLogBatchManager
@@ -806,7 +806,7 @@ def _tenant_id(current_user: Any) -> str:
 )
 async def get_recent_logs(
     limit: int = Query(500, le=1000),
-    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),
 ):
     """Fetch recent logs for dashboard backfill."""
     logs = await log_repository.get_recent_logs(  # type: ignore
@@ -827,7 +827,7 @@ async def get_logs_paginated(
     cursor: str | None = Query(None),
     service: str | None = None,
     level: str | None = None,
-    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),
 ):
     """Fetch paginated logs with optional filters."""
     if cursor is not None:
@@ -865,7 +865,7 @@ async def get_logs_paginated(
     },
 )
 async def get_topology(
-    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),
 ) -> TopologyResponse:
     """Return only the authenticated tenant's live topology snapshot."""
     tenant_id = _tenant_id(current_user)
@@ -958,7 +958,7 @@ async def get_worker_health(request: Request) -> dict[str, Any]:
 )
 async def get_tracking_loop_blast_radius(
     tracking_loop_id: int,
-    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),
 ) -> BlastRadiusRetrievalResponse:
     """Return a persisted blast-radius analysis for one tracking-loop record."""
     row = await tracking_repository.get_tracking_loop_by_id(  # type: ignore
@@ -1019,7 +1019,7 @@ def _derive_severity(anomaly_score: float) -> str:
 )
 async def list_active_tracking_loops(
     limit: int = 100,
-    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),
 ) -> list[dict]:
     """Return all active tracking loops for frontend backfill."""
     rows = await tracking_repository.get_active_tracking_loops(  # type: ignore
@@ -1060,7 +1060,7 @@ class IncidentStatusUpdate(BaseModel):
 @app.get("/api/v1/tracking-loops/{tracking_loop_id}", tags=["Analysis"])
 async def get_incident_detail(
     tracking_loop_id: int,
-    current_user: TenantContext = Depends(get_tenant_context),  # noqa: B008
+    current_user: TenantContext = Depends(get_tenant_context),
 ) -> dict:
     row = await tracking_repository.get_incident_detail(
         current_user.data_scope, tracking_loop_id
@@ -1074,7 +1074,7 @@ async def get_incident_detail(
 async def update_incident_status(
     tracking_loop_id: int,
     payload: IncidentStatusUpdate,
-    current_user: TenantContext = Depends(require_permission("incidents:write")),  # noqa: B008
+    current_user: TenantContext = Depends(require_permission("incidents:write")),
 ) -> dict:
     row = await tracking_repository.update_incident_status(
         scope=current_user.data_scope,

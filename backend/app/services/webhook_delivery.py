@@ -15,8 +15,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
-import httpx
 import httpcore
+import httpx
 from sqlalchemy import func, select, update
 
 from ..core.database import get_engine

@@ -4,18 +4,17 @@ import asyncio
 from datetime import datetime, timezone
 
 import pytest
-from fastapi import HTTPException
-
 from backend.app.core.ingest_limits import (
     bounded_gzip_decompress,
     validate_bounded_structure,
 )
-from backend.app.security.redaction import redact_value
 from backend.app.security.data_scope import DataScope
+from backend.app.security.redaction import redact_value
 from backend.app.services.runtime_dependency_parser import TraceObservation
 from backend.app.services.telemetry import telemetry_event
 from backend.app.services.topology_pipeline import NetworkXTopologyPipeline
 from backend.app.websockets.broadcaster import HighLoadBroadcaster
+from fastapi import HTTPException
 
 
 def observation(tenant_id: str, service: str) -> TraceObservation:

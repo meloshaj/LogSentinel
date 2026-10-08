@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import secrets
 import hashlib
+import secrets
 from datetime import datetime, timezone
 from typing import Annotated
 
@@ -12,15 +12,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.database import get_async_session
-from ..core.settings import get_ingestion_security_settings
 from ..core.orm import (
     IngestionApiKeyRecord,
     TenantMembershipRecord,
     TenantRecord,
     UserRecord,
 )
+from ..core.settings import get_ingestion_security_settings
 from .data_scope import DataScope
-
 
 REQUIRED_INGESTION_SCOPE = "logs:ingest"
 

@@ -1,4 +1,3 @@
-# ruff: noqa: SIM117
 """Integration tests for the authentication lifecycle.
 
 Tests cover:

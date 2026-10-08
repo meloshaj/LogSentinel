@@ -6,8 +6,8 @@ AsyncSession ORM adapter.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, select
@@ -20,8 +20,8 @@ from ..core.orm import (
     TenantMembershipRecord,
     UserRecord,
 )
-from ..security.tenants import provision_external_identity, provision_tenant
 from ..core.user_status import ACTIVE, PENDING_VERIFICATION
+from ..security.tenants import provision_external_identity, provision_tenant
 
 logger = logging.getLogger("logsentinel.user_repository")
 

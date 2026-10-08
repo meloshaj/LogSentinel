@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import inspect
 import hashlib
+import inspect
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,8 +9,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import jwt
 import pytest
-from fastapi import HTTPException, Request, Response
-
 from backend.app.core.orm import EmailOutboxRecord, RefreshTokenRecord
 from backend.app.routers import auth_router
 from backend.app.security.auth import (
@@ -23,6 +21,7 @@ from backend.app.security.auth import (
 )
 from backend.app.services.email_outbox import enqueue_email
 from backend.app.services.sessions import create_session, rotate_refresh_token
+from fastapi import HTTPException, Request, Response
 
 
 def test_access_jwt_has_required_claims_and_short_lifetime() -> None:

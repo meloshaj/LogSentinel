@@ -8,9 +8,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy import delete, insert, text, update
-from sqlalchemy.ext.asyncio import create_async_engine
-
 from backend.app.core.orm import TenantIntegrationRecord
 from backend.app.core.pipeline_orm import outbox
 from backend.app.services.durable_queue import (
@@ -24,6 +21,8 @@ from backend.app.services.webhook_delivery import (
     validate_webhook_url,
     webhook_payload,
 )
+from sqlalchemy import delete, insert, text, update
+from sqlalchemy.ext.asyncio import create_async_engine
 
 
 def test_webhook_success_and_retry_state_machine() -> None:

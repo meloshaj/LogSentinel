@@ -15,7 +15,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-
+from backend.app.core.pipeline_identity import (
+    feature_contribution_key,
+    feature_window_id,
+)
 from backend.app.ml.feature_extractor import SlidingWindowFeatureExtractor, WindowConfig
 from backend.app.models import FeatureVector, ParsedLog, PerformanceEvent
 from backend.app.observability.metrics import EVENT_QUEUE_DROPS_TOTAL
@@ -25,16 +28,11 @@ from backend.app.repositories.log_repository import (
     PersistResults,
     PersistStatus,
 )
-from backend.app.core.pipeline_identity import (
-    feature_contribution_key,
-    feature_window_id,
-)
 from backend.app.services.batch_manager import ParsedLogBatchManager
 from backend.app.services.durable_queue import DurableQueue
 from backend.app.workers.drain_worker import DrainWorker
 from backend.app.workers.event_manager import EventManager
 from backend.app.workers.feature_worker import FeatureExtractionWorker
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -343,9 +341,9 @@ async def test_feature_outbox_retries_after_handler_failure_and_completes_once()
             "INTEGRATION VERIFICATION REQUIRED: set LOGSENTINEL_RUN_DISTRIBUTED_INTEGRATION=1"
         )
 
+    from backend.app.core.pipeline_orm import outbox
     from sqlalchemy import delete, insert, select, update
     from sqlalchemy.ext.asyncio import create_async_engine
-    from backend.app.core.pipeline_orm import outbox
 
     engine = create_async_engine(os.environ["DATABASE_URL"])
     row_id = "rem05b-feature-retry"

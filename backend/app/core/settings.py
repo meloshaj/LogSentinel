@@ -140,10 +140,9 @@ class DatabaseSettings(BaseModel):
         default_factory=lambda: os.getenv("ENVIRONMENT", "development")
     )
     allow_insecure_tls: bool = Field(
-        default_factory=lambda: os.getenv(
-            "POSTGRES_ALLOW_INSECURE_TLS", "false"
-        ).lower()
-        == "true"
+        default_factory=lambda: (
+            os.getenv("POSTGRES_ALLOW_INSECURE_TLS", "false").lower() == "true"
+        )
     )
 
     @model_validator(mode="after")

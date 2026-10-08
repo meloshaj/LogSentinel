@@ -51,25 +51,18 @@ from sqlalchemy.exc import IntegrityError
 from ..core.database import AsyncSessionDep
 from ..core.email_identity import canonicalize_email
 from ..core.orm import IngestionApiKeyRecord, UserRecord
+from ..core.rate_limit import limiter
 from ..core.settings import (
     get_email_verification_settings,
     get_github_auth_settings,
     get_microsoft_auth_settings,
     get_password_reset_settings,
 )
-from ..core.rate_limit import limiter
 from ..core.user_status import ACTIVE, PENDING_VERIFICATION, SUSPENDED
 from ..repositories.account_repository import AccountRepository
 from ..repositories.external_identity_repository import ExternalIdentityRepository
 from ..repositories.user_repository import UserRepository
 from ..security.auth import create_access_token
-from ..security.redaction import sanitize_error_text
-from ..security.tenant_context import (
-    TenantContext,
-    get_tenant_context,
-    require_permission,
-)
-from ..security.tenants import resolve_provider_tenant_mapping
 from ..security.microsoft_auth import (
     InvalidMicrosoftTenantError,
     InvalidMicrosoftTokenError,
@@ -79,16 +72,16 @@ from ..security.microsoft_auth import (
     MicrosoftTokenVerifier,
     MissingRequiredScopeError,
 )
+from ..security.redaction import sanitize_error_text
+from ..security.tenant_context import (
+    TenantContext,
+    get_tenant_context,
+    require_permission,
+)
+from ..security.tenants import resolve_provider_tenant_mapping
 from ..services.auth_cache import AuthCacheManager
 from ..services.email import send_verification_email as _send_verification_email
 from ..services.email_outbox import enqueue_email
-from ..services.sessions import (
-    CSRF_COOKIE_NAME,
-    REFRESH_COOKIE_NAME,
-    create_session,
-    revoke_session,
-    rotate_refresh_token,
-)
 from ..services.password import (
     bounded_hash_password,
     bounded_verify_password,
@@ -103,6 +96,13 @@ from ..services.password_reset import (
     complete_password_reset,
     digest_reset_token,
     issue_password_reset,
+)
+from ..services.sessions import (
+    CSRF_COOKIE_NAME,
+    REFRESH_COOKIE_NAME,
+    create_session,
+    revoke_session,
+    rotate_refresh_token,
 )
 
 logger = logging.getLogger("logsentinel.auth_router")

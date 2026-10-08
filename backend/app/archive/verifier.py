@@ -6,8 +6,8 @@ import tempfile
 
 import pyarrow.parquet as pq
 
-from .s3_client import S3StorageClient, run_storage_io
 from ..core.settings import get_archive_settings
+from .s3_client import S3StorageClient, run_storage_io
 
 logger = logging.getLogger("logsentinel.archive.verifier")
 
