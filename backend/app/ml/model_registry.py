@@ -64,9 +64,7 @@ def configured_artifact_store(base_path: str | Path) -> ModelArtifactStore:
 
 
 def tenant_hash(tenant_id: str, owner_user_id: int) -> str:
-    return hashlib.sha256(f"{tenant_id}:{owner_user_id}".encode()).hexdigest()[
-        :32
-    ]
+    return hashlib.sha256(f"{tenant_id}:{owner_user_id}".encode()).hexdigest()[:32]
 
 
 def _checksum(path: Path) -> str:

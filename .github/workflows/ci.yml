@@ -251,7 +251,8 @@ jobs:
         run: docker run --rm -v "$PWD:/work" -w /work alpine/helm@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895 lint deploy/helm/logsentinel # 3.17.3; multi-arch OCI index; runner selects amd64
       - name: Helm template with representative safe values
         run: >-
-          docker run --rm -v "$PWD:/work" -w /work alpine/helm@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895 template logsentinel deploy/helm/logsentinel # 3.17.3; multi-arch OCI index; runner selects amd64
+          # 3.17.3; multi-arch OCI index; runner selects amd64
+          docker run --rm -v "$PWD:/work" -w /work alpine/helm@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895 template logsentinel deploy/helm/logsentinel
           --set env.redisHost=valkey --set env.postgresHost=postgres
           --set image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           --set secret.existingSecret=logsentinel-secrets
