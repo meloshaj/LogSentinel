@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router";
@@ -432,18 +432,18 @@ describe("LoginPage", () => {
   );
 
   it("navigates only after a successful login completes", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ access_token: "internal-jwt" })));
     renderLogin();
     enterCredentials("user@example.com", "password1");
 
     fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
-    await vi.waitFor(() =>
-      expect(screen.getByText("Signed in successfully")).toBeInTheDocument(),
-    );
+    await screen.findByText("Signed in successfully");
     expect(testState.navigate).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(1000);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
     expect(testState.navigate).toHaveBeenCalledWith("/");
   });
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor, act, cleanup } from "@testing-library/react";
 import { TelemetryProvider, useTelemetryContext, deduplicateAndMerge } from "../TelemetryProvider";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import type { LogEntry } from "../../types/monitoring";
@@ -41,6 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   vi.runOnlyPendingTimers();
   vi.useRealTimers();
   vi.restoreAllMocks();
