@@ -245,7 +245,7 @@ def _safe_test_env(source_root: Path) -> dict[str, str]:
             "LOGSENTINEL_RUN_DISTRIBUTED_INTEGRATION": "1",
             "REDIS_URL": "redis://127.0.0.1:16379/0",
             "JWT_SECRET_KEY": "release-gate-test-only-jwt-secret-32-characters",
-            "ENCRYPTION_KEY": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
+            "ENCRYPTION_KEY": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
         }
     )
     return env
@@ -274,7 +274,7 @@ def _compose_env() -> dict[str, str]:
             "IMAGE_TAG": "release-gate-validation",
             "POSTGRES_PASSWORD": "release-gate-local-only",
             "JWT_SECRET_KEY": "release-gate-validation-jwt-secret-32-characters",
-            "ENCRYPTION_KEY": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
+            "ENCRYPTION_KEY": "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=",
             "INGEST_API_KEYS": "release-gate-local-only",
             "METRICS_TOKEN": "release-gate-local-only",
             "SMTP_HOST": "smtp.invalid",

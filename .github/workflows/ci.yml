@@ -87,7 +87,7 @@ jobs:
           ENVIRONMENT: test
           TEST_MODE: 'true'
           JWT_SECRET_KEY: test-only-ci-jwt-secret-32-characters-minimum
-          ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+          ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
         run: python scripts/database_lifecycle.py --ensure
       - name: Backend tests
         env:
@@ -105,7 +105,7 @@ jobs:
           ENVIRONMENT: test
           TEST_MODE: 'true'
           JWT_SECRET_KEY: test-only-ci-jwt-secret-32-characters-minimum
-          ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+          ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
         run: |
           pytest -q backend/tests
           pytest -q tests
@@ -185,7 +185,7 @@ jobs:
           ENVIRONMENT: test
           TEST_MODE: 'true'
           JWT_SECRET_KEY: test-only-ci-jwt-secret-32-characters-minimum
-          ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+          ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
         run: |
           python scripts/database_lifecycle.py --ensure
           python scripts/database_lifecycle.py --ensure
@@ -225,7 +225,7 @@ jobs:
       IMAGE_TAG: ci-${{ github.sha }}
       POSTGRES_PASSWORD: ci-postgres-password
       JWT_SECRET_KEY: ci-jwt-secret-32-characters-minimum
-      ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+      ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
       INGEST_API_KEYS: ci-ingest-key
       METRICS_TOKEN: ci-metrics-token
       SMTP_HOST: smtp.invalid
