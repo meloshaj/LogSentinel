@@ -21,6 +21,14 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
+try:
+    import fastapi
+    import pydantic
+    HAS_BACKEND = True
+except ImportError:
+    HAS_BACKEND = False
+
+
 # Mock redis.StrictRedis at import time to prevent Drain3 from hanging during pytest collection
 class MockRedisImport:
     def ping(self): pass
@@ -34,29 +42,30 @@ try:
 except ImportError:
     HAS_REDIS = False
 
-from backend.app.models import ParsedLog
+if HAS_BACKEND:
+    from backend.app.models import ParsedLog
 
-@pytest.fixture
-def make_parsed_log():
-    def _make_parsed_log(**overrides) -> ParsedLog:
-        default_data = {
-            "id": str(uuid.uuid4()),
-            "tenant_id": "tenant-test",
-            "owner_user_id": 101,
-            "service": "auth-service",
-            "level": "INFO",
-            "raw_message": "User authenticated successfully",
-            "template_id": "E12",
-            "template_text": "User authenticated successfully",
-            "created_at": datetime.now(timezone.utc),
-            "timestamp": datetime.now(timezone.utc),
-            "parameters": [{"value": "user_123", "mask_name": "ID"}],
-            "correlation_id": None,
-            "metadata": {}
-        }
-        default_data.update(overrides)
-        return ParsedLog(**default_data)
-    return _make_parsed_log
+    @pytest.fixture
+    def make_parsed_log():
+        def _make_parsed_log(**overrides):
+            default_data = {
+                "id": str(uuid.uuid4()),
+                "tenant_id": "tenant-test",
+                "owner_user_id": 101,
+                "service": "auth-service",
+                "level": "INFO",
+                "raw_message": "User authenticated successfully",
+                "template_id": "E12",
+                "template_text": "User authenticated successfully",
+                "created_at": datetime.now(timezone.utc),
+                "timestamp": datetime.now(timezone.utc),
+                "parameters": [{"value": "user_123", "mask_name": "ID"}],
+                "correlation_id": None,
+                "metadata": {}
+            }
+            default_data.update(overrides)
+            return ParsedLog(**default_data)
+        return _make_parsed_log
 
 from unittest.mock import patch, AsyncMock
 
@@ -89,11 +98,7 @@ def mock_redis_globally():
                 yield
 
 
-try:
-    import fastapi
-    HAS_BACKEND = True
-except ImportError:
-    HAS_BACKEND = False
+
 
 @pytest.fixture(autouse=True)
 def mock_auth_cache():
