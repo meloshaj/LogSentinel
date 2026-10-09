@@ -304,7 +304,7 @@ class WebhookDeliveryWorker:
     def start(self) -> None:
         if self._task and not self._task.done():
             return
-        self._stop.clear()
+        self._stop = asyncio.Event()
         self._task = asyncio.create_task(self.run(), name="webhook-outbox-worker")
 
     async def stop(self, timeout: float = 15.0) -> None:
