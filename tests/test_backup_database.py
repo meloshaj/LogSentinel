@@ -252,7 +252,7 @@ def client(*args, **kwargs):
     )
     backup_environment.update(
         {
-            "PYTHONPATH": str(module_dir),
+            "PYTHONPATH": f"{module_dir}{os.pathsep}{Path.cwd()}",
             "S3_BACKUP_BUCKET": "approved-backup-bucket",
             "S3_BUCKET_NAME": "archive-bucket-must-not-win",
             "S3_REGION": "us-east-1",
@@ -291,7 +291,7 @@ def client(*args, **kwargs):
     )
     backup_environment.update(
         {
-            "PYTHONPATH": str(module_dir),
+            "PYTHONPATH": f"{module_dir}{os.pathsep}{Path.cwd()}",
             "S3_BUCKET": "approved-backup-bucket",
             "S3_REGION": "us-east-1",
             "REQUIRE_REMOTE_BACKUP": "true",
@@ -335,7 +335,7 @@ def client(*args, **kwargs):
     )
     backup_environment.update(
         {
-            "PYTHONPATH": str(module_dir),
+            "PYTHONPATH": f"{module_dir}{os.pathsep}{Path.cwd()}",
             "S3_BUCKET": "approved-backup-bucket",
             "S3_REGION": "us-east-1",
             "REQUIRE_REMOTE_BACKUP": "true",

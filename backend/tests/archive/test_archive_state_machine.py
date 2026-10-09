@@ -1,4 +1,5 @@
 import hashlib
+from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -6,8 +7,8 @@ from backend.app.archive.s3_client import LocalMockStorageClient
 from backend.app.archive.verifier import ArchiveVerifier
 
 
-def test_mock_storage_client():
-    client = LocalMockStorageClient(base_dir="/tmp/test_archive_mock")
+def test_mock_storage_client(tmp_path: Path):
+    client = LocalMockStorageClient(base_dir=str(tmp_path / "test_archive_mock"))
 
     # Test put
     assert client.put_if_absent("test/obj.txt", b"hello world")
@@ -29,8 +30,8 @@ def test_mock_storage_client():
     assert client.head("test/obj.txt") is None
 
 
-def test_verifier():
-    client = LocalMockStorageClient(base_dir="/tmp/test_archive_mock2")
+def test_verifier(tmp_path: Path):
+    client = LocalMockStorageClient(base_dir=str(tmp_path / "test_archive_mock2"))
     verifier = ArchiveVerifier(client)
 
     # Create valid parquet
