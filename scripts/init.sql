@@ -679,18 +679,4 @@ VALUES (
 )
 ON CONFLICT (version) DO NOTHING;
 
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260826_0002_archive_manifest', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260831_0001_auth_lifecycle', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260907_0001_archive_rehydration_sessions', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260907_0002_ingestion_api_keys', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260907_0003_archive_security_and_model_registry', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260911_0004_legacy_logsentinel_tenant_bridge', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260911_0005_distributed_correctness', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260911_0006_durable_webhook_delivery', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260912_0007_application_release_gates', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260912_0008_tenant_authority', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260912_0009_pipeline_feature_durability', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260913_0010_per_user_data_ownership', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-INSERT INTO schema_migrations (version, checksum, description) VALUES ('20260917_0011_password_reset_atomicity', NULL, 'Included in the canonical bootstrap') ON CONFLICT (version) DO NOTHING;
-
 COMMIT;

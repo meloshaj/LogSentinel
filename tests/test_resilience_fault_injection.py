@@ -175,7 +175,16 @@ async def _create_temporary_database() -> PgConnectionSettings:
     finally:
         await connection.close()
 
-    return base.with_database(database_name)
+    test_db_settings = base.with_database(database_name)
+    from scripts.database_lifecycle import bootstrap_database
+
+    test_conn = await asyncpg.connect(**test_db_settings.asyncpg_kwargs())
+    try:
+        await bootstrap_database(test_conn)
+    finally:
+        await test_conn.close()
+
+    return test_db_settings
 
 
 async def _drop_temporary_database(settings: PgConnectionSettings) -> None:
