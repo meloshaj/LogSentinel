@@ -26,7 +26,13 @@ class MockRedisImport:
     def ping(self): pass
     def get(self, *args, **kwargs): return None
     def set(self, *args, **kwargs): pass
-patch("redis.StrictRedis", return_value=MockRedisImport()).start()
+
+try:
+    import redis
+    HAS_REDIS = True
+    patch("redis.StrictRedis", return_value=MockRedisImport()).start()
+except ImportError:
+    HAS_REDIS = False
 
 from backend.app.models import ParsedLog
 
@@ -58,6 +64,9 @@ from unittest.mock import patch, AsyncMock
 def mock_redis_globally():
     """Mock Redis initialization globally to prevent tests from trying to connect to a real Redis server
     during the FastAPI lifespan event."""
+    if not HAS_REDIS:
+        yield
+        return
     
     class MockRedisPipeline:
         def xadd(self, *args, **kwargs): pass
@@ -80,9 +89,18 @@ def mock_redis_globally():
                 yield
 
 
+try:
+    import fastapi
+    HAS_BACKEND = True
+except ImportError:
+    HAS_BACKEND = False
+
 @pytest.fixture(autouse=True)
 def mock_auth_cache():
     """Keep route tests independent of an external Valkey instance."""
+    if not HAS_BACKEND:
+        yield
+        return
     cache = AsyncMock()
     cache.reserve_resend_cooldown.return_value = True
     cache.store_verification_code.return_value = None
@@ -96,6 +114,9 @@ def mock_auth_cache():
 @pytest.fixture(autouse=True)
 def mock_auth_email_dispatch():
     """Prevent route unit tests from contacting a real SMTP server."""
+    if not HAS_BACKEND:
+        yield
+        return
     with patch(
         "backend.app.routers.auth_router.send_verification_email",
         new_callable=AsyncMock,
