@@ -223,7 +223,10 @@ async def resolve_tenant_destination(
     destination_id: str | None = None,
 ) -> tuple[str, str]:
     """Resolve only an enabled destination owned by the supplied user."""
-    query = select(TenantIntegrationRecord).where(
+    query = select(
+        TenantIntegrationRecord.id,
+        TenantIntegrationRecord.destination_url
+    ).where(
         TenantIntegrationRecord.tenant_id == tenant_id,
         TenantIntegrationRecord.owner_user_id == owner_user_id,
         TenantIntegrationRecord.provider == provider,
@@ -231,10 +234,10 @@ async def resolve_tenant_destination(
     )
     if destination_id:
         query = query.where(TenantIntegrationRecord.id == int(destination_id))
-    row = (await conn.execute(query)).scalars().first()
+    row = (await conn.execute(query)).mappings().first()
     if row is None:
         raise PermanentDeliveryError("tenant_destination_not_configured")
-    return str(row.id), await validate_webhook_url_async(row.destination_url)
+    return str(row["id"]), await validate_webhook_url_async(row["destination_url"])
 
 
 def webhook_payload(
