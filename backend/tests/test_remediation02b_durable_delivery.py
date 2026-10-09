@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from backend.app.core.orm import TenantIntegrationRecord
+from backend.app.core.orm import TenantIntegrationRecord, UserRecord
 from backend.app.core.pipeline_orm import outbox
 from backend.app.services.durable_queue import (
     classify_http_status,
@@ -152,8 +152,13 @@ async def test_outbox_webhook_delivery_tenant_isolation() -> None:
                 )
             )
             await conn.execute(
-                text(
-                    "DELETE FROM tenant_integrations WHERE tenant_id IN ('tenant-a','tenant-b')"
+                delete(TenantIntegrationRecord.__table__).where(
+                    TenantIntegrationRecord.tenant_id.in_(["tenant-a", "tenant-b"])
+                )
+            )
+            await conn.execute(
+                delete(UserRecord.__table__).where(
+                    UserRecord.tenant_id.in_(["tenant-a", "tenant-b"])
                 )
             )
             await conn.execute(
@@ -164,17 +169,35 @@ async def test_outbox_webhook_delivery_tenant_isolation() -> None:
                     "INSERT INTO tenants(id,name) VALUES ('tenant-a','A'),('tenant-b','B')"
                 )
             )
+            user_a_id = await conn.scalar(
+                insert(UserRecord)
+                .values(
+                    email="user-a-webhook@example.test",
+                    tenant_id="tenant-a",
+                )
+                .returning(UserRecord.id)
+            )
+            user_b_id = await conn.scalar(
+                insert(UserRecord)
+                .values(
+                    email="user-b-webhook@example.test",
+                    tenant_id="tenant-b",
+                )
+                .returning(UserRecord.id)
+            )
             await conn.execute(
                 insert(TenantIntegrationRecord),
                 [
                     {
                         "tenant_id": "tenant-a",
+                        "owner_user_id": user_a_id,
                         "provider": "slack",
                         "destination_url": "https://1.1.1.1/a",
                         "enabled": True,
                     },
                     {
                         "tenant_id": "tenant-b",
+                        "owner_user_id": user_b_id,
                         "provider": "slack",
                         "destination_url": "https://1.1.1.1/b",
                         "enabled": True,
@@ -187,6 +210,7 @@ async def test_outbox_webhook_delivery_tenant_isolation() -> None:
                     {
                         "id": ids[0],
                         "tenant_id": "tenant-a",
+                        "owner_user_id": user_a_id,
                         "topic": "webhook",
                         "dedup_key": ids[0],
                         "payload": {"provider": "slack", "incident_id": "same-root"},
@@ -195,6 +219,7 @@ async def test_outbox_webhook_delivery_tenant_isolation() -> None:
                     {
                         "id": ids[1],
                         "tenant_id": "tenant-b",
+                        "owner_user_id": user_b_id,
                         "topic": "webhook",
                         "dedup_key": ids[1],
                         "payload": {"provider": "slack", "incident_id": "same-root"},
@@ -217,6 +242,11 @@ async def test_outbox_webhook_delivery_tenant_isolation() -> None:
             await conn.execute(
                 delete(TenantIntegrationRecord.__table__).where(
                     TenantIntegrationRecord.tenant_id.in_(["tenant-a", "tenant-b"])
+                )
+            )
+            await conn.execute(
+                delete(UserRecord.__table__).where(
+                    UserRecord.tenant_id.in_(["tenant-a", "tenant-b"])
                 )
             )
             await conn.execute(

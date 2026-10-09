@@ -304,19 +304,40 @@ CREATE TABLE IF NOT EXISTS users (
     CONSTRAINT ck_users_role CHECK (role IN ('viewer', 'operator', 'admin'))
 );
 
-ALTER TABLE logs ADD CONSTRAINT fk_logs_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
-ALTER TABLE incidents ADD CONSTRAINT fk_incidents_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
-ALTER TABLE feature_windows ADD CONSTRAINT fk_feature_windows_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
-ALTER TABLE anomaly_events ADD CONSTRAINT fk_anomaly_events_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
-ALTER TABLE tracking_loops ADD CONSTRAINT fk_tracking_loops_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_logs_owner_user') THEN
+        ALTER TABLE logs ADD CONSTRAINT fk_logs_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_incidents_owner_user') THEN
+        ALTER TABLE incidents ADD CONSTRAINT fk_incidents_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_feature_windows_owner_user') THEN
+        ALTER TABLE feature_windows ADD CONSTRAINT fk_feature_windows_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_anomaly_events_owner_user') THEN
+        ALTER TABLE anomaly_events ADD CONSTRAINT fk_anomaly_events_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_tracking_loops_owner_user') THEN
+        ALTER TABLE tracking_loops ADD CONSTRAINT fk_tracking_loops_owner_user FOREIGN KEY (owner_user_id) REFERENCES users(id);
+    END IF;
+END $$;
 
 -- Enable compression only after all owner foreign keys and schema columns are
 -- present; TimescaleDB blocks ALTER TABLE ownership DDL once enabled.
-ALTER TABLE logs SET (
-    timescaledb.compress = true,
-    timescaledb.compress_segmentby = 'tenant_id, owner_user_id, service',
-    timescaledb.compress_orderby = 'timestamp DESC'
-);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM timescaledb_information.hypertables
+        WHERE hypertable_name = 'logs' AND compression_enabled = true
+    ) THEN
+        ALTER TABLE logs SET (
+            timescaledb.compress = true,
+            timescaledb.compress_segmentby = 'tenant_id, owner_user_id, service',
+            timescaledb.compress_orderby = 'timestamp DESC'
+        );
+    END IF;
+END $$;
 SELECT add_compression_policy('logs', INTERVAL '7 days', if_not_exists => TRUE);
 
 -- Ensure hashed_password allows NULL for Google SSO users on pre-existing DB volumes

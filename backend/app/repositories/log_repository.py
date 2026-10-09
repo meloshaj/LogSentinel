@@ -371,8 +371,8 @@ class LogRepository:
     async def get_recent_correlation_evidence(
         self,
         *,
-        tenant_id: str,
-        owner_user_id: int,
+        tenant_id: str | None = None,
+        owner_user_id: int | None = None,
         start_time: datetime,
         end_time: datetime,
         services: Sequence[str] | None = None,
@@ -381,14 +381,16 @@ class LogRepository:
     ) -> list[dict[str, Any]]:
         """Return bounded recent log rows needed for service/trace evidence."""
         conditions = [
-            logs_table.c.tenant_id == tenant_id,
-            logs_table.c.owner_user_id == owner_user_id,
             logs_table.c.timestamp >= start_time,
             logs_table.c.timestamp <= end_time,
             # Mandatory chunk-exclusion filter for TimescaleDB
             logs_table.c.ingested_at >= start_time,
             logs_table.c.ingested_at <= end_time,
         ]
+        if tenant_id is not None:
+            conditions.append(logs_table.c.tenant_id == tenant_id)
+        if owner_user_id is not None:
+            conditions.append(logs_table.c.owner_user_id == owner_user_id)
         cleaned_services = sorted({service for service in services or [] if service})
         cleaned_correlation_ids = sorted(
             {
@@ -468,7 +470,7 @@ class LogRepository:
             return result.rowcount > 0
 
     async def get_recent_logs(
-        self, scope: DataScope, limit: int = 500
+        self, scope: DataScope | None = None, limit: int = 500
     ) -> list[dict[str, Any]]:
         """Return the most recent logs for backfilling the UI."""
         stmt = (
@@ -482,13 +484,14 @@ class LogRepository:
                 logs_table.c.template_text,
                 logs_table.c.metadata,
             )
-            .where(
-                logs_table.c.tenant_id == scope.tenant_id,
-                logs_table.c.owner_user_id == scope.owner_user_id,
-            )
             .order_by(logs_table.c.ingested_at.desc())
             .limit(limit)
         )
+        if scope is not None:
+            stmt = stmt.where(
+                logs_table.c.tenant_id == scope.tenant_id,
+                logs_table.c.owner_user_id == scope.owner_user_id,
+            )
 
         async with self.engine.connect() as conn:
             result = await conn.execute(stmt)
