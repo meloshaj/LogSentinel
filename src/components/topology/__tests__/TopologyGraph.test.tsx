@@ -1,18 +1,36 @@
 import React from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+import type { OperationalDataState } from "../../../types/operational";
 
 // ---------------------------------------------------------------------------
 // Mock useTopology
 // ---------------------------------------------------------------------------
 
 const mockRefresh = vi.fn();
-let mockTopologyReturn = {
+type MockTopologyReturn = {
+  nodes: any[];
+  edges: any[];
+  updatedAt: string | null;
+  isLoading: boolean;
+  error: string | null;
+  dataState: OperationalDataState<unknown>;
+  refresh: typeof mockRefresh;
+};
+
+let mockTopologyReturn: MockTopologyReturn = {
   nodes: [] as any[],
   edges: [] as any[],
   updatedAt: "2026-08-05T12:00:00Z",
   isLoading: false,
   error: null as string | null,
+  dataState: {
+    status: "empty" as const,
+    data: null,
+    lastUpdated: "2026-08-05T12:00:00Z",
+    source: "test",
+    error: null,
+  },
   refresh: mockRefresh,
 };
 
@@ -83,6 +101,13 @@ beforeEach(() => {
     updatedAt: "2026-08-05T12:00:00Z",
     isLoading: false,
     error: null,
+    dataState: {
+      status: "empty",
+      data: null,
+      lastUpdated: "2026-08-05T12:00:00Z",
+      source: "test",
+      error: null,
+    },
     refresh: mockRefresh,
   };
 });
@@ -116,6 +141,13 @@ describe("ServiceTopologyGraph", () => {
       ...mockTopologyReturn,
       nodes: SAMPLE_NODES,
       edges: SAMPLE_EDGES,
+      dataState: {
+        status: "available",
+        data: {},
+        lastUpdated: "2026-08-05T12:00:00Z",
+        source: "test",
+        error: null,
+      },
     };
 
     render(<ServiceTopologyGraph mode="full" />);
@@ -129,6 +161,13 @@ describe("ServiceTopologyGraph", () => {
       ...mockTopologyReturn,
       nodes: SAMPLE_NODES,
       edges: SAMPLE_EDGES,
+      dataState: {
+        status: "available",
+        data: {},
+        lastUpdated: "2026-08-05T12:00:00Z",
+        source: "test",
+        error: null,
+      },
     };
 
     const { rerender } = render(<ServiceTopologyGraph mode="full" />);
@@ -180,6 +219,13 @@ describe("ServiceTopologyGraph", () => {
       edges: [],
       isLoading: false,
       error: "HTTP 500: Internal Server Error",
+      dataState: {
+        status: "error",
+        data: null,
+        lastUpdated: null,
+        source: "test",
+        error: "HTTP 500: Internal Server Error",
+      },
     };
 
     render(<ServiceTopologyGraph mode="full" />);
@@ -187,7 +233,7 @@ describe("ServiceTopologyGraph", () => {
     // Error alert should render
     const errorEl = screen.getByTestId("topology-error");
     expect(errorEl).toBeDefined();
-    expect(errorEl.textContent).toContain("HTTP 500");
+    expect(errorEl.textContent).not.toContain("HTTP 500");
     expect(errorEl.textContent).toContain("Failed to load service topology");
   });
 
@@ -196,6 +242,13 @@ describe("ServiceTopologyGraph", () => {
       ...mockTopologyReturn,
       nodes: SAMPLE_NODES,
       edges: SAMPLE_EDGES,
+      dataState: {
+        status: "available",
+        data: {},
+        lastUpdated: "2026-08-05T12:00:00Z",
+        source: "test",
+        error: null,
+      },
     };
 
     const { rerender } = render(<ServiceTopologyGraph mode="full" />);
@@ -223,6 +276,13 @@ describe("ServiceTopologyGraph", () => {
       ...mockTopologyReturn,
       nodes: SAMPLE_NODES,
       edges: SAMPLE_EDGES,
+      dataState: {
+        status: "available",
+        data: {},
+        lastUpdated: "2026-08-05T12:00:00Z",
+        source: "test",
+        error: null,
+      },
     };
 
     render(<ServiceTopologyGraph mode="compact" />);

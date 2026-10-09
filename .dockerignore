@@ -11,3 +11,14 @@ yarn-debug.log*
 yarn-error.log*
 Dockerfile
 docker-compose.yml
+temporary-report
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/htmlcov
+**/.coverage*
+backend/tests
+tests
+presentation

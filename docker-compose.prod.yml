@@ -1,27 +1,92 @@
-version: '3.8'
+# Single-host production-like deployment. Local volumes are not HA or off-site backups.
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: backend/Dockerfile
+
+x-backend-environment: &backend-environment
+  ENVIRONMENT: production
+  RUN_EMBEDDED_WORKERS: "false"
+  RUN_WEBHOOK_WORKER_IN_LIFESPAN: "false"
+  RUN_ARCHIVE_WORKER_IN_LIFESPAN: "false"
+  METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN must be set for internal monitoring}
+  POSTGRES_USER: ${POSTGRES_USER:-logsentinel}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
+  POSTGRES_HOST: timescaledb
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-logsentinel_db}
+  POSTGRES_SSL_MODE: ${POSTGRES_SSL_MODE:-disable}
+  # The bundled same-host database does not terminate TLS. This named,
+  # explicit exception must not be copied to managed/external DB deployments.
+  POSTGRES_ALLOW_INSECURE_TLS: "true"
+  REDIS_URL: redis://valkey:6379/0
+  INGEST_API_KEYS: ${INGEST_API_KEYS:?INGEST_API_KEYS must be set}
+  LOG_STREAM_NAME: ${LOG_STREAM_NAME:-logs:stream}
+  LOG_WORKERS_GROUP: ${LOG_WORKERS_GROUP:-log_workers}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in production}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
+  FRONTEND_URL: ${FRONTEND_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}
+
+x-email-environment: &email-environment
+  SMTP_HOST: ${SMTP_HOST:?SMTP_HOST must be set in production}
+  SMTP_PORT: ${SMTP_PORT:?SMTP_PORT must be set in production}
+  SMTP_USER: ${SMTP_USER:?SMTP_USER must be set in production}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD must be set in production}
+  EMAILS_FROM_EMAIL: ${EMAILS_FROM_EMAIL:?EMAILS_FROM_EMAIL must be set in production}
 
 services:
   timescaledb:
-    image: timescale/timescaledb:2.17.2-pg16
-    container_name: logsentinel_postgres_prod
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+    image: logsentinel-postgres:${IMAGE_TAG:?IMAGE_TAG must be an immutable git SHA}
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_timeout=300s
+      - -c
+      - 'archive_command=/usr/local/bin/logsentinel-wal-archive.sh "%p" "%f"'
+      - -c
+      - max_wal_size=1GB
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - max_wal_senders=2
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    mem_limit: 2g
+    cpus: "${POSTGRES_CPUS:-0.75}"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-logsentinel}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
       POSTGRES_DB: ${POSTGRES_DB:-logsentinel_db}
-    # No ports exposed to host in production
+      ENVIRONMENT: production
+      PITR_REQUIRE_CREDENTIALS: "true"
+      S3_WAL_BUCKET: ${S3_WAL_BUCKET:-}
+      S3_WAL_ENDPOINT: ${S3_WAL_ENDPOINT:-}
+      S3_WAL_REGION: ${S3_WAL_REGION:-}
+      S3_WAL_PREFIX: ${S3_WAL_PREFIX:-logsentinel/wal/}
+      S3_WAL_ACCESS_KEY_ID: ${S3_WAL_ACCESS_KEY_ID:-}
+      S3_WAL_SECRET_ACCESS_KEY: ${S3_WAL_SECRET_ACCESS_KEY:-}
+      S3_BACKUP_BUCKET: ${S3_BACKUP_BUCKET:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_SERVER_SIDE_ENCRYPTION: ${S3_SERVER_SIDE_ENCRYPTION:-AES256}
     volumes:
       - timescale_data:/var/lib/postgresql/data
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    command:
-      - "postgres"
-      - "-c"
-      - "shared_buffers=512MB"
-      - "-c"
-      - "work_mem=16MB"
-      - "-c"
-      - "maintenance_work_mem=128MB"
-      - "-c"
-      - "effective_cache_size=1536MB"
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logsentinel} -d ${POSTGRES_DB:-logsentinel_db}"]
       interval: 5s
@@ -31,10 +96,10 @@ services:
     restart: unless-stopped
 
   valkey:
-    image: valkey/valkey:8.0-alpine
-    container_name: logsentinel_valkey_prod
+    image: valkey/valkey:8.0.2-alpine
+    mem_limit: 768m
+    cpus: 1.0
     command: ["valkey-server", "--save", "60", "1", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes", "--appendfsync", "everysec"]
-    # No ports exposed to host in production
     volumes:
       - valkey_data:/data
     healthcheck:
@@ -46,103 +111,184 @@ services:
     restart: unless-stopped
 
   db-migrator:
-    build:
-      context: ./backend
-    image: logsentinel-backend:prod
-    command: ["python", "/repo/scripts/database_lifecycle.py", "--apply"]
+    build: *backend-build
+    image: logsentinel-backend:${IMAGE_TAG:?IMAGE_TAG must be an immutable git SHA}
+    command: ["python", "/repo/scripts/database_lifecycle.py", "--ensure"]
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
-      - POSTGRES_HOST=timescaledb
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
-    volumes:
-      - .:/repo:ro
-    working_dir: /repo
+      <<: *backend-environment
+      PYTHONPATH: /app
     depends_on:
       timescaledb:
         condition: service_healthy
+    restart: "no"
 
   backend:
-    build:
-      context: ./backend
-    image: logsentinel-backend:prod
+    build: *backend-build
+    image: logsentinel-backend:${IMAGE_TAG:?IMAGE_TAG must be an immutable git SHA}
+    mem_limit: 2g
+    cpus: "${API_CPUS:-0.75}"
     environment:
-      - ENVIRONMENT=production
-      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
-      - POSTGRES_HOST=timescaledb
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
-      - REDIS_URL=redis://valkey:6379/0
-      - INGEST_API_KEYS=${INGEST_API_KEYS:?INGEST_API_KEYS must be set}
-      - LOG_STREAM_NAME=logs:stream
-      - LOG_WORKERS_GROUP=log_workers
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in production}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
-      - FRONTEND_URL=${FRONTEND_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}
-      - RUN_ARCHIVE_WORKER_IN_LIFESPAN=false
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
-      - GITHUB_CALLBACK_URL=${GITHUB_CALLBACK_URL:-}
-      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID:-}
-      - AZURE_TENANT_ID=${AZURE_TENANT_ID:-}
-      - AZURE_REQUIRED_SCOPE=${AZURE_REQUIRED_SCOPE:-access_as_user}
-      - AZURE_ALLOWED_TENANTS=${AZURE_ALLOWED_TENANTS:-}
-      - AZURE_JWKS_TIMEOUT=${AZURE_JWKS_TIMEOUT:-5.0}
-      - AZURE_JWKS_CACHE_TTL=${AZURE_JWKS_CACHE_TTL:-3600}
-    volumes:
-      - drain_data:/app/app/state
+      <<: [*backend-environment, *email-environment]
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+      AZURE_REQUIRED_SCOPE: ${AZURE_REQUIRED_SCOPE:-access_as_user}
+      AZURE_ALLOWED_TENANTS: ${AZURE_ALLOWED_TENANTS:-}
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readiness', timeout=3)"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 15s
+      retries: 6
+      start_period: 30s
     depends_on:
-      timescaledb:
-        condition: service_healthy
       db-migrator:
         condition: service_completed_successfully
       valkey:
         condition: service_healthy
     restart: unless-stopped
+    stop_grace_period: 45s
 
-  archive-worker:
-    build:
-      context: ./backend
-    image: logsentinel-backend:prod
-    command: ["python", "-m", "app.archive.worker"]
-    deploy:
-      resources:
-        limits:
-          cpus: '0.50'
-          memory: 1024M
+  pipeline-worker:
+    build: *backend-build
+    image: logsentinel-backend:${IMAGE_TAG:?IMAGE_TAG must be an immutable git SHA}
+    command: ["python", "-m", "app.cli.worker", "run", "pipeline"]
     environment:
-      - ENVIRONMENT=production
-      - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
-      - POSTGRES_HOST=timescaledb
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
-      - REDIS_URL=redis://valkey:6379/0
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
-      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL}
-      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
-      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
-      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+      <<: *backend-environment
+      WORKER_INSTANCE_ID: compose-pipeline-1
     volumes:
-      - archive_temp:/tmp/archive
+      - drain_data:/app/app/state
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.cli.worker", "healthcheck", "pipeline"]
+      interval: 20s
+      timeout: 8s
+      retries: 3
+      start_period: 30s
     depends_on:
-      timescaledb:
-        condition: service_healthy
+      db-migrator:
+        condition: service_completed_successfully
       valkey:
         condition: service_healthy
     restart: unless-stopped
+    stop_grace_period: 90s
+
+  webhook-worker:
+    build: *backend-build
+    image: logsentinel-backend:${IMAGE_TAG:?IMAGE_TAG must be an immutable git SHA}
+    command: ["python", "-m", "app.cli.worker", "run", "webhook"]
+    environment:
+      <<: [*backend-environment, *email-environment]
+      WORKER_INSTANCE_ID: compose-webhook-1
+      WEBHOOK_MAX_ATTEMPTS: ${WEBHOOK_MAX_ATTEMPTS:-5}
+      WEBHOOK_RETRY_BASE_SECONDS: ${WEBHOOK_RETRY_BASE_SECONDS:-2}
+      WEBHOOK_RETRY_MAX_SECONDS: ${WEBHOOK_RETRY_MAX_SECONDS:-300}
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.cli.worker", "healthcheck", "webhook"]
+      interval: 20s
+      timeout: 8s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      db-migrator:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 75s
+
+  archive-worker:
+    profiles: ["archive"]
+    build: *backend-build
+    image: logsentinel-backend:${IMAGE_TAG:?IMAGE_TAG must be an immutable git SHA}
+    command: ["python", "-m", "app.cli.worker", "run", "archive"]
+    environment:
+      <<: *backend-environment
+      WORKER_INSTANCE_ID: compose-archive-1
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+    volumes:
+      - archive_temp:/tmp/archive
+    depends_on:
+      db-migrator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 90s
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.cli.worker", "healthcheck", "archive"]
+      interval: 20s
+      timeout: 8s
+      retries: 3
+      start_period: 30s
+
+  backup:
+    profiles: ["backup"]
+    build: *backend-build
+    image: logsentinel-backend:${IMAGE_TAG:?IMAGE_TAG must be an immutable git SHA}
+    command: ["bash", "/repo/scripts/backup_database.sh"]
+    # The established host recovery directory is owned by the deployment
+    # operator (ubuntu on production). Override these IDs for another host.
+    user: "${BACKUP_UID:-1001}:${BACKUP_GID:-1001}"
+    environment:
+      <<: *backend-environment
+      BACKUP_DIR: /backups
+      BACKUP_CLEANUP_ENABLED: ${BACKUP_CLEANUP_ENABLED:-false}
+      REQUIRE_REMOTE_BACKUP: ${REQUIRE_REMOTE_BACKUP:-true}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_BACKUP_BUCKET: ${S3_BACKUP_BUCKET:-}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_SERVER_SIDE_ENCRYPTION: ${S3_SERVER_SIDE_ENCRYPTION:-AES256}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+    volumes:
+      # Established production recovery-point directory; override for another
+      # environment rather than silently using an ephemeral path.
+      - ${BACKUP_HOST_DIR:-/home/ubuntu/logsentinel-database-backups}:/backups
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
+
+  pitr-base-backup:
+    profiles: ["pitr-base-backup"]
+    build: *backend-build
+    image: logsentinel-backend:${IMAGE_TAG:?IMAGE_TAG must be an immutable git SHA}
+    command: ["bash", "/repo/scripts/create_physical_base_backup.sh"]
+    user: "${BACKUP_UID:-1001}:${BACKUP_GID:-1001}"
+    environment:
+      <<: *backend-environment
+      BASE_BACKUP_DIR: /pitr-base-backups
+      PITR_REQUIRED_SERVER_MAJOR: ${PITR_REQUIRED_SERVER_MAJOR:-16}
+      PITR_MIN_FREE_BYTES: ${PITR_MIN_FREE_BYTES:-1073741824}
+      S3_BASE_BUCKET: ${S3_BASE_BUCKET:-}
+      S3_BASE_ENDPOINT: ${S3_BASE_ENDPOINT:-}
+      S3_BASE_REGION: ${S3_BASE_REGION:-}
+      S3_BASE_PREFIX: ${S3_BASE_PREFIX:-logsentinel/pitr-base/}
+      S3_BASE_ACCESS_KEY_ID: ${S3_BASE_ACCESS_KEY_ID:-}
+      S3_BASE_SECRET_ACCESS_KEY: ${S3_BASE_SECRET_ACCESS_KEY:-}
+      S3_BACKUP_BUCKET: ${S3_BACKUP_BUCKET:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_SERVER_SIDE_ENCRYPTION: ${S3_SERVER_SIDE_ENCRYPTION:-AES256}
+      PITR_REQUIRE_CREDENTIALS: "true"
+    volumes:
+      - ${PITR_BASE_BACKUP_HOST_DIR:-/home/ubuntu/logsentinel-pitr-base-backups}:/pitr-base-backups
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
 
   caddy:
     build:
@@ -159,22 +305,28 @@ services:
         VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED:-true}
         VITE_MICROSOFT_AUTH_ENABLED: ${VITE_MICROSOFT_AUTH_ENABLED:-true}
         VITE_FEATURE_ENABLE_GITHUB_AUTH: ${VITE_FEATURE_ENABLE_GITHUB_AUTH:-true}
-    image: logsentinel-dashboard:prod
-    container_name: logsentinel_caddy
+    image: logsentinel-dashboard:${IMAGE_TAG:?IMAGE_TAG must be an immutable git SHA}
+    mem_limit: 256m
+    cpus: 1.0
     ports:
-      - "80:80"
-      - "443:443"
+      - "80:8080"
+      - "443:8443"
     environment:
-      - DOMAIN_NAME=${DOMAIN_NAME:-logsentinel.example.com}
-      - FRONTEND_URL=${FRONTEND_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}
+      DOMAIN_NAME: ${DOMAIN_NAME:-logsentinel.example.com}
     volumes:
-      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
       backend:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
+    stop_grace_period: 30s
 
 volumes:
   timescale_data:

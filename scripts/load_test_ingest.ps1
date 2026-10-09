@@ -7,7 +7,8 @@
 $ErrorActionPreference = "Continue"
 
 $BASE_URL      = "https://localhost:8443/api/v1/logs/ingest"
-$API_KEY       = "dev-local-key"
+$API_KEY       = $env:INGEST_API_KEY
+if ([string]::IsNullOrWhiteSpace($API_KEY)) { throw "Set INGEST_API_KEY before running the load test" }
 $TOTAL_BATCHES = 20
 $DELAY_SEC     = 1
 

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from prometheus_client import Counter, Gauge
+from sqlalchemy import text
 
 # ---------------------------------------------------------------------------
 # Metric families
@@ -80,7 +81,65 @@ _WORKER_LABELS = (
     "event_manager",
     "stream_cleaner",
     "retrain",
+    "pipeline",
+    "webhook",
+    "archive",
     "other",
+)
+WORKER_DURABLE_HEARTBEAT = Gauge(
+    "logsentinel_worker_durable_heartbeat_timestamp_seconds",
+    "Newest durable Valkey heartbeat for each standalone production worker role.",
+    ["role"],
+)
+OUTBOX_ITEMS = Gauge(
+    "logsentinel_outbox_items",
+    "Current durable webhook outbox rows by bounded state.",
+    ["status"],
+)
+OUTBOX_OLDEST_PENDING_AGE = Gauge(
+    "logsentinel_outbox_oldest_pending_age_seconds",
+    "Age of the oldest pending, retry, or reclaimable webhook delivery.",
+)
+OUTBOX_ATTEMPTS = Gauge(
+    "logsentinel_webhook_delivery_attempts",
+    "Durable aggregate webhook delivery attempts represented in the outbox.",
+)
+OUTBOX_DELIVERY_LATENCY = Gauge(
+    "logsentinel_webhook_delivery_latency_seconds",
+    "Average creation-to-delivery latency for delivered webhook rows.",
+)
+RAW_ACCEPTED_TOTAL = Counter(
+    "logsentinel_raw_accepted_total",
+    "Logical raw events newly accepted by the PostgreSQL raw ledger.",
+)
+RAW_REPLAY_TOTAL = Counter(
+    "logsentinel_raw_replay_total",
+    "Logical raw events recognized as already processed by the raw ledger.",
+)
+FEATURE_WORK_PENDING = Gauge(
+    "logsentinel_feature_work_pending",
+    "Durable feature-stage work rows currently pending, retrying, or processing.",
+)
+FEATURE_RETRIES_TOTAL = Counter(
+    "logsentinel_feature_retries_total",
+    "Feature-stage work attempts that failed and remain retryable.",
+)
+FEATURE_FAILURES_TOTAL = Counter(
+    "logsentinel_feature_failures_total",
+    "Feature-stage work attempts that failed, including terminal failures.",
+)
+FEATURE_DLQ = Gauge(
+    "logsentinel_feature_dlq",
+    "Durable feature-stage rows in terminal failed state.",
+)
+EVENT_QUEUE_DROPS_TOTAL = Counter(
+    "logsentinel_event_queue_drops_total",
+    "Explicitly permitted noncritical in-memory event drops by class.",
+    ["event_class"],
+)
+DOWNSTREAM_REGISTRATION_FAILURES = Counter(
+    "logsentinel_downstream_registration_failures_total",
+    "Failures while registering required downstream work with raw acceptance.",
 )
 WORKER_RUNNING = Gauge(
     "logsentinel_worker_running",
@@ -227,6 +286,85 @@ ARCHIVE_BACKLOG_SECONDS = Gauge(
 _state_lock = threading.Lock()
 _counter_snapshots: dict[tuple[str, str], float] = {}
 _active_model_version: str | None = None
+
+
+async def refresh_durable_operations(redis_client: Any, engine: Any) -> None:
+    """Sample bounded, cross-process worker and durable outbox state."""
+    for role in ("pipeline", "webhook", "archive"):
+        newest = 0.0
+        seen = 0
+        async for key in redis_client.scan_iter(
+            match=f"logsentinel:worker-heartbeat:{role}:*", count=50
+        ):
+            if seen >= 100:
+                break
+            seen += 1
+            raw = await redis_client.get(key)
+            if not raw:
+                continue
+            try:
+                import json
+
+                observed = json.loads(raw).get("observed_at")
+                if observed:
+                    newest = max(newest, datetime.fromisoformat(observed).timestamp())
+            except (TypeError, ValueError):
+                continue
+        WORKER_DURABLE_HEARTBEAT.labels(role=role).set(newest)
+
+    query = text(
+        """
+        SELECT status, COUNT(*) AS item_count, COALESCE(SUM(attempts), 0) AS attempts,
+               COALESCE(MAX(EXTRACT(EPOCH FROM (:now - created_at)))
+                   FILTER (WHERE status IN ('pending', 'retry', 'processing')), 0) AS oldest_age,
+               COALESCE(AVG(EXTRACT(EPOCH FROM (delivered_at - created_at)))
+                   FILTER (WHERE status = 'delivered' AND delivered_at IS NOT NULL), 0) AS delivery_latency
+        FROM pipeline_outbox
+        WHERE topic = 'webhook'
+        GROUP BY status
+        """
+    )
+    counts = {
+        state: 0 for state in ("pending", "processing", "retry", "delivered", "failed")
+    }
+    attempts = oldest = latency = 0.0
+    async with engine.connect() as connection:
+        rows = (
+            await connection.execute(query, {"now": datetime.now(timezone.utc)})
+        ).mappings()
+        for row in rows:
+            state = str(row["status"])
+            if state in counts:
+                counts[state] = int(row["item_count"])
+            attempts += float(row["attempts"] or 0)
+            oldest = max(oldest, float(row["oldest_age"] or 0))
+            latency = max(latency, float(row["delivery_latency"] or 0))
+    for state, count in counts.items():
+        OUTBOX_ITEMS.labels(status=state).set(count)
+    OUTBOX_ATTEMPTS.set(attempts)
+    OUTBOX_OLDEST_PENDING_AGE.set(max(0.0, oldest if math.isfinite(oldest) else 0.0))
+    OUTBOX_DELIVERY_LATENCY.set(max(0.0, latency if math.isfinite(latency) else 0.0))
+
+    feature_query = text(
+        """
+        SELECT status, COUNT(*) AS item_count
+        FROM pipeline_outbox
+        WHERE topic IN ('feature_contribution', 'feature_window')
+        GROUP BY status
+        """
+    )
+    feature_counts: dict[str, int] = {}
+    async with engine.connect() as connection:
+        rows = (await connection.execute(feature_query)).mappings()
+        for row in rows:
+            feature_counts[str(row["status"])] = int(row["item_count"])
+    FEATURE_WORK_PENDING.set(
+        sum(
+            feature_counts.get(state, 0) for state in ("pending", "retry", "processing")
+        )
+    )
+    FEATURE_DLQ.set(feature_counts.get("failed", 0))
+
 
 _stream_snapshot: dict[str, Any] = {
     "stream_length": 0,

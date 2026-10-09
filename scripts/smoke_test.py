@@ -36,8 +36,6 @@ class Colors:
 API_URL = "http://localhost:8000/api/v1"
 WS_URL = "ws://localhost:8000/ws/telemetry"
 API_KEY = os.getenv("SMOKE_TEST_API_KEY", "").strip()
-if not API_KEY:
-    raise RuntimeError("Set SMOKE_TEST_API_KEY before running the smoke test")
 POSTGRES_DSN = get_database_settings().url.replace("+asyncpg", "").split("?")[0]
 REDIS_URL = "redis://localhost:6379/0"
 
@@ -69,7 +67,7 @@ async def check_redis():
         # Check stream status
         stream_info = None
         try:
-            stream_info = await client.xinfo_stream("logs:stream")
+            stream_info = await client.xinfo_stream(os.getenv("LOG_STREAM_NAME", "logs:stream"))
         except Exception:
             pass # Stream might not exist yet
             
@@ -218,6 +216,8 @@ def print_summary():
         sys.exit(1)
 
 async def main():
+    if not API_KEY:
+        raise RuntimeError("Set SMOKE_TEST_API_KEY before running the smoke test")
     print(f"{Colors.BOLD}{Colors.OKBLUE}Initiating LogSentinel Automated Pre-Flight Checks...{Colors.ENDC}\n")
     
     print(f"{Colors.OKCYAN}Running Infrastructure Health Checks...{Colors.ENDC}")

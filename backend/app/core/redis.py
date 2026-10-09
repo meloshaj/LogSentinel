@@ -6,6 +6,8 @@ import os
 
 from redis.asyncio import ConnectionPool, Redis
 
+from ..security.redaction import sanitize_error_text
+
 logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://valkey:6379/0")
@@ -24,14 +26,7 @@ async def init_redis_pool() -> Redis:
     delays where Valkey may not yet be accepting connections.
     """
     global _redis_pool
-    # Redact password for logging
-    from urllib.parse import urlparse
-
-    parsed = urlparse(REDIS_URL)
-    safe_url = REDIS_URL
-    if parsed.password:
-        safe_url = REDIS_URL.replace(f":{parsed.password}@", ":***@")
-    logger.info("Initializing Redis connection pool to %s", safe_url)
+    logger.info("Initializing Redis connection pool")
 
     last_error: Exception | None = None
 
@@ -58,7 +53,7 @@ async def init_redis_pool() -> Redis:
                 attempt,
                 _MAX_RETRIES,
                 type(exc).__name__,
-                exc,
+                sanitize_error_text(exc),
                 delay,
             )
             # Clean up the failed pool before retrying
@@ -68,14 +63,18 @@ async def init_redis_pool() -> Redis:
                 except Exception:
                     logger.debug(
                         "Failed to disconnect failed Redis pool during retry cleanup",
-                        exc_info=True,
                     )
                 _redis_pool = None
             await asyncio.sleep(delay)
 
+    if last_error is not None:
+        logger.error(
+            "Redis connectivity exhausted: exception_type=%s detail=%s",
+            type(last_error).__name__,
+            sanitize_error_text(last_error),
+        )
     raise RuntimeError(
-        f"FATAL: Could not connect to Redis at {safe_url} after "
-        f"{_MAX_RETRIES} attempts. Last error: {last_error}"
+        f"FATAL: Could not connect to Redis after {_MAX_RETRIES} attempts."
     )
 
 

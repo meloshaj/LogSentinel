@@ -1,12 +1,13 @@
 import type { ServiceAnomaly } from "../../types/monitoring";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
-import { AlertTriangle, CheckCircle, TrendingUp, Zap } from "lucide-react";
+import { AlertTriangle, TrendingUp } from "lucide-react";
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip } from "recharts";
+import { OperationalStateNotice, displayOperationalStatus, operationalStatusLabel } from "../common/OperationalState";
 
 const STATUS_CONFIG = {
   Critical: { color: "#f85149", bg: "bg-[#da3633]/15", border: "border-[#da3633]/40", dot: "bg-[#f85149]", label: "text-[#f85149]" },
   Warning:  { color: "#d29922", bg: "bg-[#d29922]/15", border: "border-[#d29922]/30", dot: "bg-[#d29922]", label: "text-[#e3b341]" },
-  Normal:   { color: "#3fb950", bg: "bg-[#3fb950]/10", border: "border-[#3fb950]/20", dot: "bg-[#3fb950]", label: "text-[#3fb950]" },
+  Low:      { color: "#7d8590", bg: "bg-[#7d8590]/10", border: "border-[#7d8590]/20", dot: "bg-[#7d8590]", label: "text-[#c9d1d9]" },
 };
 
 function ScoreBar({ score, status }: { score: number; status: ServiceAnomaly["status"] }) {
@@ -50,10 +51,10 @@ function ServiceCard({ anomaly }: { anomaly: ServiceAnomaly }) {
 
       <div className="flex gap-3 mt-2">
         <span className="text-[#484f58]" style={{ fontSize: "10px" }}>
-          Error: <span style={{ color: anomaly.errorRate > 10 ? "#f85149" : "#7d8590" }}>{anomaly.errorRate}%</span>
+          Error: <span style={{ color: anomaly.errorRate !== null && anomaly.errorRate > 10 ? "#f85149" : "#7d8590" }}>{anomaly.errorRate === null ? "Unavailable" : `${anomaly.errorRate}%`}</span>
         </span>
         <span className="text-[#484f58]" style={{ fontSize: "10px" }}>
-          P95: <span style={{ color: anomaly.latency > 500 ? "#d29922" : "#7d8590" }}>{anomaly.latency}ms</span>
+          P95: <span style={{ color: anomaly.latency !== null && anomaly.latency > 500 ? "#d29922" : "#7d8590" }}>{anomaly.latency === null ? "Unavailable" : `${anomaly.latency}ms`}</span>
         </span>
       </div>
     </div>
@@ -61,26 +62,27 @@ function ServiceCard({ anomaly }: { anomaly: ServiceAnomaly }) {
 }
 
 export function AnomalyPanel() {
-  const { activeTrackingLoops } = useTelemetryStream();
+  const { activeTrackingLoops, trackingLoopsDataState, connectionStatus } = useTelemetryStream();
+  const trackingStatus = displayOperationalStatus(trackingLoopsDataState, connectionStatus);
 
   // Derive anomalies from live tracking loops
   const anomalies: ServiceAnomaly[] = activeTrackingLoops.flatMap(loop => {
     if (!loop.blast_radius) return [];
     
-    return loop.blast_radius.map((node: any) => {
+    return loop.blast_radius.map((node) => {
       // Map severity string to our Status type
-      let status: "Normal" | "Warning" | "Critical" = "Normal";
+      let status: "Low" | "Warning" | "Critical" = "Low";
       if (loop.severity === "critical" || loop.severity === "high") status = "Critical";
       else if (loop.severity === "medium") status = "Warning";
 
       return {
         id: `${loop.window_id}-${node.service_name}`,
         name: node.service_name,
-        score: Math.min(1.0, node.impact_score / 100),
+        score: Math.min(1.0, Math.max(0, node.impact_score > 1 ? node.impact_score / 100 : node.impact_score)),
         status,
         explanation: `ML model detected ${loop.severity} anomaly pattern in tracking loop ${loop.window_id.substring(0,6)}...`,
-        errorRate: 0,
-        latency: 0
+        errorRate: null,
+        latency: null
       };
     });
   }).sort((a, b) => b.score - a.score).slice(0, 10); // Keep top 10
@@ -101,11 +103,19 @@ export function AnomalyPanel() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1 text-[#3fb950]">
+        <div className="flex items-center gap-1 text-[#8b949e]">
           <TrendingUp className="w-3 h-3" />
-          <span style={{ fontSize: "10px", fontWeight: 500 }}>ML model active</span>
+          <span style={{ fontSize: "10px", fontWeight: 500 }}>{operationalStatusLabel(trackingStatus)}</span>
         </div>
       </div>
+
+      <OperationalStateNotice
+        state={trackingLoopsDataState}
+        connectionState={connectionStatus}
+        emptyMessage="No anomaly records were returned for this scope."
+        errorMessage="Anomaly data is unavailable; no empty result is being assumed."
+        className="mx-3 mt-3"
+      />
 
       {/* Bar chart overview */}
       <div className="px-4 pt-3 pb-1">
@@ -122,7 +132,7 @@ export function AnomalyPanel() {
               <Bar key="score" dataKey="score" radius={[3, 3, 0, 0]}>
                 {chartData.map((entry, idx) => {
                   const a = anomalies[idx];
-                  const color = a.status === "Critical" ? "#da3633" : a.status === "Warning" ? "#d29922" : "#3fb950";
+                  const color = a.status === "Critical" ? "#da3633" : a.status === "Warning" ? "#d29922" : "#7d8590";
                   return <Cell key={idx} fill={color} fillOpacity={0.85} />;
                 })}
               </Bar>

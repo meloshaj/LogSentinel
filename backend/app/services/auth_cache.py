@@ -1,7 +1,10 @@
 """Authentication cache manager backed by Valkey (Redis-compatible).
 
-Provides atomic operations for email verification codes and password
-reset tokens using Lua scripts to eliminate TOCTOU race conditions.
+Provides atomic operations for email verification codes and legacy reset-token
+cache entries using Lua scripts. Password-reset authorization is now owned by
+the PostgreSQL state machine in ``password_reset.py``; the reset helpers below
+remain only for compatibility with older callers and are not used by the
+reset endpoints.
 
 Key namespace:
     email_verify:{email}             — pending verification code (JSON)
@@ -71,7 +74,8 @@ redis.call('SET', KEYS[1], cjson.encode(obj), 'KEEPTTL')
 return -3
 """
 
-# Password reset: atomic get-and-delete (single-use enforcement)
+# Legacy password reset cache helper. The endpoint no longer uses this as a
+# security decision; PostgreSQL owns durable reset finality.
 _CONSUME_RESET_TOKEN_LUA = """
 local data = redis.call('GET', KEYS[1])
 if not data then return nil end
@@ -197,7 +201,7 @@ class AuthCacheManager:
         key = f"password_reset:{token_hash}"
         payload = json.dumps({"user_id": user_id})
         await self._redis.set(key, payload, ex=ttl_seconds)
-        logger.debug("Stored password reset token (hash prefix=%s…)", token_hash[:8])
+        logger.debug("Stored legacy reset capability cache entry")
 
     @catch_redis_errors
     async def consume_reset_token(self, token_hash: str) -> int | None:

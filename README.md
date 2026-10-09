@@ -44,12 +44,14 @@ sequenceDiagram
 
 ## 🚀 Empirical Performance Benchmarks
 
-LogSentinel is built to handle massive scale. Below are our empirical benchmarks running on standard cloud instances (e.g., AWS c6i.2xlarge):
+The figures below are engineering targets and historical measurements, not a
+current production capacity guarantee. Re-run the benchmark tooling with
+workload and environment metadata before capacity planning.
 
 | Metric | Measurement | Description |
 |--------|-------------|-------------|
-| **Throughput** | `10,000+ logs/sec` | Sustained parsing & ingestion rate per worker node. |
-| **E2E Latency** | `< 120ms` | 99th percentile latency from ingestion to WebSocket broadcast. |
+| **Throughput target** | `10,000+ logs/sec` | Target requiring reproducible benchmark evidence. |
+| **E2E latency target** | `< 120ms` | Target; no current production-scale verification is claimed. |
 | **Compression** | `95%+` | Drain3 template mining efficiently compresses raw logs into dense templates. |
 
 ## ⚡ 1-Command Quickstart

@@ -33,6 +33,8 @@ def observation(
     template_id: str = "template-1",
 ) -> TraceObservation:
     return TraceObservation(
+        tenant_id="test-tenant",
+        owner_user_id=101,
         canonical_transaction_id=transaction_id,
         service=service,
         timestamp=BASE_TIME + timedelta(milliseconds=offset_ms),
@@ -79,6 +81,8 @@ class MetadataPreservingParser:
         if isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         return ParsedLog(
+            tenant_id="test-tenant",
+            owner_user_id=101,
             id=f"log-{hash(raw_message)}",
             timestamp=timestamp,
             service=str(metadata.get("service", "test-service")),
@@ -99,7 +103,7 @@ def test_single_observation_temporal_vector_offset_is_zero() -> None:
     pipeline = NetworkXTopologyPipeline()
     pipeline.add_observation(observation(service="gateway"))
 
-    vector = pipeline.get_transaction_vector("txn-1", environment="test")
+    vector = pipeline.get_transaction_vector("txn-1", environment="test", tenant_id="test-tenant", owner_user_id=101)
 
     assert vector[0]["service"] == "gateway"
     assert vector[0]["start_offset_ms"] == 0
@@ -111,7 +115,7 @@ def test_multiple_observations_are_ordered_chronologically() -> None:
     pipeline.add_observation(observation(service="gateway", offset_ms=0))
     pipeline.add_observation(observation(service="auth", offset_ms=30))
 
-    vector = pipeline.get_transaction_vector("txn-1", environment="test")
+    vector = pipeline.get_transaction_vector("txn-1", environment="test", tenant_id="test-tenant", owner_user_id=101)
 
     assert [entry["service"] for entry in vector] == ["gateway", "auth", "user"]
 
@@ -121,7 +125,7 @@ def test_start_offsets_are_calculated_in_milliseconds() -> None:
     for service, offset in [("gateway", 0), ("auth", 30), ("user", 85.5)]:
         pipeline.add_observation(observation(service=service, offset_ms=offset))
 
-    vector = pipeline.get_transaction_vector("txn-1", environment="test")
+    vector = pipeline.get_transaction_vector("txn-1", environment="test", tenant_id="test-tenant", owner_user_id=101)
 
     assert [entry["start_offset_ms"] for entry in vector] == [0, 30, 85.5]
 
@@ -131,7 +135,7 @@ def test_equal_timestamps_use_insertion_order_tie_breaker() -> None:
     pipeline.add_observation(observation(service="auth"))
     pipeline.add_observation(observation(service="gateway"))
 
-    vector = pipeline.get_transaction_vector("txn-1", environment="test")
+    vector = pipeline.get_transaction_vector("txn-1", environment="test", tenant_id="test-tenant", owner_user_id=101)
 
     assert [entry["service"] for entry in vector] == ["auth", "gateway"]
     assert [entry["insertion_order"] for entry in vector] == [0, 1]
@@ -153,8 +157,8 @@ def test_repeated_vector_retrieval_is_idempotent() -> None:
     pipeline.add_observation(observation(service="gateway"))
     pipeline.add_observation(observation(service="auth", offset_ms=10))
 
-    first = pipeline.get_transaction_vector("txn-1", environment="test")
-    second = pipeline.get_transaction_vector("txn-1", environment="test")
+    first = pipeline.get_transaction_vector("txn-1", environment="test", tenant_id="test-tenant", owner_user_id=101)
+    second = pipeline.get_transaction_vector("txn-1", environment="test", tenant_id="test-tenant", owner_user_id=101)
 
     assert first == second
 
@@ -429,8 +433,8 @@ def test_max_transactions_evicts_deterministically() -> None:
     pipeline.add_observation(observation("txn-1", service="gateway"))
     pipeline.add_observation(observation("txn-2", service="auth", offset_ms=10))
 
-    assert pipeline.get_transaction_vector("txn-1", environment="test") == []
-    assert pipeline.get_transaction_vector("txn-2", environment="test")[0]["service"] == "auth"
+    assert pipeline.get_transaction_vector("txn-1", environment="test", tenant_id="test-tenant", owner_user_id=101) == []
+    assert pipeline.get_transaction_vector("txn-2", environment="test", tenant_id="test-tenant", owner_user_id=101)[0]["service"] == "auth"
 
 
 def test_max_observations_per_transaction_is_enforced() -> None:
@@ -439,7 +443,7 @@ def test_max_observations_per_transaction_is_enforced() -> None:
     pipeline.add_observation(observation(service="auth", offset_ms=10))
     pipeline.add_observation(observation(service="user", offset_ms=20))
 
-    vector = pipeline.get_transaction_vector("txn-1", environment="test")
+    vector = pipeline.get_transaction_vector("txn-1", environment="test", tenant_id="test-tenant", owner_user_id=101)
 
     assert [entry["service"] for entry in vector] == ["auth", "user"]
 
@@ -492,9 +496,9 @@ def test_identical_transaction_ids_in_different_environments_remain_separate() -
         observation("txn-shared", service="prod-gateway", environment="prod")
     )
 
-    assert pipeline.get_transaction_vector("txn-shared", environment="dev")[0]["service"] == "dev-gateway"
-    assert pipeline.get_transaction_vector("txn-shared", environment="prod")[0]["service"] == "prod-gateway"
-    assert pipeline.get_transaction_vector("txn-shared") == []
+    assert pipeline.get_transaction_vector("txn-shared", environment="dev", tenant_id="test-tenant", owner_user_id=101)[0]["service"] == "dev-gateway"
+    assert pipeline.get_transaction_vector("txn-shared", environment="prod", tenant_id="test-tenant", owner_user_id=101)[0]["service"] == "prod-gateway"
+    assert pipeline.get_transaction_vector("txn-shared", tenant_id="test-tenant", owner_user_id=101) == []
 
 
 def test_snapshot_is_json_compatible() -> None:
@@ -530,6 +534,8 @@ def test_snapshot_does_not_expose_raw_messages_or_secrets() -> None:
     pipeline = NetworkXTopologyPipeline()
     pipeline.add_observation(
         TraceObservation(
+            tenant_id="test-tenant",
+            owner_user_id=101,
             canonical_transaction_id="txn-secret",
             service="gateway",
             timestamp=BASE_TIME,
@@ -584,7 +590,7 @@ def test_drain_worker_callback_sends_trace_observation_to_topology_pipeline() ->
     )
 
     assert topology.get_stats()["stored_observation_count"] == 1
-    assert topology.get_transaction_vector("worker-topology-trace", environment="test")[0][
+    assert topology.get_transaction_vector("worker-topology-trace", environment="test", tenant_id="test-tenant", owner_user_id=101)[0][
         "service"
     ] == "gateway"
 

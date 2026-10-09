@@ -1,3 +1,5 @@
+import { isGoogleAuthEnabled } from "./googleAuth";
+
 export interface FeatureFlags {
   ENABLE_SETTINGS_EDIT: boolean;
   ENABLE_GITHUB_AUTH: boolean;
@@ -13,9 +15,7 @@ export const FEATURE_FLAGS: Readonly<FeatureFlags> = Object.freeze({
     import.meta.env.VITE_FEATURE_ENABLE_GITHUB_AUTH === 'true' || false,
   ENABLE_PASSWORD_RESET:
     import.meta.env.VITE_FEATURE_ENABLE_PASSWORD_RESET === 'true' || false,
-  ENABLE_GOOGLE_AUTH:
-    import.meta.env.VITE_FEATURE_ENABLE_GOOGLE_AUTH === 'true' ||
-    Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID),
+  ENABLE_GOOGLE_AUTH: isGoogleAuthEnabled(),
   ENABLE_DEMO_MODE:
     import.meta.env.VITE_DEMO_MODE === 'true' ||
     import.meta.env.VITE_FEATURE_ENABLE_DEMO_MODE === 'true' ||

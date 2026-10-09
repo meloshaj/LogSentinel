@@ -1,0 +1,132 @@
+name: logsentinel-monitoring
+
+services:
+  prometheus-secrets:
+    image: alpine:3.20
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:?METRICS_TOKEN must be set for internal monitoring}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        printf '%s' "$${METRICS_TOKEN}" > /run/secrets/metrics_token
+        chown 65534:65534 /run/secrets/metrics_token
+        chmod 0400 /run/secrets/metrics_token
+    volumes:
+      - prometheus_secrets:/run/secrets
+    restart: "no"
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=512MB
+      - --web.listen-address=0.0.0.0:9090
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_secrets:/run/secrets:ro
+      - prometheus_data:/prometheus
+    networks:
+      - logsentinel_default
+      - monitoring
+    depends_on:
+      alertmanager:
+        condition: service_started
+      alert-relay:
+        condition: service_healthy
+      node-exporter:
+        condition: service_started
+      prometheus-secrets:
+        condition: service_completed_successfully
+    mem_limit: 512m
+    cpus: 0.35
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=0.0.0.0:9093
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    networks:
+      - monitoring
+    mem_limit: 128m
+    cpus: 0.15
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+
+  alert-relay:
+    image: python:3.12-alpine
+    command: ["python", "/opt/logsentinel/alert_relay.py"]
+    environment:
+      ALERT_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:?DISCORD_WEBHOOK_URL must be set for operator alerting}
+    volumes:
+      - ./alert_relay.py:/opt/logsentinel/alert_relay.py:ro
+    networks:
+      - monitoring
+    mem_limit: 64m
+    cpus: 0.10
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,noexec,nosuid,nodev
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2)
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/host/root
+      - --collector.textfile.directory=/host/textfile
+      - --web.listen-address=0.0.0.0:9100
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro,rslave
+      - /var/lib/node_exporter/textfile_collector:/host/textfile:ro
+    networks:
+      - monitoring
+    mem_limit: 64m
+    cpus: 0.10
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  prometheus_data:
+  alertmanager_data:
+  prometheus_secrets:
+
+networks:
+  logsentinel_default:
+    external: true
+  monitoring:
+    driver: bridge

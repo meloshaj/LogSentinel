@@ -12,6 +12,7 @@ import {
 import { useLiveLogs } from "../../hooks/useLiveLogs";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { useMemo, useState } from "react";
+import { displayOperationalStatus, OperationalStateNotice } from "../common/OperationalState";
 
 const SEVERITY_COLOR: Record<string, string> = {
   critical: "#ef4444",
@@ -21,8 +22,11 @@ const SEVERITY_COLOR: Record<string, string> = {
 };
 
 export function TrafficChart() {
-  const { filteredLogs } = useLiveLogs();
-  const { activeTrackingLoops } = useTelemetryStream();
+  const { filteredLogs, dataState: logDataState, connectionState } = useLiveLogs();
+  const { activeTrackingLoops, trackingLoopsDataState } = useTelemetryStream();
+  const logStatus = displayOperationalStatus(logDataState, connectionState);
+  const loopStatus = displayOperationalStatus(trackingLoopsDataState, connectionState);
+  const hasKnownData = ["available", "empty", "stale"].includes(logStatus) && ["available", "empty", "stale"].includes(loopStatus);
   
   const [filters, setFilters] = useState({
     high: true,
@@ -35,6 +39,7 @@ export function TrafficChart() {
   };
 
   const timeSeriesData = useMemo(() => {
+    if (!hasKnownData || (filteredLogs.length === 0 && activeTrackingLoops.length === 0)) return [];
     const windowMinutes = 20;
     const now = new Date();
     now.setSeconds(0, 0);
@@ -46,8 +51,8 @@ export function TrafficChart() {
       anomalyData: Array<{ severity: string; score: number; service: string; color: string }>;
     }>();
 
-    // Pre-fill the visible window. This keeps the initial chart baseline honest:
-    // absent telemetry is represented as zero rather than a fabricated sample.
+    // Fill the visible window only after a successful response established the
+    // telemetry domain. Unavailable data returns no chart points.
     for (let index = windowMinutes - 1; index >= 0; index -= 1) {
       const bucketTime = new Date(now.getTime() - index * 60_000);
       const time = bucketTime.toTimeString().slice(0, 5);
@@ -85,7 +90,9 @@ export function TrafficChart() {
         return;
       }
 
-      const d = (loop as any).created_at ? new Date((loop as any).created_at) : new Date();
+      if (!loop.created_at) return;
+      const d = new Date(loop.created_at);
+      if (!Number.isFinite(d.getTime())) return;
       const minute = d.toTimeString().split(':').slice(0, 2).join(':');
       
       const bucket = ensureBucket(minute);
@@ -93,19 +100,24 @@ export function TrafficChart() {
       bucket.anomalyData.push({
         severity: loop.severity,
         score: loop.anomaly_score,
-        service: loop.suspected_root_service || "unknown",
+        service: loop.suspected_root_service || "Unavailable",
         color: SEVERITY_COLOR[loop.severity] || SEVERITY_COLOR.high
       });
     });
 
     return Array.from(buckets.values())
-      .sort((a: any, b: any) => a.time.localeCompare(b.time))
+      .sort((a, b) => a.time.localeCompare(b.time))
       .slice(-20);
-  }, [filteredLogs, activeTrackingLoops, filters]);
+  }, [filteredLogs, activeTrackingLoops, filters, hasKnownData]);
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
+  const CustomTooltip = ({ active, payload, label }: {
+    active?: boolean;
+    payload?: Array<{ payload?: { logs: number; errors: number; anomalies: number; anomalyData: Array<{ severity: string; score: number; service: string; color: string }> } }>;
+    label?: string | number;
+  }) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
+      if (!data) return null;
       return (
         <div className="bg-[#0d1117]/95 backdrop-blur-md border border-[#21262d] rounded-xl p-3.5 shadow-2xl min-w-[210px]">
           <p className="text-[#e6edf3] font-bold mb-2.5 text-xs border-b border-[#21262d] pb-1.5">{label} UTC</p>
@@ -129,14 +141,14 @@ export function TrafficChart() {
                 <span className="w-2 h-2 rounded-full bg-[#ef4444] animate-pulse" />
                 <span className="text-[#ef4444]">Anomalies</span>
               </div>
-              <span className="text-[#ef4444] font-mono font-bold">{data.anomalies || 0}</span>
+              <span className="text-[#ef4444] font-mono font-bold">{data.anomalies}</span>
             </div>
           </div>
           {data.anomalyData && data.anomalyData.length > 0 && (
             <div className="mt-3 pt-2.5 border-t border-[#21262d]">
               <p className="text-[9px] text-[#8b949e] uppercase tracking-wider font-bold mb-1.5">Detected Anomaly Events</p>
               <div className="space-y-1.5">
-                {data.anomalyData.map((a: any, i: number) => (
+                {data.anomalyData.map((a, i) => (
                   <div key={i} className="flex items-center justify-between bg-[#161b22] px-2 py-1 rounded border border-[#30363d] text-[10px]">
                     <span className="text-[#e6edf3] font-semibold font-mono">{a.service}</span>
                     <span className="px-1.5 py-0.2 rounded font-bold uppercase text-[8px]" style={{ background: `${a.color}20`, color: a.color }}>
@@ -209,7 +221,15 @@ export function TrafficChart() {
       </div>
 
       <div className="px-4 pb-4 pt-2">
-        <ResponsiveContainer width="100%" height={175}>
+        {timeSeriesData.length === 0 ? (
+          <OperationalStateNotice
+            state={logDataState}
+            connectionState={connectionState}
+            emptyMessage="No log or anomaly points were returned for this window."
+            errorMessage="Telemetry trend is unavailable."
+            className="h-[175px] justify-center"
+          />
+        ) : <ResponsiveContainer width="100%" height={175}>
           <ComposedChart 
             data={timeSeriesData} 
             margin={{ top: 15, right: 10, left: -20, bottom: 0 }}
@@ -271,7 +291,7 @@ export function TrafficChart() {
               activeDot={{ r: 6.0, fill: "#ef4444", stroke: "#ffffff", strokeWidth: 2 }} 
             />
           </ComposedChart>
-        </ResponsiveContainer>
+        </ResponsiveContainer>}
       </div>
     </div>
   );

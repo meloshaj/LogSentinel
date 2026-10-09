@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { Background, Controls, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps } from "@xyflow/react";
-import { DEPENDENCY_NODE_STATUS } from "../../constants/statusConfig";
 import { reactFlowEngineConfig } from "../../config/reactFlow";
 import type { ServiceGraph } from "../../types/monitoring";
 import { useThemeMode } from '../../hooks/useThemeMode';
@@ -16,10 +15,7 @@ interface DependencyGraphProps {
 
 type ServiceNodeData = {
   label: string;
-  status: {
-    fill: string;
-    stroke: string;
-  };
+  status: "healthy" | "degraded" | "critical" | "unknown";
   radius: number;
   labelOffset: number;
   glowRadius: number;
@@ -44,9 +40,9 @@ function ServiceNode({ data }: NodeProps<Node<ServiceNodeData>>) {
           width: data.radius * 2,
           height: data.radius * 2,
           marginTop: 1,
-          border: `${data.strokeWidth}px solid ${data.status.stroke}`,
-          background: data.status.fill,
-          boxShadow: data.label === "database-service" || data.label === "payment-service" ? `0 0 0 ${data.glowRadius}px rgba(218,54,51,0.12)` : "none",
+          border: `${data.strokeWidth}px solid ${data.status === "critical" ? "#f85149" : data.status === "degraded" ? "#d29922" : data.status === "healthy" ? "#388bfd" : "#484f58"}`,
+          background: "#1c2128",
+          boxShadow: data.status === "critical" ? `0 0 0 ${data.glowRadius}px rgba(218,54,51,0.12)` : "none",
         }}
       />
       <div
@@ -74,8 +70,8 @@ export function DependencyGraph({
   const { themeMode } = useThemeMode();
   const { nodes, edges, nodeTypes } = useMemo(() => {
     const mappedNodes: Node<ServiceNodeData>[] = graph.nodes.map((node) => {
-      const status = DEPENDENCY_NODE_STATUS[node.id] ?? { fill: "#1c2128", stroke: "#484f58" };
-      const isCritical = node.id === "database-service" || node.id === "payment-service";
+      const status = node.status ?? "unknown";
+      const isCritical = status === "critical";
 
       return {
         id: node.id,
@@ -105,7 +101,7 @@ export function DependencyGraph({
     });
 
     const mappedEdges: Edge[] = graph.edges.map((edge) => {
-      const isCritical = edge.to === "database-service" || edge.from === "database-service";
+      const isCritical = edge.isBlastPath === true;
 
       return {
         id: `${edge.from}-${edge.to}`,

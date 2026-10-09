@@ -223,7 +223,7 @@ def test_event_manager_cancelled_error_is_not_swallowed() -> None:
         asyncio.run(manager._run_graph_analysis(feature_vector()))
 
 
-def test_tracking_repository_error_does_not_block_broadcast() -> None:
+def test_tracking_repository_error_prevents_non_durable_broadcast() -> None:
     repo = FakeTrackingRepository(fail=True)
     broadcaster = FakeBroadcaster()
     manager = EventManager(
@@ -233,10 +233,11 @@ def test_tracking_repository_error_does_not_block_broadcast() -> None:
         telemetry_broadcaster=broadcaster,
     )
 
-    asyncio.run(manager._process_event(feature_vector()))
+    with pytest.raises(RuntimeError, match="temporary database failure"):
+        asyncio.run(manager._process_event(feature_vector()))
 
     assert len(repo.calls) == 1
-    assert len(broadcaster.events) == 1
+    assert len(broadcaster.events) == 0
 
 
 def test_event_manager_uses_authoritative_boolean_and_normalized_score() -> None:

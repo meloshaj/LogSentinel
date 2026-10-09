@@ -76,7 +76,9 @@ services:
     image: logsentinel-dashboard:demo
     container_name: demo_dashboard
     ports:
-      - "8080:80"
+      - "8080:8080"
+    volumes:
+      - ./deploy/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,7 +88,8 @@ services:
 
   db-migrator:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     image: logsentinel-backend:demo
     container_name: demo_db_migrator
     command: ["python", "/repo/scripts/database_lifecycle.py", "--apply"]
@@ -105,12 +108,17 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     image: logsentinel-backend:demo
     container_name: demo_backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
+      - RUN_EMBEDDED_WORKERS=true
+      - RUN_WEBHOOK_WORKER_IN_LIFESPAN=true
+      - RUN_ARCHIVE_WORKER_IN_LIFESPAN=false
+      - METRICS_TOKEN=${METRICS_TOKEN:?METRICS_TOKEN must be set for internal monitoring}
       - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a strong random value}
       - POSTGRES_HOST=postgres
@@ -132,22 +140,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  nginx:
-    image: nginx:latest
-    container_name: demo_nginx
-    ports:
-      - "8081:80"
-      - "8443:443"
-    volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      backend:
-        condition: service_started
-    restart: unless-stopped
-
   fluent-bit:
-    image: fluent/fluent-bit:latest
+    image: fluent/fluent-bit:3.0.6
     container_name: demo_fluent_bit
     volumes:
       - ./demo/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
@@ -161,7 +155,8 @@ services:
 
   auth-service:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     image: logsentinel-backend:demo
     container_name: demo_auth_service
     command: ["uvicorn", "demo.mock_microservice:app", "--host", "0.0.0.0", "--port", "9001"]
@@ -179,7 +174,8 @@ services:
 
   order-service:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     image: logsentinel-backend:demo
     container_name: demo_order_service
     command: ["uvicorn", "demo.mock_microservice:app", "--host", "0.0.0.0", "--port", "9002"]
@@ -197,7 +193,8 @@ services:
 
   payment-gateway:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     image: logsentinel-backend:demo
     container_name: demo_payment_gateway
     command: ["uvicorn", "demo.mock_microservice:app", "--host", "0.0.0.0", "--port", "9003"]

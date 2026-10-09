@@ -9,7 +9,7 @@ os.environ.setdefault(
 )
 os.environ.setdefault(
     "JWT_SECRET_KEY",
-    "j6nXLp4jdPIYuoGC20uNKMgG2KhYVeEyaHqxECoYXygCQ3nrgQvULL9YlIn6eGye",
+    "test-only-root-secret-key-32-bytes-minimum",
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,34 +21,51 @@ import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
+try:
+    import fastapi
+    import pydantic
+    HAS_BACKEND = True
+except ImportError:
+    HAS_BACKEND = False
+
+
 # Mock redis.StrictRedis at import time to prevent Drain3 from hanging during pytest collection
 class MockRedisImport:
     def ping(self): pass
     def get(self, *args, **kwargs): return None
     def set(self, *args, **kwargs): pass
-patch("redis.StrictRedis", return_value=MockRedisImport()).start()
 
-from backend.app.models import ParsedLog
+try:
+    import redis
+    HAS_REDIS = True
+    patch("redis.StrictRedis", return_value=MockRedisImport()).start()
+except ImportError:
+    HAS_REDIS = False
 
-@pytest.fixture
-def make_parsed_log():
-    def _make_parsed_log(**overrides) -> ParsedLog:
-        default_data = {
-            "id": str(uuid.uuid4()),
-            "service": "auth-service",
-            "level": "INFO",
-            "raw_message": "User authenticated successfully",
-            "template_id": "E12",
-            "template_text": "User authenticated successfully",
-            "created_at": datetime.now(timezone.utc),
-            "timestamp": datetime.now(timezone.utc),
-            "parameters": [{"value": "user_123", "mask_name": "ID"}],
-            "correlation_id": None,
-            "metadata": {}
-        }
-        default_data.update(overrides)
-        return ParsedLog(**default_data)
-    return _make_parsed_log
+if HAS_BACKEND:
+    from backend.app.models import ParsedLog
+
+    @pytest.fixture
+    def make_parsed_log():
+        def _make_parsed_log(**overrides):
+            default_data = {
+                "id": str(uuid.uuid4()),
+                "tenant_id": "tenant-test",
+                "owner_user_id": 101,
+                "service": "auth-service",
+                "level": "INFO",
+                "raw_message": "User authenticated successfully",
+                "template_id": "E12",
+                "template_text": "User authenticated successfully",
+                "created_at": datetime.now(timezone.utc),
+                "timestamp": datetime.now(timezone.utc),
+                "parameters": [{"value": "user_123", "mask_name": "ID"}],
+                "correlation_id": None,
+                "metadata": {}
+            }
+            default_data.update(overrides)
+            return ParsedLog(**default_data)
+        return _make_parsed_log
 
 from unittest.mock import patch, AsyncMock
 
@@ -56,6 +73,13 @@ from unittest.mock import patch, AsyncMock
 def mock_redis_globally():
     """Mock Redis initialization globally to prevent tests from trying to connect to a real Redis server
     during the FastAPI lifespan event."""
+    if not HAS_REDIS:
+        yield
+        return
+    
+    if os.environ.get("LOGSENTINEL_RUN_DISTRIBUTED_INTEGRATION") == "1":
+        yield
+        return
     
     class MockRedisPipeline:
         def xadd(self, *args, **kwargs): pass
@@ -78,9 +102,14 @@ def mock_redis_globally():
                 yield
 
 
+
+
 @pytest.fixture(autouse=True)
 def mock_auth_cache():
     """Keep route tests independent of an external Valkey instance."""
+    if not HAS_BACKEND:
+        yield
+        return
     cache = AsyncMock()
     cache.reserve_resend_cooldown.return_value = True
     cache.store_verification_code.return_value = None
@@ -94,6 +123,9 @@ def mock_auth_cache():
 @pytest.fixture(autouse=True)
 def mock_auth_email_dispatch():
     """Prevent route unit tests from contacting a real SMTP server."""
+    if not HAS_BACKEND:
+        yield
+        return
     with patch(
         "backend.app.routers.auth_router.send_verification_email",
         new_callable=AsyncMock,

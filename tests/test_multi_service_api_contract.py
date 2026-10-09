@@ -11,6 +11,7 @@ from backend.app.security.auth import get_current_user
 def tenant_user_override():
     app.dependency_overrides[get_current_user] = lambda: {
         "sub": "tenant-a-user",
+        "id": 101,
         "tenant_id": "tenant-a",
     }
     yield
@@ -41,6 +42,9 @@ async def test_logs_api_explicitly_scopes_recent_and_paginated_queries(
 
     assert recent_response.status_code == 200
     assert paginated_response.status_code == 200
-    assert recent.await_args.kwargs == {"tenant_id": "tenant-a", "limit": 500}
-    assert paginated.await_args.kwargs["tenant_id"] == "tenant-a"
+    assert recent.await_args.kwargs["scope"].tenant_id == "tenant-a"
+    assert recent.await_args.kwargs["scope"].owner_user_id == 101
+    assert recent.await_args.kwargs["limit"] == 500
+    assert paginated.await_args.kwargs["scope"].tenant_id == "tenant-a"
+    assert paginated.await_args.kwargs["scope"].owner_user_id == 101
     assert paginated.await_args.kwargs["limit"] == 200

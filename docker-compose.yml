@@ -50,7 +50,7 @@ services:
     restart: unless-stopped
 
   valkey:
-    image: valkey/valkey:8.0-alpine
+    image: valkey/valkey:8.0.2-alpine
     container_name: logsentinel_valkey
     command: ["valkey-server", "--save", "60", "1", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes", "--appendfsync", "everysec"]
     ports:
@@ -83,7 +83,9 @@ services:
         VITE_FEATURE_ENABLE_GITHUB_AUTH: ${VITE_FEATURE_ENABLE_GITHUB_AUTH:-false}
     image: logsentinel-dashboard:local
     ports:
-      - "8080:80"
+      - "8080:8080"
+    volumes:
+      - ./deploy/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -93,7 +95,8 @@ services:
 
   db-migrator:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     image: logsentinel-backend:local
     command: ["python", "/repo/scripts/database_lifecycle.py", "--apply"]
     environment:
@@ -111,11 +114,16 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: .
+      dockerfile: backend/Dockerfile
     image: logsentinel-backend:local
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
+      - RUN_EMBEDDED_WORKERS=true
+      - RUN_WEBHOOK_WORKER_IN_LIFESPAN=true
+      - RUN_ARCHIVE_WORKER_IN_LIFESPAN=false
+      - METRICS_TOKEN=${METRICS_TOKEN:?METRICS_TOKEN must be set for internal monitoring}
       - POSTGRES_USER=${POSTGRES_USER:-logsentinel}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set to a strong random value}
       - POSTGRES_HOST=timescaledb
@@ -124,7 +132,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-logsentinel}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-logsentinel_db}
       - REDIS_HOST=valkey
       - REDIS_URL=redis://valkey:6379/0
-      - INGEST_API_KEY=${INGEST_API_KEY:-dev-local-key}
+      - INGEST_API_KEYS=${INGEST_API_KEYS:?INGEST_API_KEYS must be set to a tenant-scoped key mapping}
       - LOG_STREAM_NAME=logs:stream
       - LOG_WORKERS_GROUP=log_workers
       - GRAPH_SCORING_LOOKBACK_SECONDS=${GRAPH_SCORING_LOOKBACK_SECONDS:-180}
@@ -148,22 +156,6 @@ services:
         condition: service_completed_successfully
       valkey:
         condition: service_healthy
-    restart: unless-stopped
-
-  nginx:
-    image: nginx:latest
-    container_name: logsentinel_nginx
-    ports:
-      - "8081:80"
-      - "8443:443"
-    volumes:
-      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./docker/nginx/ssl:/etc/nginx/ssl
-      - ./docker/nginx/entrypoint.sh:/docker-entrypoint-custom.sh:ro
-    entrypoint: ["/bin/sh", "/docker-entrypoint-custom.sh"]
-    depends_on:
-      backend:
-        condition: service_started
     restart: unless-stopped
 
 volumes:

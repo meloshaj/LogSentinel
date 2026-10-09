@@ -14,11 +14,19 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
+import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import asyncpg
+
+try:
+    from backend.app.security.redaction import sanitize_error_text
+except ModuleNotFoundError:  # The production image exposes the package as ``app``.
+    from app.security.redaction import sanitize_error_text
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = REPO_ROOT / "scripts" / "migration_manifest.json"
@@ -35,6 +43,7 @@ _REQUIRED_TABLES = {
     "users",
     "accounts",
     "external_identities",
+    "password_reset_tokens",
     "schema_migrations",
 }
 
@@ -94,7 +103,9 @@ def load_manifest() -> dict[str, Any]:
         if version in versions:
             raise SchemaLifecycleError(f"duplicate active migration version: {version}")
         if version <= previous_version:
-            raise SchemaLifecycleError("active migrations must be in strict version order")
+            raise SchemaLifecycleError(
+                "active migrations must be in strict version order"
+            )
         if not isinstance(path_value, str):
             raise SchemaLifecycleError(f"migration {version} has no path")
         if not _resolve_repo_path(path_value).is_file():
@@ -128,6 +139,99 @@ async def _ensure_migration_table(connection: asyncpg.Connection) -> None:
     await connection.execute(_SCHEMA_MIGRATIONS_DDL)
 
 
+def migration_sql(path: Path) -> str:
+    """Keep the ledger and SQL in one driver-owned transaction.
+
+    Immutable historical files contain outer BEGIN/COMMIT wrappers. Strip only
+    those wrappers in memory; never rewrite the checksummed source files.
+    """
+    sql = path.read_text(encoding="utf-8")
+    sql = re.sub(r"(?im)^BEGIN;\s*$", "", sql, count=1)
+    sql = re.sub(r"(?im)^COMMIT;\s*$", "", sql)
+    if not sql.strip():
+        raise SchemaLifecycleError(f"migration {path.name} is empty")
+    return sql
+
+
+async def preflight_history(
+    connection: asyncpg.Connection, loaded: dict[str, Any]
+) -> None:
+    """Check every historic checksum and frozen prerequisite before any DDL."""
+    rows_by_version: dict[str, asyncpg.Record | None] = {}
+    for migration, path in active_migration_files(loaded):
+        row = await connection.fetchrow(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            migration["version"],
+        )
+        rows_by_version[migration["version"]] = row
+        if (
+            row is not None
+            and row["checksum"] is not None
+            and row["checksum"] != _sha256(path)
+        ):
+            raise SchemaLifecycleError(
+                f"checksum mismatch for applied migration {migration['version']}"
+            )
+        if migration.get("execution") == "frozen-history-only" and row is None:
+            raise SchemaLifecycleError(
+                f"{migration['version']} is frozen: staged backfill and explicit validated cutover required"
+            )
+
+    applied_versions = {
+        version for version, row in rows_by_version.items() if row is not None
+    }
+    for index, migration in enumerate(loaded["active_migrations"]):
+        version = migration["version"]
+        if rows_by_version[version] is None:
+            later_applied = [
+                later["version"]
+                for later in loaded["active_migrations"][index + 1 :]
+                if later["version"] in applied_versions
+            ]
+            if later_applied:
+                raise SchemaLifecycleError(
+                    "migration ledger gap: "
+                    f"{version} is missing while later migrations are recorded "
+                    f"({', '.join(later_applied[:3])})"
+                )
+
+
+async def _test_interrupt(version: str, phase: str) -> None:
+    """Pause only under an explicit disposable-test hook.
+
+    The hook lets the migration rehearsal terminate the exact lifecycle
+    process before the ledger write.  It is deliberately opt-in and requires
+    a second allow flag so production cannot accidentally honor a test
+    environment variable copied from a fixture.
+    """
+    if os.getenv("LOGSENTINEL_ALLOW_TEST_HOOKS") != "1":
+        return
+    if os.getenv("LOGSENTINEL_TEST_INTERRUPT_VERSION") != version:
+        return
+    if os.getenv("LOGSENTINEL_TEST_INTERRUPT_PHASE") != phase:
+        return
+
+    marker_value = os.getenv("LOGSENTINEL_TEST_INTERRUPT_MARKER", "").strip()
+    release_value = os.getenv("LOGSENTINEL_TEST_INTERRUPT_RELEASE", "").strip()
+    if not marker_value or not release_value:
+        raise SchemaLifecycleError(
+            "test interruption hook requires marker and release paths"
+        )
+    marker = Path(marker_value)
+    release = Path(release_value)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        json.dumps({"version": version, "phase": phase, "pid": os.getpid()}) + "\n",
+        encoding="utf-8",
+    )
+    timeout = float(os.getenv("LOGSENTINEL_TEST_INTERRUPT_TIMEOUT", "120"))
+    deadline = time.monotonic() + timeout
+    while not release.exists():
+        if time.monotonic() >= deadline:
+            raise SchemaLifecycleError("test interruption hook timed out")
+        await asyncio.sleep(0.05)
+
+
 async def apply_migrations(
     connection: asyncpg.Connection,
     manifest: dict[str, Any] | None = None,
@@ -153,8 +257,11 @@ async def apply_migrations(
         )
 
     applied: list[str] = []
-    await connection.execute("SELECT pg_advisory_lock(hashtext($1))", _ADVISORY_LOCK_KEY)
+    await connection.execute(
+        "SELECT pg_advisory_lock(hashtext($1))", _ADVISORY_LOCK_KEY
+    )
     try:
+        await preflight_history(connection, loaded)
         for migration, path in active_migration_files(loaded):
             version = migration["version"]
             checksum = _sha256(path)
@@ -170,13 +277,15 @@ async def apply_migrations(
                     )
                 continue
 
-            sql = path.read_text(encoding="utf-8")
-            if not sql.strip():
-                raise SchemaLifecycleError(f"migration {version} is empty")
+            sql = migration_sql(path)
 
             _LOGGER.info("Applying database migration %s", version)
+            await _test_interrupt(version, "before_transaction")
             async with connection.transaction():
+                await connection.execute("SET LOCAL lock_timeout = '5s'")
+                await connection.execute("SET LOCAL statement_timeout = '5min'")
                 await connection.execute(sql)
+                await _test_interrupt(version, "after_sql_before_ledger")
                 await connection.execute(
                     """
                     INSERT INTO schema_migrations (version, checksum, description)
@@ -188,7 +297,9 @@ async def apply_migrations(
                 )
             applied.append(version)
     finally:
-        await connection.execute("SELECT pg_advisory_unlock(hashtext($1))", _ADVISORY_LOCK_KEY)
+        await connection.execute(
+            "SELECT pg_advisory_unlock(hashtext($1))", _ADVISORY_LOCK_KEY
+        )
 
     return applied
 
@@ -223,6 +334,7 @@ async def bootstrap_database(connection: asyncpg.Connection) -> list[str]:
 async def validate_schema(connection: asyncpg.Connection) -> dict[str, Any]:
     """Validate the canonical object inventory and Timescale logs contract."""
     manifest = load_manifest()
+    await preflight_history(connection, manifest)
     rows = await connection.fetch(
         """
         SELECT tablename
@@ -291,23 +403,21 @@ async def validate_schema(connection: asyncpg.Connection) -> dict[str, Any]:
 async def _connect() -> asyncpg.Connection:
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
-    from backend.app.core.settings import get_database_settings
+    try:
+        from backend.app.core.settings import get_database_settings
+    except ModuleNotFoundError as exc:
+        # The repository layout imports as ``backend.app`` locally, while the
+        # production image copies ``backend/`` into its /app workdir and
+        # therefore imports the same package as ``app``.
+        if exc.name not in {"backend", "backend.app", "backend.app.core"}:
+            raise
+        from app.core.settings import get_database_settings
 
     settings = get_database_settings()
     return await asyncpg.connect(**settings.asyncpg_connect_kwargs())
 
 
 async def _run(mode: str) -> dict[str, Any] | list[str]:
-    if mode == "validate":
-        manifest = load_manifest()
-        result = {"schema_id": manifest["schema_id"], "active_migrations": []}
-        for migration, path in active_migration_files(manifest):
-            result["active_migrations"].append({
-                "version": migration["version"],
-                "checksum": _sha256(path),
-            })
-        return result
-
     connection = await _connect()
     try:
         if mode == "bootstrap":
@@ -318,6 +428,17 @@ async def _run(mode: str) -> dict[str, Any] | list[str]:
             result = await apply_migrations(connection)
             await validate_schema(connection)
             return result
+        if mode == "ensure":
+            existing = await _known_application_tables(connection)
+            result = (
+                await bootstrap_database(connection)
+                if not existing
+                else await apply_migrations(connection)
+            )
+            await validate_schema(connection)
+            return result
+        if mode == "validate":
+            return await validate_schema(connection)
     finally:
         await connection.close()
 
@@ -340,20 +461,27 @@ def main() -> int:
         help="apply allowlisted forward migrations after init.sql",
     )
     mode.add_argument(
+        "--ensure",
+        action="store_const",
+        const="ensure",
+        dest="mode",
+        help="bootstrap an empty database or apply migrations to a known schema",
+    )
+    mode.add_argument(
         "--validate",
         action="store_const",
         const="validate",
         dest="mode",
-        help="validate the canonical schema and lifecycle ledger",
+        help="connect and validate the canonical schema and lifecycle ledger",
     )
-    parser.set_defaults(mode="apply")
+    parser.set_defaults(mode="validate")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
         result = asyncio.run(_run(args.mode))
     except (OSError, asyncpg.PostgresError, SchemaLifecycleError) as exc:
-        _LOGGER.error("Database lifecycle failed: %s", exc)
+        _LOGGER.error("Database lifecycle failed: %s", sanitize_error_text(exc))
         return 1
 
     print(json.dumps(result, indent=2, default=str))

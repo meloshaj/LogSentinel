@@ -217,6 +217,7 @@ export function useMicrosoftAuth() {
         ).replace(/\/+$/, "");
         const response = await fetch(`${apiBase}/api/auth/microsoft`, {
           method: "POST",
+          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ access_token: microsoftAccessToken }),
         });

@@ -1,13 +1,30 @@
-import gzip
 import json
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import ValidationError
 
+from ..core.constants import LOG_STREAM_NAME
+from ..core.ingest_limits import (
+    MAX_COMPRESSED_BODY_BYTES,
+    MAX_DECOMPRESSED_BODY_BYTES,
+    MAX_LINE_LENGTH,
+    MAX_RECORDS_PER_BATCH,
+    bounded_gzip_decompress,
+    read_limited_body,
+    validate_bounded_structure,
+)
 from ..core.rate_limit import limiter
 from ..schemas.ingest import BulkIngestPayload, BulkIngestResponse, BulkLogEntry
+from ..schemas.stream import StreamEnvelope
 from ..security import require_ingestion_api_key
+from ..security.data_scope import DataScope
+from ..security.redaction import sanitize_error_text
+from ..security.tenant_boundary import (
+    UntrustedTenantMetadataError,
+    reject_untrusted_tenant_fields,
+)
 
 logger = logging.getLogger("logsentinel.ingest.bulk")
 
@@ -16,8 +33,6 @@ router = APIRouter(
     tags=["Ingestion"],
     dependencies=[Depends(require_ingestion_api_key)],
 )
-
-MAX_PAYLOAD_SIZE = 10 * 1024 * 1024  # 10MB
 
 
 @router.post(
@@ -32,17 +47,18 @@ async def ingest_bulk(
     request: Request,
     service: str | None = Query(None, description="Fallback service name"),
     x_service_name: str | None = Header(None, alias="X-Service-Name"),
-    tenant_id: str = Depends(require_ingestion_api_key),
+    data_scope: DataScope = Depends(require_ingestion_api_key),
 ) -> BulkIngestResponse:
-    body = await request.body()
-    if len(body) > MAX_PAYLOAD_SIZE:
-        raise HTTPException(status_code=413, detail="Payload too large")
+    body = await read_limited_body(request, maximum_bytes=MAX_COMPRESSED_BODY_BYTES)
 
     if request.headers.get("Content-Encoding") == "gzip":
-        try:
-            body = gzip.decompress(body)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid gzip payload")
+        body = bounded_gzip_decompress(
+            body,
+            maximum_bytes=MAX_DECOMPRESSED_BODY_BYTES,
+            maximum_compressed_bytes=MAX_COMPRESSED_BODY_BYTES,
+        )
+    elif len(body) > MAX_DECOMPRESSED_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Payload too large")
 
     content_type = request.headers.get("Content-Type", "")
     is_ndjson = (
@@ -55,12 +71,18 @@ async def ingest_bulk(
 
     if is_ndjson:
         lines = body.decode("utf-8").splitlines()
+        if len(lines) > MAX_RECORDS_PER_BATCH:
+            raise HTTPException(status_code=413, detail="Too many records")
         for line in lines:
             line = line.strip()
             if not line:
                 continue
+            if len(line) > MAX_LINE_LENGTH:
+                dropped_count += 1
+                continue
             try:
                 data = json.loads(line)
+                validate_bounded_structure(data)
                 logs.append(BulkLogEntry.model_validate(data))
             except Exception:
                 dropped_count += 1
@@ -69,8 +91,11 @@ async def ingest_bulk(
             data = json.loads(body.decode("utf-8"))
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        validate_bounded_structure(data)
 
         if isinstance(data, list):
+            if len(data) > MAX_RECORDS_PER_BATCH:
+                raise HTTPException(status_code=413, detail="Too many records")
             for item in data:
                 try:
                     logs.append(BulkLogEntry.model_validate(item))
@@ -95,6 +120,18 @@ async def ingest_bulk(
         else:
             raise HTTPException(status_code=400, detail="Expected JSON array or object")
 
+    if len(logs) > MAX_RECORDS_PER_BATCH:
+        raise HTTPException(status_code=413, detail="Too many records")
+
+    try:
+        reject_untrusted_tenant_fields(
+            [log.model_dump(exclude_none=True) for log in logs]
+        )
+    except UntrustedTenantMetadataError as exc:
+        raise HTTPException(
+            status_code=422, detail="tenant_metadata_not_allowed"
+        ) from exc
+
     if not logs:
         return BulkIngestResponse(
             status="accepted",
@@ -113,10 +150,16 @@ async def ingest_bulk(
         pipe = redis.pipeline(transaction=False)
         for log in logs:
             payload_dict = log.model_dump(exclude_none=True)
-            payload_dict["tenant_id"] = tenant_id
+            payload_dict.setdefault("event_id", uuid.uuid4().hex)
+            envelope = StreamEnvelope(
+                event_id=str(payload_dict["event_id"]),
+                tenant_id=data_scope.tenant_id,
+                owner_user_id=data_scope.owner_user_id,
+                payload=payload_dict,
+            ).model_dump(mode="json")
             pipe.xadd(
-                "logs:stream",
-                {"payload": json.dumps(payload_dict)},
+                LOG_STREAM_NAME,
+                {"payload": json.dumps(envelope)},
                 maxlen=500000,
                 approximate=True,
             )
@@ -140,7 +183,11 @@ async def ingest_bulk(
             pass
 
     except Exception as e:
-        logger.error("Failed to enqueue payload to Redis: %s", str(e))
+        logger.error(
+            "Failed to enqueue payload to Redis: exception_type=%s detail=%s",
+            type(e).__name__,
+            sanitize_error_text(e),
+        )
         try:
             from ..main import ingest_request_rate
 

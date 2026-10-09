@@ -1,48 +1,51 @@
-import { Network, Target, Loader2 } from "lucide-react";
+import { Network, Target } from "lucide-react";
 import { DependencyGraph } from "../common/DependencyGraph";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { useTopology } from "../../hooks/useTopology";
+import type { ServiceGraph } from "../../types/monitoring";
+import { OperationalStateNotice, displayOperationalStatus } from "../common/OperationalState";
 
 export function RootCausePanel() {
-  const { activeTrackingLoops } = useTelemetryStream();
+  const { activeTrackingLoops, trackingLoopsDataState, connectionStatus } = useTelemetryStream();
 
   // Extract root causes from active tracking loops
   const rootCauses = activeTrackingLoops.flatMap(loop => {
     if (!loop.blast_radius) return [];
     
     return loop.blast_radius
-      .filter((node: any) => node.impact_classification === "root")
-      .map((node: any) => {
+      .filter((node) => node.impact_classification === "root")
+      .map((node) => {
         // Find direct dependencies affected by this root
         const affectedDeps = loop.blast_radius!
-          .filter((n: any) => n.impact_classification === "direct" && n.dependency_path.includes(node.service_name))
-          .map((n: any) => n.service_name);
+          .filter((n) => n.impact_classification === "direct" && n.dependency_path.includes(node.service_name))
+          .map((n) => n.service_name);
           
         return {
           id: `${loop.window_id}-${node.service_name}`,
           service: node.service_name,
-          probability: Math.min(1.0, loop.anomaly_score / 100), // Approximate probability from anomaly score
+          probability: Math.min(1.0, Math.max(0, loop.anomaly_score > 1 ? loop.anomaly_score / 100 : loop.anomaly_score)),
           issue: `Detected anomaly loop (Severity: ${loop.severity}) with impact score ${node.impact_score}`,
           affectedDeps,
         };
       });
   }).sort((a, b) => b.probability - a.probability).slice(0, 5); // Take top 5
 
-  const { topology } = useTopology(2000);
+  const { topology, dataState: topologyDataState } = useTopology(2000);
+  const topologyStatus = displayOperationalStatus(topologyDataState, connectionStatus);
 
   // Generate dynamic topology graph from telemetry
   const dynamicGraph = (() => {
     if (!topology || !topology.nodes) return { nodes: [], edges: [] };
     
-    const nodes: Array<{ id: string; x: number; y: number }> = [];
-    const edges: Array<{ from: string; to: string }> = [];
+    const nodes: ServiceGraph["nodes"] = [];
+    const edges: ServiceGraph["edges"] = [];
 
     topology.nodes.forEach(node => {
-      nodes.push({ id: node.id, x: 0, y: 0 }); // dagre handles layout in DependencyGraph
+      nodes.push({ id: node.id, x: 0, y: 0, status: node.status }); // dagre handles layout in DependencyGraph
     });
 
     topology.edges.forEach(edge => {
-      edges.push({ from: edge.source, to: edge.target });
+      edges.push({ from: edge.source, to: edge.target, isBlastPath: edge.is_blast_path });
     });
 
     return { nodes, edges };
@@ -58,10 +61,12 @@ export function RootCausePanel() {
 
       <div className="px-3 pt-3 space-y-1.5 min-h-[100px]">
         {rootCauses.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full py-4 text-[#7d8590]">
-            <Loader2 className="w-5 h-5 mb-2 animate-spin text-[#3fb950]" />
-            <span style={{ fontSize: "11px" }}>Monitoring telemetry streams...</span>
-          </div>
+          <OperationalStateNotice
+            state={trackingLoopsDataState}
+            connectionState={connectionStatus}
+            emptyMessage="No root-cause evidence was returned."
+            errorMessage="Root-cause telemetry is unavailable."
+          />
         ) : rootCauses.map((rootCause, index) => {
           const percentage = Math.round(rootCause.probability * 100);
           const color = percentage >= 85 ? "#f85149" : percentage >= 65 ? "#d29922" : "#7d8590";
@@ -116,7 +121,17 @@ export function RootCausePanel() {
           <span className="text-[#484f58]" style={{ fontSize: "10px" }}>Service Dependency Graph</span>
         </div>
         <div className="rounded-lg bg-[#0d1117] border border-[#21262d] overflow-hidden" style={{ height: 180 }}>
-          <DependencyGraph graph={dynamicGraph} />
+          {topologyStatus === "available" || topologyStatus === "empty" || topologyStatus === "stale" ? (
+            <DependencyGraph graph={dynamicGraph} />
+          ) : (
+            <OperationalStateNotice
+              state={topologyDataState}
+              connectionState={connectionStatus}
+              emptyMessage="No dependency topology was returned."
+              errorMessage="Dependency topology is unavailable."
+              className="m-3"
+            />
+          )}
         </div>
         <div className="flex gap-4 mt-2">
           {[

@@ -1,9 +1,14 @@
 import { NavLink, useNavigate } from "react-router";
+import { useMemo } from "react";
 import { ChevronRight, LogOut, Terminal } from "lucide-react";
 import { PRIMARY_NAV_ITEMS, SECONDARY_NAV_ITEMS } from "../constants/navigation";
 import type { NavigationItem } from "../constants/navigation";
-import { clearAuthToken, getAuthToken } from "../utils/auth";
+import { getAuthToken, logoutSession } from "../utils/auth";
 import { clearMicrosoftAuthCache } from "../providers/MsalProviderWrapper";
+import { useLiveLogs } from "../hooks/useLiveLogs";
+import { displayOperationalStatus } from "../components/common/OperationalState";
+import { buildServiceMetrics, deriveAnomalyRecords } from "../utils/anomalyRecords";
+import { deriveIncidentRecords } from "../utils/incidentRecords";
 import logsentinelLogo from "../assets/logo.png";
 
 /** Decode the JWT payload and extract the user's display name. */
@@ -38,7 +43,8 @@ function getInitials(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
-function NavigationLink({ item }: { item: NavigationItem }) {
+function NavigationLink({ item, badgeCount }: { item: NavigationItem; badgeCount?: number }) {
+  const showBadge = Number.isFinite(badgeCount) && (badgeCount ?? 0) > 0;
   return (
     <NavLink
       to={item.to}
@@ -55,12 +61,12 @@ function NavigationLink({ item }: { item: NavigationItem }) {
         <>
           <item.icon className={`w-4 h-4 shrink-0 ${isActive ? "text-[#388bfd]" : ""}`} />
           <span style={{ fontSize: "13px", fontWeight: isActive ? 500 : 400 }}>{item.label}</span>
-          {item.badge !== undefined && (
+          {showBadge && (
             <span className="ml-auto px-1.5 py-0.5 rounded-full bg-[#da3633] text-white" style={{ fontSize: "10px", fontWeight: 600, lineHeight: 1 }}>
-              {item.badge}
+              {(badgeCount ?? 0) > 99 ? "99+" : badgeCount}
             </span>
           )}
-          {isActive && !item.badge && <ChevronRight className="ml-auto w-3 h-3" />}
+          {isActive && !showBadge && <ChevronRight className="ml-auto w-3 h-3" />}
         </>
       )}
     </NavLink>
@@ -71,12 +77,29 @@ import { useTelemetryStream } from "../hooks/useTelemetryStream";
 
 export function Sidebar() {
   const navigate = useNavigate();
-  const { activeTrackingLoops } = useTelemetryStream();
+  const { activeTrackingLoops, latestPerformanceEvents, trackingLoopsDataState } = useTelemetryStream();
+  const { filteredLogs, dataState: logDataState, connectionState } = useLiveLogs();
+  const logStatus = displayOperationalStatus(logDataState, connectionState);
+  const trackingStatus = displayOperationalStatus(trackingLoopsDataState, connectionState);
+  const canonicalDataIsCurrent = trackingLoopsDataState.status === "available" && connectionState === "live";
+  const anomalyCount = useMemo(
+    () => canonicalDataIsCurrent
+      ? deriveAnomalyRecords(activeTrackingLoops, buildServiceMetrics(filteredLogs)).length
+      : undefined,
+    [activeTrackingLoops, canonicalDataIsCurrent, filteredLogs],
+  );
+  const incidentCount = useMemo(
+    () => canonicalDataIsCurrent
+      ? deriveIncidentRecords(activeTrackingLoops, latestPerformanceEvents).length
+      : undefined,
+    [activeTrackingLoops, canonicalDataIsCurrent, latestPerformanceEvents],
+  );
+  const monitoringLabel = connectionState === "reconnecting" ? "Reconnecting telemetry" : connectionState === "auth_required" ? "Session expired" : logStatus === "available" && trackingStatus === "available" ? "Monitoring current" : "Monitoring state unavailable";
   const displayName = getUserDisplayName();
   const initials = getInitials(displayName);
 
   const handleLogout = async () => {
-    clearAuthToken();
+    await logoutSession();
     await clearMicrosoftAuthCache();
     navigate("/login", { replace: true });
   };
@@ -92,22 +115,21 @@ export function Sidebar() {
       </div>
 
       <div className="mx-3 mt-3 mb-1 px-3 py-2 rounded-lg bg-[#161b22] border border-[#21262d] flex items-center gap-2">
-        <span className="w-2 h-2 rounded-full bg-[#3fb950] animate-pulse shrink-0" />
-        <span className="text-[#3fb950]" style={{ fontSize: "11px", fontWeight: 500 }}>System monitoring active</span>
+        <span className={`w-2 h-2 rounded-full shrink-0 ${monitoringLabel === "Monitoring current" ? "bg-[#3fb950]" : "bg-[#d29922]"}`} />
+        <span className={monitoringLabel === "Monitoring current" ? "text-[#3fb950]" : "text-[#d29922]"} style={{ fontSize: "11px", fontWeight: 500 }}>{monitoringLabel}</span>
       </div>
 
       <nav className="flex-1 px-2 py-2 space-y-0.5 overflow-y-auto" aria-label="Primary navigation">
         <div className="px-2 py-1.5">
           <span className="text-[#7d8590] uppercase tracking-widest" style={{ fontSize: "10px", fontWeight: 600 }}>Navigation</span>
         </div>
-        {PRIMARY_NAV_ITEMS.map((item) => {
-          let dynamicBadge = item.badge;
-          if (item.label === "Anomalies" || item.label === "Incidents") {
-            const count = activeTrackingLoops.length;
-            dynamicBadge = count > 0 ? count : undefined;
-          }
-          return <NavigationLink key={item.to} item={{ ...item, badge: dynamicBadge }} />;
-        })}
+        {PRIMARY_NAV_ITEMS.map((item) => (
+          <NavigationLink
+            key={item.to}
+            item={item}
+            badgeCount={item.to === "/anomalies" ? anomalyCount : item.to === "/incidents" ? incidentCount : undefined}
+          />
+        ))}
       </nav>
 
       <div className="px-2 py-2 border-t border-[#21262d] space-y-0.5">
@@ -134,4 +156,3 @@ export function Sidebar() {
     </aside>
   );
 }
-

@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -7,13 +8,31 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
+from ..core.constants import LOG_STREAM_NAME
 from ..core.dependencies import get_redis_client
+from ..core.ingest_limits import (
+    MAX_COMPRESSED_BODY_BYTES,
+    MAX_DECOMPRESSED_BODY_BYTES,
+    MAX_OTLP_BODY_BYTES,
+    MAX_RECORDS_PER_BATCH,
+    bounded_gzip_decompress,
+    read_limited_body,
+    validate_bounded_structure,
+)
+from ..core.rate_limit import limiter
 from ..schemas.otel import (
     ExportLogsPartialSuccess,
     ExportLogsServiceRequest,
     ExportLogsServiceResponse,
 )
+from ..schemas.stream import StreamEnvelope
 from ..security import require_ingestion_api_key
+from ..security.data_scope import DataScope
+from ..security.redaction import sanitize_error_text
+from ..security.tenant_boundary import (
+    UntrustedTenantMetadataError,
+    reject_untrusted_tenant_fields,
+)
 
 logger = logging.getLogger("logsentinel.otel")
 
@@ -75,10 +94,11 @@ def extract_attributes(attributes: list) -> dict[str, Any]:
 
 
 @router.post("/logs")
+@limiter.limit("100/minute")
 async def ingest_logs(
     request: Request,
     redis_client: Annotated[Redis, Depends(get_redis_client)],
-    tenant_id: str = Depends(require_ingestion_api_key),
+    data_scope: DataScope = Depends(require_ingestion_api_key),
 ) -> JSONResponse:
     """
     Ingest OpenTelemetry logs natively.
@@ -98,31 +118,51 @@ async def ingest_logs(
                     status_code=500, detail="Protobuf dependencies missing"
                 )
 
-            raw_body = await request.body()
+            raw_body = await read_limited_body(
+                request,
+                maximum_bytes=min(MAX_OTLP_BODY_BYTES, MAX_COMPRESSED_BODY_BYTES),
+            )
             if "gzip" in content_encoding:
-                import gzip
-
-                raw_body = gzip.decompress(raw_body)
+                raw_body = bounded_gzip_decompress(
+                    raw_body,
+                    maximum_bytes=MAX_DECOMPRESSED_BODY_BYTES,
+                    maximum_compressed_bytes=MAX_COMPRESSED_BODY_BYTES,
+                )
 
             pb_payload = LogsData.FromString(raw_body)
             body = MessageToDict(pb_payload, use_integers_for_enums=True)
             payload = ExportLogsServiceRequest.model_validate(body)
         else:
-            body = await request.json()
+            raw_body = await read_limited_body(
+                request, maximum_bytes=MAX_OTLP_BODY_BYTES
+            )
+            body = json.loads(raw_body)
+            validate_bounded_structure(body)
             payload = ExportLogsServiceRequest.model_validate(body)
+        validate_bounded_structure(payload.model_dump(mode="json", by_alias=True))
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Failed to parse OTLP payload: {e}")
+        logger.warning("OTLP payload rejected: error_type=%s", type(e).__name__)
         try:
             from ..main import ingest_request_rate
 
             ingest_request_rate.labels(endpoint="/v1/logs", status="400").inc()
         except Exception:
-            logger.debug("Unable to record OTLP parse metric", exc_info=True)
+            logger.debug("Unable to record OTLP parse metric")
         raise HTTPException(status_code=400, detail="Invalid OTLP payload")
 
     pipe = redis_client.pipeline(transaction=False)
 
     ingested_count = 0
+
+    record_count = sum(
+        len(scope_log.log_records)
+        for resource_log in payload.resource_logs
+        for scope_log in resource_log.scope_logs
+    )
+    if record_count > MAX_RECORDS_PER_BATCH:
+        raise HTTPException(status_code=413, detail="Too many records")
 
     for resource_log in payload.resource_logs:
         resource_attrs = (
@@ -142,6 +182,12 @@ async def ingest_logs(
                     metadata["trace_id"] = record.trace_id
                 if record.span_id:
                     metadata["span_id"] = record.span_id
+                try:
+                    reject_untrusted_tenant_fields(metadata, path="metadata")
+                except UntrustedTenantMetadataError as exc:
+                    raise HTTPException(
+                        status_code=422, detail="tenant_metadata_not_allowed"
+                    ) from exc
 
                 # Body parsing
                 log_message = ""
@@ -155,9 +201,9 @@ async def ingest_logs(
                     "environment": metadata.pop(
                         "deployment.environment", "production"
                     ),  # common convention
-                    "tenant_id": tenant_id,
                     "logs": [
                         {
+                            "event_id": uuid.uuid4().hex,
                             "timestamp": parse_otel_time(
                                 record.time_unix_nano, record.observed_time_unix_nano
                             ),
@@ -171,10 +217,17 @@ async def ingest_logs(
                     ],
                 }
 
+                envelope = StreamEnvelope(
+                    event_id=canonical_log["logs"][0]["event_id"],
+                    tenant_id=data_scope.tenant_id,
+                    owner_user_id=data_scope.owner_user_id,
+                    payload=canonical_log,
+                ).model_dump(mode="json")
+
                 # Batch XADD to Valkey
                 pipe.xadd(
-                    "logs:stream",
-                    {"payload": json.dumps(canonical_log)},
+                    LOG_STREAM_NAME,
+                    {"payload": json.dumps(envelope)},
                     maxlen=500000,
                     approximate=True,
                 )
@@ -184,13 +237,17 @@ async def ingest_logs(
         try:
             await pipe.execute()
         except Exception as e:
-            logger.error(f"Failed to execute Valkey pipeline for OTLP logs: {e}")
+            logger.error(
+                "Failed to execute Valkey pipeline for OTLP logs: exception_type=%s detail=%s",
+                type(e).__name__,
+                sanitize_error_text(e),
+            )
             try:
                 from ..main import ingest_request_rate
 
                 ingest_request_rate.labels(endpoint="/v1/logs", status="500").inc()
             except Exception:
-                logger.debug("Unable to record OTLP enqueue metric", exc_info=True)
+                logger.debug("Unable to record OTLP enqueue metric")
             raise HTTPException(status_code=500, detail="Failed to enqueue logs")
 
     try:
@@ -205,7 +262,7 @@ async def ingest_logs(
         batch_ingestion_size.labels(endpoint="/v1/logs").inc(ingested_count)
     except Exception:
         # Metrics are best-effort and must not change the OTLP response.
-        logger.debug("Unable to record OTLP ingestion metrics", exc_info=True)
+        logger.debug("Unable to record OTLP ingestion metrics")
 
     # Standard OTLP Response
     resp = ExportLogsServiceResponse(partial_success=ExportLogsPartialSuccess())  # type: ignore

@@ -1,0 +1,50 @@
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: logsentinel_pg_archiver_failed_total
+        values: "45 45 45 45 45 45"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: LogSentinelArchiverFailureIncrease
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: logsentinel_pg_archiver_failed_total
+        values: "45 45 45 46 46 46"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: LogSentinelArchiverFailureIncrease
+        exp_alerts:
+          - exp_labels:
+              alertname: LogSentinelArchiverFailureIncrease
+              severity: critical
+              component: pitr
+              service: postgres
+            exp_annotations:
+              summary: New PostgreSQL WAL archive failures occurred
+              description: The archiver failure counter increased during the last 15 minutes; historical failures alone do not fire this alert.
+              runbook_url: docs/operations/monitoring.md#pitrarchive
+
+  - interval: 1m
+    input_series:
+      - series: logsentinel_monitoring_canary
+        values: "0 1 1 1"
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: LogSentinelMonitoringCanary
+        exp_alerts:
+          - exp_labels:
+              alertname: LogSentinelMonitoringCanary
+              severity: warning
+              component: monitoring-canary
+              service: alerting
+            exp_annotations:
+              summary: LogSentinel monitoring canary is firing
+              description: This is the safe operator-controlled end-to-end alert-delivery canary.
+              runbook_url: docs/operations/monitoring.md#canary

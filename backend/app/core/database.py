@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from ..security.redaction import sanitize_error_text
 from .settings import DatabaseSettings
 
 logger = logging.getLogger("logsentinel.database")
@@ -130,14 +131,20 @@ async def verify_connectivity() -> None:
                 attempt,
                 _CONNECTIVITY_MAX_RETRIES,
                 type(exc).__name__,
-                exc,
+                sanitize_error_text(exc),
                 delay,
             )
             await asyncio.sleep(delay)
 
+    if last_error is not None:
+        logger.error(
+            "Database connectivity exhausted: exception_type=%s detail=%s",
+            type(last_error).__name__,
+            sanitize_error_text(last_error),
+        )
     raise RuntimeError(
-        f"FATAL: Could not connect to the database after "
-        f"{_CONNECTIVITY_MAX_RETRIES} attempts. Last error: {last_error}"
+        "FATAL: Could not connect to the database after "
+        f"{_CONNECTIVITY_MAX_RETRIES} attempts."
     )
 
 
@@ -179,8 +186,49 @@ async def verify_schema_ready() -> None:
                             EXISTS (
                                 SELECT 1
                                 FROM schema_migrations
-                                WHERE version = '20260826_0001_multitenant_partitioning'
-                            ) AS current_migration,
+                                WHERE version = '20260911_0005_distributed_correctness'
+                            ) AS distributed_correctness_migration,
+                            EXISTS (
+                                SELECT 1
+                                FROM schema_migrations
+                                WHERE version = '20260911_0006_durable_webhook_delivery'
+                            ) AS durable_webhook_migration,
+                            EXISTS (
+                                SELECT 1 FROM schema_migrations
+                                WHERE version = '20260912_0007_application_release_gates'
+                            ) AS application_release_gates_migration,
+                            EXISTS (
+                                SELECT 1 FROM schema_migrations
+                                WHERE version = '20260912_0009_pipeline_feature_durability'
+                            ) AS pipeline_feature_durability_migration,
+                            EXISTS (
+                                SELECT 1 FROM schema_migrations
+                                WHERE version = '20260913_0010_per_user_data_ownership'
+                            ) AS per_user_ownership_migration,
+                            EXISTS (
+                                SELECT 1 FROM schema_migrations
+                                WHERE version = '20260917_0011_password_reset_atomicity'
+                            ) AS password_reset_atomicity_migration,
+                            EXISTS (
+                                SELECT 1 FROM pg_tables
+                                WHERE schemaname = 'public' AND tablename = 'pipeline_outbox'
+                            ) AS pipeline_outbox_table,
+                            EXISTS (
+                                SELECT 1 FROM pg_tables
+                                WHERE schemaname = 'public' AND tablename = 'tenant_integrations'
+                            ) AS tenant_integrations_table,
+                            EXISTS (
+                                SELECT 1 FROM pg_tables
+                                WHERE schemaname = 'public' AND tablename = 'email_outbox'
+                            ) AS email_outbox_table,
+                            EXISTS (
+                                SELECT 1 FROM pg_tables
+                                WHERE schemaname = 'public' AND tablename = 'password_reset_tokens'
+                            ) AS password_reset_tokens_table,
+                            EXISTS (
+                                SELECT 1 FROM pg_tables
+                                WHERE schemaname = 'public' AND tablename = 'pipeline_feature_inputs'
+                            ) AS pipeline_feature_inputs_table,
                             EXISTS (
                                 SELECT 1
                                 FROM pg_extension
@@ -210,7 +258,17 @@ async def verify_schema_ready() -> None:
         "logs_table",
         "migration_table",
         "canonical_bootstrap",
-        "current_migration",
+        "distributed_correctness_migration",
+        "durable_webhook_migration",
+        "application_release_gates_migration",
+        "pipeline_feature_durability_migration",
+        "per_user_ownership_migration",
+        "password_reset_atomicity_migration",
+        "pipeline_outbox_table",
+        "tenant_integrations_table",
+        "email_outbox_table",
+        "password_reset_tokens_table",
+        "pipeline_feature_inputs_table",
         "timescale_extension",
         "logs_hypertable",
     )
