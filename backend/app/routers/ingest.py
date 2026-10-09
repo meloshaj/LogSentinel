@@ -10,7 +10,7 @@ from redis.asyncio import Redis
 
 from ..core.constants import LOG_STREAM_NAME
 from ..core.ingest_limits import validate_bounded_structure
-from ..core.rate_limit import limiter
+from ..core.rate_limit import get_ingest_rate_limit, is_test_mode, limiter
 from ..models import LogEntry
 from ..schemas.ingest import IngestPayload, IngestResponse
 from ..schemas.stream import StreamEnvelope
@@ -68,7 +68,7 @@ router = APIRouter(
         },
     },
 )
-@limiter.limit("100/minute")
+@limiter.limit(get_ingest_rate_limit, exempt_when=is_test_mode)
 async def ingest_log_endpoint(
     request: Request,
     payload: IngestPayload | list[LogEntry],

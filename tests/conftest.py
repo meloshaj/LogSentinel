@@ -11,6 +11,8 @@ os.environ.setdefault(
     "JWT_SECRET_KEY",
     "test-only-root-secret-key-32-bytes-minimum",
 )
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("TEST_MODE", "true")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:

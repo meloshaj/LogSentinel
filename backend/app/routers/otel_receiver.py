@@ -19,7 +19,7 @@ from ..core.ingest_limits import (
     read_limited_body,
     validate_bounded_structure,
 )
-from ..core.rate_limit import limiter
+from ..core.rate_limit import get_ingest_rate_limit, is_test_mode, limiter
 from ..schemas.otel import (
     ExportLogsPartialSuccess,
     ExportLogsServiceRequest,
@@ -94,7 +94,7 @@ def extract_attributes(attributes: list) -> dict[str, Any]:
 
 
 @router.post("/logs")
-@limiter.limit("100/minute")
+@limiter.limit(get_ingest_rate_limit, exempt_when=is_test_mode)
 async def ingest_logs(
     request: Request,
     redis_client: Annotated[Redis, Depends(get_redis_client)],

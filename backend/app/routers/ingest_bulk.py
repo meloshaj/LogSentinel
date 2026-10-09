@@ -15,7 +15,7 @@ from ..core.ingest_limits import (
     read_limited_body,
     validate_bounded_structure,
 )
-from ..core.rate_limit import limiter
+from ..core.rate_limit import get_ingest_rate_limit, is_test_mode, limiter
 from ..schemas.ingest import BulkIngestPayload, BulkIngestResponse, BulkLogEntry
 from ..schemas.stream import StreamEnvelope
 from ..security import require_ingestion_api_key
@@ -42,7 +42,7 @@ router = APIRouter(
     summary="High-Performance Bulk Ingest",
     description="Ingest logs in bulk with standard JSON arrays, NDJSON, or GZIP payloads.",
 )
-@limiter.limit("100/minute")
+@limiter.limit(get_ingest_rate_limit, exempt_when=is_test_mode)
 async def ingest_bulk(
     request: Request,
     service: str | None = Query(None, description="Fallback service name"),
