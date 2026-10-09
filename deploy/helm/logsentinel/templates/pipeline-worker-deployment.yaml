@@ -1,0 +1,62 @@
+{{- if .Values.workers.pipeline.enabled }}
+{{- if gt (int .Values.replicaCount.pipelineWorker) 1 }}
+{{- fail "pipelineWorker replicas must remain 1 while feature windows are process-local" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "logsentinel.fullname" . }}-pipeline-worker
+spec:
+  replicas: {{ .Values.replicaCount.pipelineWorker }}
+  strategy:
+    # Feature windows are process-local, so pipeline replicas may not overlap.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "logsentinel.name" . }}-pipeline-worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "logsentinel.name" . }}-pipeline-worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ include "logsentinel.fullname" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds.pipelineWorker }}
+      containers:
+        - name: pipeline-worker
+          image: {{ include "logsentinel.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "app.cli.worker"]
+          args: ["run", "pipeline"]
+          env:
+            - name: WORKER_INSTANCE_ID
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+          envFrom:
+            - configMapRef: {name: {{ include "logsentinel.fullname" . }}-config}
+            - secretRef: {name: {{ include "logsentinel.secretName" . }}}
+          securityContext: &workerSecurityContext
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          livenessProbe:
+            exec:
+              command: ["python", "-c", "import os; os.kill(1, 0)"]
+            initialDelaySeconds: {{ .Values.probes.worker.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.worker.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.worker.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.worker.failureThreshold }}
+          readinessProbe:
+            exec:
+              command: ["python", "-m", "app.cli.worker", "healthcheck", "pipeline"]
+            initialDelaySeconds: {{ .Values.probes.worker.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.worker.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.worker.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.worker.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources.pipelineWorker | nindent 12 }}
+{{- end }}

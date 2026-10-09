@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -105,7 +106,8 @@ def _build_test_token(
     iss: str = _TEST_ISSUER,
     aud: str = _TEST_CLIENT_ID,
     tid: str = _TEST_TENANT_ID,
-    scp: str = _TEST_SCOPE,
+    scp: Any = _TEST_SCOPE,
+    include_scp: bool = True,
     email: str | None = _TEST_EMAIL,
     name: str | None = _TEST_NAME,
     oid: str | None = _TEST_OID,
@@ -122,10 +124,11 @@ def _build_test_token(
         "iss": iss,
         "aud": aud,
         "tid": tid,
-        "scp": scp,
         "exp": exp if exp is not None else now + 3600,
         "iat": now,
     }
+    if include_scp:
+        payload["scp"] = scp
     if nbf is not None:
         payload["nbf"] = nbf
     if email is not None:
@@ -398,6 +401,70 @@ class TestMicrosoftTokenVerifier:
         with pytest.raises(MissingRequiredScopeError):
             verifier.verify(token)
 
+    def test_absent_required_scope_rejected(self) -> None:
+        """A delegated token without an scp claim cannot bypass authorization."""
+        settings = _build_test_settings()
+        verifier = MicrosoftTokenVerifier(settings)
+        _mock_jwk_client(verifier)
+
+        token = _build_test_token(include_scp=False)
+        with pytest.raises(MissingRequiredScopeError):
+            verifier.verify(token)
+
+    @pytest.mark.parametrize(
+        "scp",
+        [None, ["access_as_user"], "   "],
+        ids=["null", "non-string", "whitespace-only"],
+    )
+    def test_invalid_required_scope_claim_rejected(self, scp: Any) -> None:
+        """Null, non-string, and blank scp claims fail closed."""
+        settings = _build_test_settings()
+        verifier = MicrosoftTokenVerifier(settings)
+        _mock_jwk_client(verifier)
+
+        token = _build_test_token(scp=scp)
+        with pytest.raises(MissingRequiredScopeError):
+            verifier.verify(token)
+
+    def test_multiple_scopes_accept_exact_required_member(self) -> None:
+        """A space-separated claim accepts an exact scope member."""
+        settings = _build_test_settings()
+        verifier = MicrosoftTokenVerifier(settings)
+        _mock_jwk_client(verifier)
+
+        identity = verifier.verify(
+            _build_test_token(scp="openid access_as_user profile")
+        )
+        assert identity.subject == _TEST_SUBJECT
+
+    @pytest.mark.parametrize(
+        "scp",
+        ["access_as_userwrite", "prefix.access_as_user", "access_as_user.extra"],
+        ids=["suffix-collision", "prefix-collision", "scope-looking-suffix"],
+    )
+    def test_scope_substring_collisions_rejected(self, scp: str) -> None:
+        """Substring and dotted-name collisions do not satisfy exact matching."""
+        settings = _build_test_settings()
+        verifier = MicrosoftTokenVerifier(settings)
+        _mock_jwk_client(verifier)
+
+        token = _build_test_token(scp=scp)
+        with pytest.raises(MissingRequiredScopeError):
+            verifier.verify(token)
+
+    def test_application_role_does_not_substitute_for_delegated_scope(self) -> None:
+        """There is no implicit application-token roles fallback."""
+        settings = _build_test_settings()
+        verifier = MicrosoftTokenVerifier(settings)
+        _mock_jwk_client(verifier)
+
+        token = _build_test_token(
+            include_scp=False,
+            extra_claims={"roles": [_TEST_SCOPE]},
+        )
+        with pytest.raises(MissingRequiredScopeError):
+            verifier.verify(token)
+
     def test_empty_scope_rejected(self) -> None:
         """A token with empty scp claim is rejected."""
         settings = _build_test_settings()
@@ -612,6 +679,12 @@ class TestMicrosoftEndpoint:
                 mock_execute_result_ext,  # ExternalIdentityRepository lookup
                 mock_execute_result_user,  # UserRepository.get_user_by_email
             ]
+            mock_db.scalar.return_value = SimpleNamespace(
+                tenant_id="tenant-a", enabled=True, default_role="viewer",
+            )
+            mock_db.get.return_value = SimpleNamespace(
+                id="tenant-a", status="active",
+            )
 
             # Mock db.refresh for create_user
             async def mock_refresh(obj):
@@ -644,6 +717,7 @@ class TestMicrosoftEndpoint:
             email=_TEST_EMAIL,
             hashed_password=None,
             full_name=_TEST_NAME,
+            tenant_id="tenant-a",
         )
         existing_ext = ExternalIdentityRecord(
             id=1,
@@ -669,6 +743,12 @@ class TestMicrosoftEndpoint:
                 mock_result_ext,
                 mock_result_user,
             ]
+            mock_db.scalar.return_value = SimpleNamespace(
+                tenant_id="tenant-a", enabled=True, default_role="viewer",
+            )
+            mock_db.get.return_value = SimpleNamespace(
+                id="tenant-a", status="active",
+            )
 
             response = client.post(
                 "/api/auth/microsoft",
@@ -825,6 +905,12 @@ class TestMicrosoftEndpoint:
         no_result = MagicMock()
         no_result.scalar_one_or_none.return_value = None
         mock_db.execute.side_effect = [no_result, no_result]
+        mock_db.scalar.return_value = SimpleNamespace(
+            tenant_id="tenant-a", enabled=True, default_role="viewer",
+        )
+        mock_db.get.return_value = SimpleNamespace(
+            id="tenant-a", status="active",
+        )
 
         integrity_error = IntegrityError("insert", {}, Exception("duplicate"))
         with patch.object(
@@ -1025,10 +1111,17 @@ class TestExistingAuthUnchanged:
             hashed_password="hash",
             full_name="Profile User",
             organization="Test Org",
+            tenant_id="tenant-a",
+            status="active",
         )
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = user
         mock_db.execute.return_value = mock_result
+        mock_db.scalar.side_effect = [
+            SimpleNamespace(id="tenant-a", status="active"),
+            SimpleNamespace(tenant_id="tenant-a", user_id=42, role="viewer", status="active"),
+            SimpleNamespace(id="tenant-a", status="active"),
+        ]
 
         token = create_access_token({"sub": "profile@company.com"})
         response = client.get(

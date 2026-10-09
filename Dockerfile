@@ -1,4 +1,5 @@
-FROM --platform=$BUILDPLATFORM node:22-alpine AS build
+# node:22.14.0-alpine3.21; immutable multi-arch OCI index.
+FROM --platform=$BUILDPLATFORM node@sha256:9bef0ef1e268f60627da9ba7d7605e8831d5b56ad07487d24d1aa386336d1944 AS build
 
 WORKDIR /app
 
@@ -26,15 +27,15 @@ ENV VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI=$VITE_MICROSOFT_POST_LOGOUT_REDIRECT
 ENV VITE_GOOGLE_AUTH_ENABLED=$VITE_GOOGLE_AUTH_ENABLED
 ENV VITE_FEATURE_ENABLE_GITHUB_AUTH=$VITE_FEATURE_ENABLE_GITHUB_AUTH
 
-RUN corepack enable
-
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY . .
-RUN pnpm build
+RUN npm run build
 
-FROM caddy:2-alpine AS production
+# caddy:2.11.4-alpine; immutable multi-arch OCI index.
+# Registry manifest digest: sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+FROM caddy@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e AS production
 
 WORKDIR /app
 
@@ -51,6 +52,9 @@ RUN mkdir -p /data /config && \
 
 USER appuser
 
-EXPOSE 80 443
+EXPOSE 8080 8443
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1
 
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

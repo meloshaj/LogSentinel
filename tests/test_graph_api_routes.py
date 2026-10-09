@@ -21,6 +21,7 @@ def _make_fake_user() -> MagicMock:
     user = MagicMock()
     user.id = 1
     user.email = "test@logsentinel.io"
+    user.tenant_id = "test-tenant"
     return user
 
 
@@ -38,7 +39,7 @@ class FakeTopologyPipeline:
         self.snapshot = snapshot
         self.calls = 0
 
-    def get_snapshot(self) -> dict[str, Any]:
+    def get_snapshot(self, tenant_id: str, owner_user_id: int) -> dict[str, Any]:
         self.calls += 1
         return self.snapshot
 
@@ -49,7 +50,7 @@ class FakeTrackingRepository:
         self.calls: list[int] = []
 
     async def get_tracking_loop_by_id(
-        self, tracking_loop_id: int, tenant_id: str = "default"
+        self, *, scope: Any, tracking_loop_id: int
     ) -> dict[str, Any] | None:
         self.calls.append(tracking_loop_id)
         return self.rows.get(tracking_loop_id)

@@ -8,7 +8,9 @@ from backend.app.security.auth import get_current_user
 
 @pytest.fixture(autouse=True)
 def override_auth():
-    app.dependency_overrides[get_current_user] = lambda: {"sub": "test"}
+    app.dependency_overrides[get_current_user] = lambda: {
+        "sub": "test", "id": 101, "tenant_id": "test-tenant"
+    }
     yield
     app.dependency_overrides = {}
 

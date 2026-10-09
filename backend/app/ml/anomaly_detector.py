@@ -91,7 +91,10 @@ class IsolationForestAnomalyDetector:
             n_estimators=100,
             contamination=self.contamination,
             random_state=self.random_state,
-            n_jobs=-1,
+            # A worker process must not fan out unbounded native threads.  The
+            # previous value (-1) also fails in restricted Windows/container
+            # sandboxes when joblib creates named pipes.
+            n_jobs=1,
         )
         self.model.fit(matrix)
         self.training_samples = len(matrix)
@@ -163,7 +166,12 @@ class IsolationForestAnomalyDetector:
             self.inference_errors_total += len(feature_vectors) or 1
             raise
 
-    def save_model(self, path: str | Path) -> None:
+    def save_model(
+        self,
+        path: str | Path,
+        *,
+        artifact_metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Persist the trained model and metadata to disk."""
         if self.model is None:
             raise ValueError("No trained model available to save")
@@ -176,6 +184,7 @@ class IsolationForestAnomalyDetector:
                 "model_version": self.model_version,
                 "feature_columns": FEATURE_COLUMNS,
                 "training_samples": self.training_samples,
+                "artifact_metadata": artifact_metadata or {},
             },
             model_path,
         )

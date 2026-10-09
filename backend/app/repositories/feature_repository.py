@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -19,15 +20,20 @@ from sqlalchemy import (
     MetaData,
     Table,
     and_,
-    insert,
+    delete,
     join,
     select,
 )
 from sqlalchemy.dialects.postgresql import JSONB, VARCHAR
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..core.database import get_engine
+from ..core.pipeline_orm import window_inputs
 from ..models import FeatureVector
+from ..security.data_scope import DataScope
+from ..security.tenant_boundary import TenantBoundaryViolation
+from ..services.durable_queue import enqueue
 
 logger = logging.getLogger("logsentinel.feature_repository")
 
@@ -38,6 +44,7 @@ feature_windows_table = Table(
     metadata,
     Column("id", Integer, primary_key=True),
     Column("tenant_id", VARCHAR(64), nullable=False),
+    Column("owner_user_id", BigInteger, nullable=False),
     Column("window_id", VARCHAR(128), nullable=False),
     Column("start_time", DateTime(timezone=True), nullable=False),
     Column("end_time", DateTime(timezone=True), nullable=False),
@@ -53,6 +60,7 @@ anomaly_events_table = Table(
     metadata,
     Column("id", Integer, primary_key=True),
     Column("tenant_id", VARCHAR(64), nullable=False),
+    Column("owner_user_id", BigInteger, nullable=False),
     Column("window_id", VARCHAR(128), nullable=False),
     Column("event_type", VARCHAR(64), nullable=False),
     Column("severity", VARCHAR(32), nullable=False),
@@ -79,10 +87,35 @@ class FeatureRepository:
         self, tenant_id: str, feature_vector: FeatureVector
     ) -> None:
         """Insert a single feature vector and its anomaly event (if any)."""
-        now = datetime.now(timezone.utc)
+        if str(tenant_id).strip() != str(feature_vector.tenant_id).strip():
+            raise TenantBoundaryViolation(
+                "tenant identity mismatch at feature-persistence"
+            )
+        if feature_vector.owner_user_id <= 0:
+            raise TenantBoundaryViolation(
+                "owner identity missing at feature-persistence"
+            )
+        async with self.engine.begin() as conn:
+            await self.persist_feature_vector_on_connection(
+                conn, tenant_id, feature_vector
+            )
 
+    async def persist_feature_vector_on_connection(
+        self, conn: Any, tenant_id: str, feature_vector: FeatureVector
+    ) -> None:
+        """Persist a feature/anomaly pair in a caller-owned transaction."""
+        if str(tenant_id).strip() != str(feature_vector.tenant_id).strip():
+            raise TenantBoundaryViolation(
+                "tenant identity mismatch at feature-persistence"
+            )
+        if feature_vector.owner_user_id <= 0:
+            raise TenantBoundaryViolation(
+                "owner identity missing at feature-persistence"
+            )
+        now = datetime.now(timezone.utc)
         window_row = {
             "tenant_id": tenant_id,
+            "owner_user_id": feature_vector.owner_user_id,
             "window_id": feature_vector.window_id,
             "start_time": feature_vector.window_start or now,
             "end_time": feature_vector.window_end or now,
@@ -92,33 +125,97 @@ class FeatureRepository:
             "anomaly_prediction": feature_vector.anomaly_prediction,
             "created_at": now,
         }
-
-        try:
-            async with self.engine.begin() as conn:
-                await conn.execute(insert(feature_windows_table), [window_row])
-
-                # If an anomaly was detected, also write an anomaly event row
-                prediction = feature_vector.anomaly_prediction
-                if (
-                    isinstance(prediction, dict)
-                    and prediction.get("is_anomaly") is True
-                ):
-                    anomaly_row = {
-                        "tenant_id": tenant_id,
-                        "window_id": feature_vector.window_id,
-                        "event_type": "anomaly.detected",
-                        "severity": prediction.get("severity", "unknown"),
-                        "score": prediction.get("anomaly_score"),
-                        "details": prediction,
-                        "acknowledged": False,
-                        "created_at": now,
-                    }
-                    await conn.execute(insert(anomaly_events_table), [anomaly_row])
-
-        except Exception:
-            logger.exception(
-                "Failed to persist feature vector %s", feature_vector.window_id
+        await conn.execute(
+            pg_insert(feature_windows_table)
+            .values(window_row)
+            .on_conflict_do_nothing(
+                index_elements=["tenant_id", "owner_user_id", "window_id"]
             )
+        )
+
+        prediction = feature_vector.anomaly_prediction
+        if isinstance(prediction, dict) and prediction.get("is_anomaly") is True:
+            anomaly_row = {
+                "tenant_id": tenant_id,
+                "owner_user_id": feature_vector.owner_user_id,
+                "window_id": feature_vector.window_id,
+                "event_type": "anomaly.detected",
+                "severity": prediction.get("severity", "unknown"),
+                "score": prediction.get("anomaly_score"),
+                "details": prediction,
+                "acknowledged": False,
+                "created_at": now,
+            }
+            await conn.execute(
+                pg_insert(anomaly_events_table)
+                .values(anomaly_row)
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        "tenant_id",
+                        "owner_user_id",
+                        "window_id",
+                        "event_type",
+                    ]
+                )
+            )
+
+    async def register_feature_work(self, feature_vectors: list[FeatureVector]) -> None:
+        """Register stable feature-window work before the extractor advances."""
+        if not feature_vectors:
+            return
+        async with self.engine.begin() as conn:
+            for feature_vector in feature_vectors:
+                await enqueue(
+                    conn,
+                    tenant_id=feature_vector.tenant_id,
+                    owner_user_id=feature_vector.owner_user_id,
+                    topic="feature_window",
+                    dedup_key=feature_vector.window_id,
+                    payload=feature_vector.model_dump(mode="json"),
+                    event_id=feature_vector.window_id,
+                )
+
+    async def persist_feature_input_on_connection(
+        self, conn: Any, parsed_log: Any
+    ) -> None:
+        """Durably materialize one accepted source event for restart recovery."""
+        await conn.execute(
+            pg_insert(window_inputs)
+            .values(
+                tenant_id=parsed_log.tenant_id,
+                owner_user_id=parsed_log.owner_user_id,
+                event_id=parsed_log.event_id or parsed_log.id,
+                event_timestamp=parsed_log.timestamp,
+                payload=parsed_log.model_dump(mode="json"),
+            )
+            .on_conflict_do_nothing(
+                index_elements=["tenant_id", "owner_user_id", "event_id"]
+            )
+        )
+
+    async def get_recent_feature_inputs(
+        self, *, since: datetime, limit: int = 50000
+    ) -> list[dict[str, Any]]:
+        """Return a bounded active-horizon source set for process restart."""
+        stmt = (
+            select(window_inputs)
+            .where(window_inputs.c.event_timestamp >= since)
+            .order_by(
+                window_inputs.c.event_timestamp.asc(), window_inputs.c.event_id.asc()
+            )
+            .limit(max(0, limit))
+        )
+        async with self.engine.connect() as conn:
+            rows = (await conn.execute(stmt)).mappings().all()
+        return [dict(row) for row in rows]
+
+    async def prune_feature_inputs(self, *, before: datetime) -> int:
+        """Bound durable recovery inputs once they are outside the active horizon."""
+        async with self.engine.begin() as conn:
+            result = await conn.execute(
+                delete(window_inputs).where(window_inputs.c.event_timestamp < before)
+            )
+            return int(result.rowcount or 0)
 
     async def persist_feature_vectors(
         self, tenant_id: str, feature_vectors: list[FeatureVector]
@@ -127,23 +224,20 @@ class FeatureRepository:
         if not feature_vectors:
             return 0
 
-        persisted = 0
         for fv in feature_vectors:
-            try:
-                await self.persist_feature_vector(tenant_id, fv)
-                persisted += 1
-            except Exception:
-                logger.exception("Failed to persist feature vector %s", fv.window_id)
-
-        return persisted
+            await self.persist_feature_vector(tenant_id, fv)
+        return len(feature_vectors)
 
     async def get_recent_features(
-        self, tenant_id: str, limit: int = 50
+        self, scope: DataScope, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Return recent feature windows as dicts, newest first."""
         stmt = (
             select(feature_windows_table)
-            .where(feature_windows_table.c.tenant_id == tenant_id)
+            .where(
+                feature_windows_table.c.tenant_id == scope.tenant_id,
+                feature_windows_table.c.owner_user_id == scope.owner_user_id,
+            )
             .order_by(feature_windows_table.c.created_at.desc())
             .limit(max(0, limit))
         )
@@ -155,12 +249,15 @@ class FeatureRepository:
         return [dict(row) for row in rows]
 
     async def get_recent_anomalies(
-        self, tenant_id: str, limit: int = 50
+        self, scope: DataScope, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Return recent anomaly events as dicts, newest first."""
         stmt = (
             select(anomaly_events_table)
-            .where(anomaly_events_table.c.tenant_id == tenant_id)
+            .where(
+                anomaly_events_table.c.tenant_id == scope.tenant_id,
+                anomaly_events_table.c.owner_user_id == scope.owner_user_id,
+            )
             .order_by(anomaly_events_table.c.created_at.desc())
             .limit(max(0, limit))
         )
@@ -174,7 +271,7 @@ class FeatureRepository:
     async def get_recent_anomaly_contexts(
         self,
         *,
-        tenant_id: str,
+        scope: DataScope,
         start_time: datetime,
         end_time: datetime,
         limit: int = 500,
@@ -185,6 +282,8 @@ class FeatureRepository:
             feature_windows_table,
             and_(
                 anomaly_events_table.c.tenant_id == feature_windows_table.c.tenant_id,
+                anomaly_events_table.c.owner_user_id
+                == feature_windows_table.c.owner_user_id,
                 anomaly_events_table.c.window_id == feature_windows_table.c.window_id,
             ),
         )
@@ -207,7 +306,8 @@ class FeatureRepository:
             .select_from(joined)
             .where(
                 and_(
-                    anomaly_events_table.c.tenant_id == tenant_id,
+                    anomaly_events_table.c.tenant_id == scope.tenant_id,
+                    anomaly_events_table.c.owner_user_id == scope.owner_user_id,
                     anomaly_events_table.c.created_at >= start_time,
                     anomaly_events_table.c.created_at <= end_time,
                 )

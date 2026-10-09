@@ -52,7 +52,7 @@ sinks:
       type: "none"
     request:
       headers:
-        X-API-Key: "${LOGSENTINEL_API_KEY:-change_me}"
+        X-API-Key: "${LOGSENTINEL_API_KEY}"
     encoding:
       codec: "ndjson"
     compression: "gzip"

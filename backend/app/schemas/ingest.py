@@ -19,6 +19,7 @@ class LogEntry(BaseModel):
     )
     level: str = Field(default="info", description="Log severity")
     message: str = Field(..., min_length=1, description="The log message payload")
+    event_id: str | None = Field(default=None, min_length=1, max_length=128)
     metadata: dict[str, Any] = Field(
         default_factory=dict, description="Optional structured metadata"
     )
@@ -65,6 +66,7 @@ class BulkLogEntry(BaseModel):
     service_name: str | None = Field(None, description="Name of the emitting service")
     level: str = Field(default="INFO", description="Log severity")
     message: str = Field(..., min_length=1, description="The log message payload")
+    event_id: str | None = Field(default=None, min_length=1, max_length=128)
     trace_id: str | None = Field(None, description="Distributed trace identifier")
     span_id: str | None = Field(None, description="Current span identifier")
     parent_span_id: str | None = Field(None, description="Parent span identifier")

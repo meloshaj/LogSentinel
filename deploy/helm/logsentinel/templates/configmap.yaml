@@ -3,14 +3,23 @@ kind: ConfigMap
 metadata:
   name: {{ include "logsentinel.fullname" . }}-config
 data:
-  REDIS_HOST: {{ .Values.env.redisHost | quote }}
-  REDIS_PORT: {{ .Values.env.redisPort | default 6379 | quote }}
-  POSTGRES_HOST: {{ .Values.env.postgresHost | quote }}
+  ENVIRONMENT: "production"
+  REDIS_URL: {{ printf "redis://%s:%v/0" (required "env.redisHost must be set for the external Valkey service" .Values.env.redisHost) (.Values.env.redisPort | default 6379) | quote }}
+  RUN_EMBEDDED_WORKERS: "false"
+  RUN_WEBHOOK_WORKER_IN_LIFESPAN: "false"
+  RUN_ARCHIVE_WORKER_IN_LIFESPAN: "false"
+  POSTGRES_HOST: {{ required "env.postgresHost must be set for the external PostgreSQL service" .Values.env.postgresHost | quote }}
   POSTGRES_PORT: {{ .Values.env.postgresPort | default 5432 | quote }}
   POSTGRES_USER: {{ .Values.env.dbUser | quote }}
   POSTGRES_DB: {{ .Values.env.dbName | quote }}
+  POSTGRES_SSL_MODE: {{ .Values.env.postgresSslMode | quote }}
   POSTGRES_POOL_SIZE: {{ .Values.env.postgresPoolSize | default 20 | quote }}
   POSTGRES_MAX_OVERFLOW: {{ .Values.env.postgresMaxOverflow | default 10 | quote }}
   DRAIN3_BATCH_SIZE: {{ .Values.env.drain3BatchSize | default 500 | quote }}
   DRAIN3_FLUSH_INTERVAL_SECONDS: {{ .Values.env.drain3FlushIntervalSeconds | default "2.0" | quote }}
   DRAIN3_QUEUE_DRAIN_TIMEOUT_SECONDS: {{ .Values.env.drain3QueueDrainTimeoutSeconds | default "30.0" | quote }}
+  LOG_STREAM_NAME: {{ .Values.env.logStreamName | quote }}
+  LOG_WORKERS_GROUP: {{ .Values.env.logWorkersGroup | quote }}
+  WEBHOOK_MAX_ATTEMPTS: {{ .Values.env.webhookMaxAttempts | quote }}
+  WEBHOOK_RETRY_BASE_SECONDS: {{ .Values.env.webhookRetryBaseSeconds | quote }}
+  WEBHOOK_RETRY_MAX_SECONDS: {{ .Values.env.webhookRetryMaxSeconds | quote }}

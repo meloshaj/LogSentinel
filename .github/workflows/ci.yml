@@ -1,148 +1,415 @@
-name: LogSentinel CI Pipeline
+name: LogSentinel CI and Release Gate
 
 on:
   push:
-    branches:
-      - main
-      - dev
+    branches: [main, dev]
   pull_request:
-    branches:
-      - main
-      - dev
+    branches: [main, dev]
+  workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: logsentinel-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Third-party actions are pinned to immutable commits. No job in this workflow
+# has production credentials or production deployment permissions.
 jobs:
-  backend-checks:
-    name: Backend Lint & Test
+  quality:
+    name: Quality and static checks
     runs-on: ubuntu-latest
-    
-    # Provision required backend dependencies
-    services:
-      postgres:
-        image: timescale/timescaledb:2.17.2-pg16
-        env:
-          POSTGRES_USER: logsentinel
-          POSTGRES_PASSWORD: logsentinel_dev_password
-          POSTGRES_DB: logsentinel_db
-          TIMESCALEDB_TELEMETRY: "off"
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      valkey:
-        image: valkey/valkey:8.0
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "valkey-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
+    timeout-minutes: 20
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install Backend Dependencies
+          cache: pip
+      - name: Install quality tools
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-          pip install -r backend/requirements-dev.txt || echo "No requirements-dev.txt found"
-          pip install pytest mypy ruff
+          pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+          pip install mypy==1.17.1 ruff==0.12.10 pip-audit==2.9.0
+      - name: Compile Python
+        run: python -m compileall -q backend scripts
+      - name: Ruff format
+        run: ruff format --check backend/
+      - name: Ruff lint
+        run: ruff check backend/
+      - name: Mypy
+        run: python -m mypy -p backend.app
+      - name: Diff whitespace
+        run: git diff --check
 
-      - name: Run Linting and Formatting Check
-        run: |
-          ruff format --check backend/
-          ruff check backend/
-
-      - name: Run Type Checks
-        run: |
-          python -m mypy -p backend.app
-
-      - name: Run Backend Tests
+  backend-test:
+    name: Backend and root tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: timescale/timescaledb@sha256:4e459e217f00cbb09920c34d245501e63427e6767a495de57ce76823ff280f12 # 2.17.2-pg16; multi-arch OCI index; runner selects amd64
         env:
           POSTGRES_USER: logsentinel
-          POSTGRES_PASSWORD: logsentinel_dev_password
-          POSTGRES_HOST: localhost
-          POSTGRES_PORT: 5432
+          POSTGRES_PASSWORD: logsentinel_ci_password
           POSTGRES_DB: logsentinel_db
-          REDIS_URL: redis://localhost:6379/0
-          ENVIRONMENT: test
-          ENCRYPTION_KEY: ${{ secrets.PROD_ENCRYPTION_KEY }}
-        run: |
-          pytest backend/tests/ -v
-
-  frontend-checks:
-    name: Frontend Build & Type Check
-    runs-on: ubuntu-latest
-
+          TIMESCALEDB_TELEMETRY: 'off'
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U logsentinel -d logsentinel_db"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      valkey:
+        image: valkey/valkey@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9 # 8.0.2; multi-arch manifest list; runner selects amd64
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 10
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js 20.x
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: 'package-lock.json'
+          python-version: '3.11'
+          cache: pip
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+      - name: Migration lifecycle contract
+        env:
+          POSTGRES_USER: logsentinel
+          POSTGRES_PASSWORD: logsentinel_ci_password
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: '5432'
+          POSTGRES_DB: logsentinel_db
+          DATABASE_URL: postgresql+asyncpg://logsentinel:logsentinel_ci_password@localhost:5432/logsentinel_db
+          PYTHONPATH: backend:.
+          ENVIRONMENT: test
+          TEST_MODE: 'true'
+          JWT_SECRET_KEY: test-only-ci-jwt-secret-32-characters-minimum
+          ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+        run: python scripts/database_lifecycle.py --ensure
+      - name: Backend tests
+        env:
+          POSTGRES_USER: logsentinel
+          POSTGRES_PASSWORD: logsentinel_ci_password
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: '5432'
+          POSTGRES_DB: logsentinel_db
+          DATABASE_URL: postgresql+asyncpg://logsentinel:logsentinel_ci_password@localhost:5432/logsentinel_db
+          LOGSENTINEL_DB_REMEDIATION_TEST_URL: postgresql+asyncpg://logsentinel:logsentinel_ci_password@localhost:5432/logsentinel_db
+          LOGSENTINEL_ALLOW_DISPOSABLE_SCHEMA_TEST: '1'
+          LOGSENTINEL_RUN_DISTRIBUTED_INTEGRATION: '1'
+          REDIS_URL: redis://localhost:6379/0
+          PYTHONPATH: backend:.
+          ENVIRONMENT: test
+          TEST_MODE: 'true'
+          JWT_SECRET_KEY: test-only-ci-jwt-secret-32-characters-minimum
+          ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+        run: |
+          pytest -q backend/tests
+          pytest -q tests
+          pip-audit -r backend/requirements.txt --strict --desc=on
 
-      - name: Install Frontend Dependencies
-        run: npm ci
-
-      - name: TypeScript Verification
-        run: npx tsc --noEmit
-
-      - name: Run Frontend Tests
-        run: npm run test --if-present || echo "vitest run here"
-
-      - name: Build Vite Bundle
+  frontend-test:
+    name: Frontend quality, unit tests, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.14.0'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Frontend dependency audit
+        run: npm audit --omit=dev --audit-level=high
+      - name: Frontend typecheck
+        run: npm run typecheck
+      - name: Frontend unit tests
+        run: npm test
+      - name: Frontend build
         run: npm run build
 
-  build-multi-arch:
-    name: Build Multi-Arch Image
+  browser-e2e:
+    name: Browser frontend truth
     runs-on: ubuntu-latest
-    needs: [backend-checks, frontend-checks]
-    permissions:
-      contents: read
-      packages: write
+    timeout-minutes: 25
+    needs: [frontend-test]
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          node-version: '22.14.0'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Install deterministic Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Frontend truth suite, one worker and no retries
+        env:
+          CI: 'true'
+        run: npx playwright test tests/e2e/frontend-truth.spec.ts --workers=1 --retries=0
 
-      - name: Lowercase repo name
-        id: repo
-        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+  migration-contract:
+    name: Migration lifecycle and interruption contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: timescale/timescaledb@sha256:4e459e217f00cbb09920c34d245501e63427e6767a495de57ce76823ff280f12 # 2.17.2-pg16; multi-arch OCI index; runner selects amd64
+        env:
+          POSTGRES_USER: logsentinel
+          POSTGRES_PASSWORD: logsentinel_ci_password
+          POSTGRES_DB: logsentinel_db
+          TIMESCALEDB_TELEMETRY: 'off'
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U logsentinel -d logsentinel_db"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: '3.11'}
+      - run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+      - name: Fresh install and duplicate invocation
+        env:
+          POSTGRES_USER: logsentinel
+          POSTGRES_PASSWORD: logsentinel_ci_password
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: '5432'
+          POSTGRES_DB: logsentinel_db
+          DATABASE_URL: postgresql+asyncpg://logsentinel:logsentinel_ci_password@localhost:5432/logsentinel_db
+          PYTHONPATH: backend:.
+          ENVIRONMENT: test
+          TEST_MODE: 'true'
+          JWT_SECRET_KEY: test-only-ci-jwt-secret-32-characters-minimum
+          ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+        run: |
+          python scripts/database_lifecycle.py --ensure
+          python scripts/database_lifecycle.py --ensure
+          pytest -q tests/test_database_lifecycle.py tests/test_remediation_06c_contract.py
 
-      - name: Build and Push Multi-Arch Image
-        uses: docker/build-push-action@v5
+  backup-dr-contract:
+    name: Backup and DR contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: '3.11'}
+      - run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+      - name: Deterministic recovery checks
+        run: pytest -q tests/test_backup_database.py tests/test_pitr_contract.py tests/test_wal_archive.py tests/test_remediation_06c_contract.py
+
+  retention-contract:
+    name: Retention policy and recovery guard contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: '3.11'}
+      - run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+      - name: Fail-closed plan without production credentials
+        run: python scripts/retention.py --no-database
+      - name: Retention fixtures
+        run: pytest -q tests/retention
+
+  deployment-config:
+    name: Compose configuration validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      IMAGE_TAG: ci-${{ github.sha }}
+      POSTGRES_PASSWORD: ci-postgres-password
+      JWT_SECRET_KEY: ci-jwt-secret-32-characters-minimum
+      ENCRYPTION_KEY: YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=
+      INGEST_API_KEYS: ci-ingest-key
+      METRICS_TOKEN: ci-metrics-token
+      SMTP_HOST: smtp.invalid
+      SMTP_PORT: '587'
+      SMTP_USER: ci-user
+      SMTP_PASSWORD: ci-password
+      EMAILS_FROM_EMAIL: ci@example.invalid
+      DISCORD_WEBHOOK_URL: https://discord.com/api/webhooks/ci/sentinel
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Production Compose render
+        run: docker compose -f docker-compose.prod.yml config --quiet
+      - name: Monitoring Compose render
+        run: docker compose -f deploy/monitoring/docker-compose.monitoring.yml config --quiet
+
+  helm-reference-validation:
+    name: Helm reference validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Helm lint
+        run: docker run --rm -v "$PWD:/work" -w /work alpine/helm@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895 lint deploy/helm/logsentinel # 3.17.3; multi-arch OCI index; runner selects amd64
+      - name: Helm template with representative safe values
+        run: >-
+          # 3.17.3; multi-arch OCI index; runner selects amd64
+          docker run --rm -v "$PWD:/work" -w /work alpine/helm@sha256:d899e6316789fec04ee95300a18e454b7942539cbb3d89bde3e0655d6ca2e895 template logsentinel deploy/helm/logsentinel
+          --set env.redisHost=valkey --set env.postgresHost=postgres
+          --set image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          --set secret.existingSecret=logsentinel-secrets
+
+  image-security:
+    name: Image build, SBOM, and vulnerability gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: [backend-test, frontend-test]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build frontend/Caddy image without push
+        run: docker build --target production -t logsentinel-dashboard:ci .
+      - name: Build backend image without push
+        run: docker build -f backend/Dockerfile -t logsentinel-backend:ci .
+      - name: Generate frontend SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
-          context: .
-          file: ./Dockerfile
-          target: production
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-          tags: ghcr.io/${{ steps.repo.outputs.name }}/logsentinel:latest,ghcr.io/${{ steps.repo.outputs.name }}/logsentinel:${{ github.sha }}
+          image: logsentinel-dashboard:ci
+          artifact-name: logsentinel-dashboard-sbom.spdx.json
+          output-file: logsentinel-dashboard-sbom.spdx.json
+      - name: Generate backend SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: logsentinel-backend:ci
+          artifact-name: logsentinel-backend-sbom.spdx.json
+          output-file: logsentinel-backend-sbom.spdx.json
+      - name: Scan frontend image
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        with:
+          scan-type: image
+          image-ref: logsentinel-dashboard:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
+        with:
+          scan-type: image
+          image-ref: logsentinel-backend:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+      - name: Record built immutable image identities
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+
+          identities = {}
+          for name, image in {
+              "backend": "logsentinel-backend:ci",
+              "frontend": "logsentinel-dashboard:ci",
+          }.items():
+              identities[name] = subprocess.check_output(
+                  ["docker", "image", "inspect", image, "--format", "{{.Id}}"],
+                  text=True,
+              ).strip()
+          with open("image-identities.json", "w", encoding="utf-8") as stream:
+              json.dump(identities, stream, indent=2, sort_keys=True)
+              stream.write("\n")
+          PY
+      - name: Publish image security evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: image-security-evidence
+          path: |
+            image-identities.json
+            *-sbom.spdx.json
+          if-no-files-found: error
+
+  provenance:
+    name: Release manifest and provenance validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [image-security]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: '3.11'}
+      - name: Download image security evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: image-security-evidence
+      - name: Create deterministic release artifact
+        run: git archive --format=tar --output=/tmp/logsentinel-release.tar HEAD
+      - name: Build manifest metadata
+        run: |
+          BACKEND_IMAGE=$(python -c 'import json; print(json.load(open("image-identities.json"))["backend"])')
+          FRONTEND_IMAGE=$(python -c 'import json; print(json.load(open("image-identities.json"))["frontend"])')
+          python scripts/release_manifest.py build --output=/tmp/release-manifest.json \
+            --artifact=/tmp/logsentinel-release.tar \
+            --image=backend="$BACKEND_IMAGE" \
+            --image=frontend="$FRONTEND_IMAGE" \
+            --sbom=backend=logsentinel-backend-sbom.spdx.json \
+            --sbom=frontend=logsentinel-dashboard-sbom.spdx.json \
+            --scan-status=PASS \
+            --gate=quality=PASS --gate=backend-test=PASS --gate=frontend-test=PASS \
+            --gate=browser-e2e=PASS --gate=migration-contract=PASS \
+            --gate=backup-dr-contract=PASS --gate=retention-contract=PASS \
+            --gate=deployment-config=PASS --gate=helm-reference-validation=PASS \
+            --gate=image-security=PASS --gate=provenance=PASS --gate=rollback-contract=PASS
+      - name: Validate manifest and emit unsigned attestation-ready metadata
+        run: |
+          python scripts/release_manifest.py validate /tmp/release-manifest.json --release-ready
+          python scripts/release_attestation.py /tmp/release-manifest.json --output /tmp/release-attestation.json
+
+  rollback-contract:
+    name: Rollback metadata contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with: {python-version: '3.11'}
+      - name: Install dependencies
+        run: python -m pip install pytest asyncpg
+      - run: pytest -q tests/test_release_provenance_contract.py
+
+  release-gate:
+    name: Mandatory final release gate
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      [quality, backend-test, frontend-test, browser-e2e, migration-contract,
+       backup-dr-contract, retention-contract, deployment-config,
+       helm-reference-validation, image-security, provenance, rollback-contract]
+    steps:
+      - name: Aggregate required job results
+        env:
+          QUALITY: ${{ needs.quality.result }}
+          BACKEND: ${{ needs.backend-test.result }}
+          FRONTEND: ${{ needs.frontend-test.result }}
+          BROWSER: ${{ needs.browser-e2e.result }}
+          MIGRATION: ${{ needs.migration-contract.result }}
+          DR: ${{ needs.backup-dr-contract.result }}
+          RETENTION: ${{ needs.retention-contract.result }}
+          COMPOSE: ${{ needs.deployment-config.result }}
+          HELM: ${{ needs.helm-reference-validation.result }}
+          SECURITY: ${{ needs.image-security.result }}
+          PROVENANCE: ${{ needs.provenance.result }}
+          ROLLBACK: ${{ needs.rollback-contract.result }}
+        run: |
+          test "$QUALITY" = success
+          test "$BACKEND" = success
+          test "$FRONTEND" = success
+          test "$BROWSER" = success
+          test "$MIGRATION" = success
+          test "$DR" = success
+          test "$RETENTION" = success
+          test "$COMPOSE" = success
+          test "$HELM" = success
+          test "$SECURITY" = success
+          test "$PROVENANCE" = success
+          test "$ROLLBACK" = success
+          echo "release-gate=PASS"

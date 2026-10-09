@@ -728,7 +728,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--api-key",
-        default=os.getenv("INGEST_API_KEY", "dev-local-key"),
+        default=os.getenv("INGEST_API_KEY"),
         help="Ingestion API key sent as X-API-Key.",
     )
     parser.add_argument(

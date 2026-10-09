@@ -426,4 +426,5 @@ def test_error_summary_redacts_connection_credentials() -> None:
     asyncio.run(manager.add(parsed_log(1)))
 
     error = manager.get_stats()["last_sink_error"]
-    assert error == "postgresql://user:super-secret@database/logs"
+    assert error == "postgresql://[REDACTED]"
+    assert "super-secret" not in error

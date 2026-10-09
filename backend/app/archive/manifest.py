@@ -20,6 +20,7 @@ def generate_sidecar_manifest(manifest_record: dict) -> bytes:
     sidecar = {
         "archive_id": str(manifest_record["archive_id"]),
         "tenant_id": manifest_record["tenant_id"],
+        "owner_user_id": manifest_record["owner_user_id"],
         "dataset": manifest_record.get("dataset", "raw_logs"),
         "range_start": _format_dt(manifest_record["range_start"]),
         "range_end": _format_dt(manifest_record["range_end"]),
@@ -33,6 +34,9 @@ def generate_sidecar_manifest(manifest_record: dict) -> bytes:
         "row_count": manifest_record.get("row_count"),
         "min_ingested_at": _format_dt(manifest_record.get("min_ingested_at")),
         "max_ingested_at": _format_dt(manifest_record.get("max_ingested_at")),
+        "retention_deadline_at": _format_dt(
+            manifest_record.get("retention_deadline_at")
+        ),
         "sha256": manifest_record.get("sha256"),
         "uncompressed_bytes": manifest_record.get("uncompressed_bytes"),
         "compressed_bytes": manifest_record.get("compressed_bytes"),

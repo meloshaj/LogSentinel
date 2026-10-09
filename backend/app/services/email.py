@@ -84,7 +84,7 @@ def _is_retryable(exc: Exception) -> bool:
     )
 
 
-def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> None:
+def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> bool:
     """Send an email with retry logic and exponential backoff.
 
     This is a synchronous function intended to run in a background
@@ -106,7 +106,7 @@ def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> None:
                     attempt,
                     _MAX_RETRIES,
                 )
-                return
+                return True
         except Exception as exc:
             logger.warning(
                 "Email dispatch attempt %d/%d failed for recipient=%s (%s; retryable=%s)",
@@ -127,6 +127,7 @@ def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> None:
         recipient_hash,
         attempt,
     )
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +135,7 @@ def _send_with_retry(msg: EmailMessage, recipient_hash: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def send_verification_email(email_to: str, code: str) -> None:
+def send_verification_email(email_to: str, code: str) -> bool:
     """Send a 6-digit email verification code.
 
     The code is embedded in both HTML and plaintext parts.
@@ -173,7 +174,7 @@ def send_verification_email(email_to: str, code: str) -> None:
     msg.add_alternative(html_body, subtype="html")
 
     logger.info("Dispatching verification email to %s…", recipient_hash)
-    _send_with_retry(msg, recipient_hash)
+    return _send_with_retry(msg, recipient_hash)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ def send_verification_email(email_to: str, code: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def send_password_reset_email(email_to: str, token: str) -> None:
+def send_password_reset_email(email_to: str, token: str) -> bool:
     """Send a password reset email containing a single-use reset link.
 
     The ``token`` is the raw opaque token (not the hash).
@@ -226,7 +227,7 @@ def send_password_reset_email(email_to: str, token: str) -> None:
     msg.add_alternative(html_body, subtype="html")
 
     logger.info("Dispatching password reset email to %s…", recipient_hash)
-    _send_with_retry(msg, recipient_hash)
+    return _send_with_retry(msg, recipient_hash)
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +235,7 @@ def send_password_reset_email(email_to: str, token: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def send_password_changed_notification(email_to: str) -> None:
+def send_password_changed_notification(email_to: str) -> bool:
     """Send a security notification that the user's password was changed.
 
     This alert helps legitimate users detect unauthorized password resets.
@@ -273,4 +274,4 @@ def send_password_changed_notification(email_to: str) -> None:
     msg.add_alternative(html_body, subtype="html")
 
     logger.info("Dispatching password-changed notification to %s…", recipient_hash)
-    _send_with_retry(msg, recipient_hash)
+    return _send_with_retry(msg, recipient_hash)

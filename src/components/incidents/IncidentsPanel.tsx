@@ -2,6 +2,7 @@ import type { Incident } from "../../types/monitoring";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { Bell, CheckCircle, Clock, Flame, XCircle } from "lucide-react";
 import { resolveRootService } from "../../utils/incident";
+import { OperationalStateNotice } from "../common/OperationalState";
 
 const SEVERITY_CONFIG = {
   critical: { label: "CRITICAL", color: "#f85149", bg: "bg-[#da3633]/15", border: "border-[#da3633]/30", icon: Flame },
@@ -11,6 +12,7 @@ const SEVERITY_CONFIG = {
 };
 
 const STATUS_CONFIG = {
+  acknowledged:  { label: "Acknowledged", color: "#d29922", dot: "bg-[#d29922]" },
   investigating: { label: "Investigating", color: "#d29922", dot: "bg-[#d29922] animate-pulse" },
   open:          { label: "Open",          color: "#f85149", dot: "bg-[#f85149] animate-pulse" },
   resolved:      { label: "Resolved",      color: "#3fb950", dot: "bg-[#3fb950]" },
@@ -53,27 +55,44 @@ function IncidentRow({ incident }: { incident: Incident }) {
   );
 }
 
+function incidentSeverity(value: string): Incident["severity"] | null {
+  return value === "low" || value === "medium" || value === "high" || value === "critical" ? value : null;
+}
+
+function incidentStatus(value: string): Incident["status"] | null {
+  return value === "open" || value === "acknowledged" || value === "investigating" || value === "resolved" ? value : null;
+}
+
 export function IncidentsPanel() {
-  const { activeTrackingLoops, latestPerformanceEvents } = useTelemetryStream();
+  const { activeTrackingLoops, latestPerformanceEvents, trackingLoopsDataState, connectionStatus } = useTelemetryStream();
 
   // Derive incidents from live tracking loops and performance alerts
   const incidents: Incident[] = [
-    ...activeTrackingLoops.map(loop => ({
-      id: loop.window_id,
-       service: resolveRootService(loop) || "Root cause unavailable",
-      severity: (loop.severity === "medium" || loop.severity === "low" || loop.severity === "high" || loop.severity === "critical" ? loop.severity : "medium") as any,
-      timestamp: new Date().toLocaleTimeString(),
-      description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(0)}`,
-      status: (loop.status === "open" || loop.status === "investigating" || loop.status === "resolved" ? loop.status : "open") as any
-    })),
-    ...latestPerformanceEvents.map(event => ({
-      id: event.metric_name,
-      service: "infrastructure",
-      severity: (event.severity === "medium" || event.severity === "low" || event.severity === "high" || event.severity === "critical" ? event.severity : "medium") as any,
-      timestamp: new Date().toLocaleTimeString(),
-      description: `Performance alert: ${event.metric_name} is ${event.current_value.toFixed(0)} (threshold ${event.threshold})`,
-      status: "open" as any
-    }))
+    ...activeTrackingLoops.flatMap((loop): Incident[] => {
+      const severity = incidentSeverity(loop.severity);
+      const status = incidentStatus(loop.status);
+      if (!severity || !status) return [];
+      return [{
+        id: loop.window_id,
+        service: resolveRootService(loop) || "Root cause unavailable",
+        severity,
+        timestamp: loop.created_at ? new Date(loop.created_at).toLocaleTimeString() : "Time unavailable",
+        description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(0)}`,
+        status,
+      }];
+    }),
+    ...latestPerformanceEvents.flatMap((event): Incident[] => {
+      const severity = incidentSeverity(event.severity);
+      if (!severity) return [];
+      return [{
+        id: event.metric_name,
+        service: "infrastructure",
+        severity,
+        timestamp: "Time unavailable",
+        description: `Performance alert: ${event.metric_name} is ${event.current_value.toFixed(0)} (threshold ${event.threshold})`,
+        status: "open",
+      }];
+    }),
   ];
 
   const openCount = incidents.filter((i) => i.status !== "resolved").length;
@@ -91,7 +110,7 @@ export function IncidentsPanel() {
             </span>
           )}
         </div>
-        <button className="flex items-center gap-1 text-[#388bfd] hover:text-[#79c0ff] transition-colors" style={{ fontSize: "10px" }}>
+        <button type="button" className="flex items-center gap-1 text-[#388bfd] hover:text-[#79c0ff] transition-colors" style={{ fontSize: "10px" }}>
           <CheckCircle className="w-3 h-3" />
           View all
         </button>
@@ -114,9 +133,13 @@ export function IncidentsPanel() {
       {/* Incident list */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
         {incidents.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-[#7d8590] py-8">
-            <span style={{ fontSize: "11px" }}>No active incidents</span>
-          </div>
+          <OperationalStateNotice
+            state={trackingLoopsDataState}
+            connectionState={connectionStatus}
+            emptyMessage="No incident records were returned for this scope."
+            errorMessage="Incident data is unavailable; no empty state is being assumed."
+            className="my-3"
+          />
         ) : incidents.map((incident) => (
           <IncidentRow key={incident.id} incident={incident} />
         ))}

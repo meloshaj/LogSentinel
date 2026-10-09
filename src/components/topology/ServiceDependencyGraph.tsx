@@ -19,9 +19,10 @@ import dagre from "dagre";
 import { Database, Network, Radio, Server, Share2, Zap } from "lucide-react";
 import { useTopology } from "../../hooks/useTopology";
 import type { NodeType, TopologyNode } from "../../types/topology";
+import { OperationalStateNotice, displayOperationalStatus } from "../common/OperationalState";
 import "@xyflow/react/dist/style.css";
 
-type DependencyStatus = "healthy" | "affected" | "root";
+type DependencyStatus = "healthy" | "degraded" | "critical" | "affected" | "root";
 
 type DependencyNodeData = {
   node: TopologyNode;
@@ -45,7 +46,16 @@ function DependencyNode({ data }: NodeProps<Node<DependencyNodeData>>) {
   const Icon = nodeIcons[data.node.type];
   const root = data.status === "root";
   const affected = data.status === "affected";
-  const accent = root ? "#ef4444" : affected ? "#f59e0b" : "#388bfd";
+  const accent = root || data.status === "critical"
+    ? "#ef4444"
+    : affected || data.status === "degraded"
+      ? "#f59e0b"
+      : "#388bfd";
+  const stateLabel = root
+    ? "Root cause"
+    : affected
+      ? "Affected"
+      : data.node.status;
 
   return (
     <div className="relative h-[80px] w-[174px]">
@@ -63,7 +73,7 @@ function DependencyNode({ data }: NodeProps<Node<DependencyNodeData>>) {
           <span className="block truncate font-mono text-[11px] font-bold text-[#f8fafc]">{data.node.name}</span>
           <span className="mt-0.5 flex items-center gap-1.5 text-[8px] font-bold uppercase tracking-wide text-[#94a3b8]">
             <i className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: accent }} />
-            {root ? "Root cause" : affected ? "Affected" : "Nominal"}
+            {stateLabel}
           </span>
           <span className="text-[#8b949e] font-mono text-[10px] bg-[#0d1117]/80 px-1.5 py-0.5 rounded border border-[#30363d] shadow-sm">
             {data.node.metrics?.latency_p95_ms?.toFixed(1)}ms
@@ -113,17 +123,19 @@ export function ServiceDependencyGraph({
   affectedServices: string[];
   failurePaths: string[][];
 }) {
-  const { nodes: topologyNodes, edges: topologyEdges } = useTopology();
+  const { nodes: topologyNodes, edges: topologyEdges, dataState } = useTopology();
+  const topologyStatus = displayOperationalStatus(dataState);
   const affected = useMemo(() => new Set([...affectedServices, ...failurePaths.flat()]), [affectedServices, failurePaths]);
 
-  const { nodes, edges, degradedCount, failureCount } = useMemo(() => {
+  const { nodes, edges, degradedCount, impactedCount, failureCount } = useMemo(() => {
     const graph = new dagre.graphlib.Graph();
     graph.setDefaultEdgeLabel(() => ({}));
     graph.setGraph({ rankdir: "LR", ranksep: 126, nodesep: 68, marginx: 42, marginy: 42 });
 
-    const statusFor = (id: string): DependencyStatus => {
-      if (id === rootCause) return "root";
-      return affected.has(id) ? "affected" : "healthy";
+    const statusFor = (node: TopologyNode): DependencyStatus => {
+      if (node.id === rootCause) return "root";
+      if (affected.has(node.id)) return "affected";
+      return node.status;
     };
 
     topologyNodes.forEach((node) => graph.setNode(node.id, { width: 174, height: 80 }));
@@ -136,7 +148,7 @@ export function ServiceDependencyGraph({
         id: node.id,
         type: "dependency",
         position: { x: position.x - 87, y: position.y - 40 },
-        data: { node, status: statusFor(node.id) },
+        data: { node, status: statusFor(node) },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
         selectable: false,
@@ -186,8 +198,26 @@ export function ServiceDependencyGraph({
       };
     });
 
-    return { nodes: layoutNodes, edges: [...trafficEdges, ...failureEdges], degradedCount: layoutNodes.filter((node) => node.data.status !== "healthy").length, failureCount: failureEdges.length };
+    return {
+      nodes: layoutNodes,
+      edges: [...trafficEdges, ...failureEdges],
+      degradedCount: layoutNodes.filter((node) => node.data.status === "degraded" || node.data.status === "critical").length,
+      impactedCount: layoutNodes.filter((node) => node.data.status === "affected" || node.data.status === "root").length,
+      failureCount: failureEdges.length,
+    };
   }, [affected, failurePaths, rootCause, topologyEdges, topologyNodes]);
+
+  if (topologyStatus === "loading" || topologyStatus === "empty" || topologyStatus === "unavailable" || topologyStatus === "error") {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-[#080e18] px-6">
+        <OperationalStateNotice
+          state={dataState}
+          emptyMessage="No dependency topology was returned for this scope."
+          errorMessage="Dependency topology is unavailable; no service state is being inferred."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#080e18]">
@@ -210,8 +240,8 @@ export function ServiceDependencyGraph({
         <Panel position="top-left" className="!m-4 flex items-center gap-2 rounded-md border border-[#334155] bg-[#111827]/95 px-3 py-2 shadow-lg">
           <Network className="h-4 w-4 text-[#60a5fa]" />
           <span className="text-[12px] font-bold text-[#e6edf3]">Service Dependency Graph</span>
-          <span className={`rounded-full border px-1.5 py-0.5 font-mono text-[9px] font-bold ${degradedCount > 0 ? "border-[#ef4444]/50 bg-[#ef4444]/15 text-[#fca5a5]" : "border-[#3fb950]/40 bg-[#3fb950]/10 text-[#3fb950]"}`}>
-            {degradedCount > 0 ? `${degradedCount} AFFECTED` : "NOMINAL"}
+          <span className={`rounded-full border px-1.5 py-0.5 font-mono text-[9px] font-bold ${impactedCount > 0 || degradedCount > 0 ? "border-[#d29922]/50 bg-[#d29922]/15 text-[#f6d365]" : "border-[#3fb950]/40 bg-[#3fb950]/10 text-[#3fb950]"}`}>
+            {impactedCount > 0 ? `${impactedCount} IMPACTED` : degradedCount > 0 ? `${degradedCount} DEGRADED` : "CURRENT"}
           </span>
           {failureCount > 0 && <span className="hidden font-mono text-[9px] text-[#fca5a5] sm:inline">{failureCount} FAILURE LINKS</span>}
         </Panel>

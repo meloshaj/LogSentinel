@@ -1,12 +1,13 @@
 """Verifier for Hot/Cold Storage Architecture."""
 
 import hashlib
-import io
 import logging
+import tempfile
 
 import pyarrow.parquet as pq
 
-from .s3_client import S3StorageClient
+from ..core.settings import get_archive_settings
+from .s3_client import S3StorageClient, run_storage_io
 
 logger = logging.getLogger("logsentinel.archive.verifier")
 
@@ -28,31 +29,58 @@ class ArchiveVerifier:
             )
             return False
 
-        raw_bytes = stream.read()
-
-        # Verify checksum
-        actual_sha256 = hashlib.sha256(raw_bytes).hexdigest()
-        if actual_sha256 != expected_sha256:
-            logger.error(
-                "Archive verification failed: Checksum mismatch for %s. Expected %s, got %s",
-                object_key,
-                expected_sha256,
-                actual_sha256,
-            )
-            return False
-
-        # Verify row count via Parquet footer
+        configured_maximum = get_archive_settings().max_archive_bytes
+        declared_size = manifest_record.get("object_size") or manifest_record.get(
+            "compressed_bytes"
+        )
+        maximum_bytes = min(
+            configured_maximum,
+            int(declared_size) if declared_size else configured_maximum,
+        )
         try:
-            buf = io.BytesIO(raw_bytes)
-            parquet_file = pq.ParquetFile(buf)
-            actual_row_count = parquet_file.metadata.num_rows
+            digest = hashlib.sha256()
+            total_bytes = 0
+            with tempfile.SpooledTemporaryFile(
+                max_size=8 * 1024 * 1024, mode="w+b"
+            ) as temp:
+                while True:
+                    chunk = stream.read(
+                        min(1024 * 1024, maximum_bytes - total_bytes + 1)
+                    )
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if total_bytes > maximum_bytes:
+                        logger.error(
+                            "Archive verification failed: object exceeds configured byte limit for %s",
+                            object_key,
+                        )
+                        return False
+                    digest.update(chunk)
+                    temp.write(chunk)
+
+                actual_sha256 = digest.hexdigest()
+                if actual_sha256 != expected_sha256:
+                    logger.error(
+                        "Archive verification failed: Checksum mismatch for %s",
+                        object_key,
+                    )
+                    return False
+
+                temp.seek(0)
+                parquet_file = pq.ParquetFile(temp)
+                actual_row_count = parquet_file.metadata.num_rows
         except Exception as e:
             logger.error(
                 "Archive verification failed: Could not parse Parquet file %s: %s",
                 object_key,
-                e,
+                type(e).__name__,
             )
             return False
+        finally:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
 
         if actual_row_count != expected_row_count:
             logger.error(
@@ -67,6 +95,4 @@ class ArchiveVerifier:
 
     async def async_verify_archive(self, manifest_record: dict) -> bool:
         """Asynchronous wrapper for verify_archive using asyncio.to_thread."""
-        import asyncio
-
-        return await asyncio.to_thread(self.verify_archive, manifest_record)
+        return await run_storage_io(self.verify_archive, manifest_record)

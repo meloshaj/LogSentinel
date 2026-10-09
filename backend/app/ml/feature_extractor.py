@@ -13,10 +13,10 @@ import math
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from ..core.pipeline_identity import feature_window_id
 from ..models import FeatureVector, LogWindow, ParsedLog
 
 logger = logging.getLogger("logsentinel.feature_extractor")
@@ -62,13 +62,25 @@ class SlidingWindowFeatureExtractor:
         self.config.validate_config()
 
         self._log_buffer: list[ParsedLog] = []
+        self._buffer_event_ids: set[str] = set()
         self._logs_processed = 0
         self._windows_generated = 0
         self._last_window_end: datetime | None = None
+        self._pending_cursor: datetime | None = None
+        self._pending_window_count = 0
 
     def add_log(self, log: ParsedLog) -> None:
         """Add a parsed log to the buffer."""
+        event_id = str(log.event_id or log.id)
+        if event_id in self._buffer_event_ids:
+            return
+        # Late redelivery after the cursor has passed is no longer part of an
+        # active logical window. Dropping it here keeps the bounded dedup set
+        # from becoming an unbounded event history.
+        if self._last_window_end is not None and log.timestamp < self._last_window_end:
+            return
         self._log_buffer.append(log)
+        self._buffer_event_ids.add(event_id)
         self._logs_processed += 1
 
     def add_logs(self, logs: list[ParsedLog]) -> None:
@@ -79,7 +91,20 @@ class SlidingWindowFeatureExtractor:
     def get_pending_windows(
         self, current_time: datetime | None = None
     ) -> list[LogWindow]:
-        """Generate closed windows from the buffered log history."""
+        """Generate and consume closed windows (legacy convenience API)."""
+        windows = self.peek_pending_windows(current_time=current_time)
+        self.commit_pending_windows(windows)
+        return windows
+
+    def peek_pending_windows(
+        self, current_time: datetime | None = None
+    ) -> list[LogWindow]:
+        """Generate closed windows without advancing the durable cursor.
+
+        The feature worker registers every returned window in PostgreSQL before
+        calling :meth:`commit_pending_windows`. This prevents a transient
+        feature-database failure from consuming the logical window.
+        """
         if not self._log_buffer:
             return []
 
@@ -107,26 +132,39 @@ class SlidingWindowFeatureExtractor:
             if len(window_logs) >= self.config.min_logs_per_window:
                 windows.append(
                     LogWindow(
-                        window_id=f"window-{uuid4().hex[:16]}",
+                        window_id=feature_window_id(
+                            _tenant_id_for_logs(window_logs),
+                            self.config.service_filter,
+                            start_time,
+                            end_time,
+                            owner_user_id=_owner_id_for_logs(window_logs),
+                        ),
                         start_time=start_time,
                         end_time=end_time,
                         logs=window_logs,
                         service=self.config.service_filter,
                     )
                 )
-                self._windows_generated += 1
-
             start_time = start_time + timedelta(seconds=self.config.stride_seconds)
-            self._last_window_end = start_time
-
-        if self._last_window_end:
-            self._log_buffer = [
-                log
-                for log in self._log_buffer
-                if log.timestamp >= self._last_window_end
-            ]
+        self._pending_cursor = start_time
+        self._pending_window_count = len(windows)
 
         return windows
+
+    def commit_pending_windows(self, windows: list[LogWindow] | None = None) -> None:
+        """Advance the window cursor after durable work registration."""
+        if self._pending_cursor is None:
+            return
+        self._last_window_end = self._pending_cursor
+        self._windows_generated += self._pending_window_count
+        self._log_buffer = [
+            log for log in self._log_buffer if log.timestamp >= self._last_window_end
+        ]
+        self._buffer_event_ids = {
+            str(log.event_id or log.id) for log in self._log_buffer
+        }
+        self._pending_cursor = None
+        self._pending_window_count = 0
 
     def extract_features(self, window: LogWindow | None) -> FeatureVector:
         """Extract a fixed-size feature vector from a log window."""
@@ -206,6 +244,7 @@ class SlidingWindowFeatureExtractor:
             window_start=window.start_time,
             window_end=window.end_time,
             tenant_id=_tenant_id_for_logs(logs),
+            owner_user_id=_owner_id_for_logs(logs),
             log_count=log_count,
             unique_templates=unique_templates,
             error_count=error_count,
@@ -245,13 +284,17 @@ class SlidingWindowFeatureExtractor:
             if self._last_window_end
             else None,
             "current_buffer_size": len(self._log_buffer),
+            "dedup_state_size": len(self._buffer_event_ids),
         }
 
     def clear_buffer(self) -> int:
         """Clear the log buffer and return the number of logs removed."""
         removed = len(self._log_buffer)
         self._log_buffer.clear()
+        self._buffer_event_ids.clear()
         self._last_window_end = None
+        self._pending_cursor = None
+        self._pending_window_count = 0
         return removed
 
     def _align_to_window(self, timestamp: datetime) -> datetime:
@@ -267,7 +310,7 @@ class SlidingWindowFeatureExtractor:
     def _empty_feature_vector(self) -> FeatureVector:
         """Create a zero-filled feature vector for empty windows."""
         return FeatureVector(  # type: ignore
-            window_id=f"window-{uuid4().hex[:16]}",
+            window_id="window-empty",
             timestamp=datetime.now(timezone.utc),
             window_start=None,
             window_end=None,
@@ -331,4 +374,16 @@ class SlidingWindowFeatureExtractor:
 def _tenant_id_for_logs(logs: list[ParsedLog]) -> str:
     """Return the tenant for a window after the worker has isolated buffers."""
     tenants = {log.tenant_id for log in logs if log.tenant_id}
-    return next(iter(tenants), "default")
+    if len(tenants) != 1:
+        raise ValueError("a feature window must contain exactly one tenant")
+    return next(iter(tenants))
+
+
+def _owner_id_for_logs(logs: list[ParsedLog]) -> int:
+    """Reject mixed-user windows even if a caller misroutes the buffer."""
+    owners = {int(log.owner_user_id) for log in logs if int(log.owner_user_id) > 0}
+    if len(owners) != 1:
+        raise ValueError(
+            "a feature window must contain exactly one authoritative owner"
+        )
+    return next(iter(owners))

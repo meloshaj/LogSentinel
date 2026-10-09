@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,15 +14,26 @@ from ..observability.metrics import (
     record_websocket_frame_sent,
     record_websocket_send_failure,
 )
+from ..security.redaction import sanitize_error_text
 
 logger = logging.getLogger("logsentinel.broadcaster")
+
+
+@dataclass(frozen=True, slots=True)
+class WebSocketClient:
+    """Immutable authorization context attached to a WebSocket."""
+
+    socket: WebSocket
+    tenant_id: str | None
+    user_id: int | None
+    subscriptions: frozenset[str] = field(default_factory=frozenset)
 
 
 class HighLoadBroadcaster:
     """Dynamically throttled WebSocket broadcaster with debouncing and batching."""
 
     def __init__(self, frame_rate_ms: float = 250.0):
-        self._connections: set[WebSocket] = set()
+        self._connections: dict[WebSocket, WebSocketClient] = {}
         self._lock = asyncio.Lock()
         self._buffer: list[dict[str, Any]] = []
         self._frame_rate_ms = frame_rate_ms
@@ -70,16 +82,31 @@ class HighLoadBroadcaster:
             finally:
                 self._listener_task = None
 
-    async def connect(self, websocket: WebSocket) -> None:
+    async def connect(
+        self,
+        websocket: WebSocket,
+        *,
+        tenant_id: str | None = None,
+        user_id: int | None = None,
+        require_tenant: bool = False,
+    ) -> None:
+        if require_tenant and (not tenant_id or user_id is None):
+            raise ValueError(
+                "authenticated WebSocket connections require tenant and user context"
+            )
         async with self._lock:
-            self._connections.add(websocket)
+            self._connections[websocket] = WebSocketClient(
+                socket=websocket,
+                tenant_id=tenant_id,
+                user_id=user_id,
+            )
 
         # Ensure the loop is running when a client is connected
         self.start()
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
-            self._connections.discard(websocket)
+            self._connections.pop(websocket, None)
 
     def connection_count(self) -> int:
         return len(self._connections)
@@ -94,6 +121,18 @@ class HighLoadBroadcaster:
 
     async def broadcast(self, event: dict[str, Any]) -> None:
         """Publish the event to Redis Pub/Sub."""
+        tenant_id = _event_tenant_id(event)
+        owner_user_id = _event_owner_user_id(event)
+        event_type = str(event.get("type", ""))
+        if (not tenant_id or owner_user_id is None) and not event_type.startswith(
+            "system."
+        ):
+            async with self._lock:
+                if any(client.tenant_id for client in self._connections.values()):
+                    raise ValueError(
+                        "tenant_id and owner_user_id are required for operational telemetry"
+                    )
+
         if not self.redis_client:
             # Fallback to local buffer if Redis is not configured
             async with self._lock:
@@ -104,8 +143,12 @@ class HighLoadBroadcaster:
         try:
             payload = json.dumps(event)
             await self.redis_client.publish(self.channel_name, payload)
-        except Exception:
-            logger.exception("Failed to publish telemetry event to Redis")
+        except Exception as exc:
+            logger.error(
+                "Failed to publish telemetry event to Redis exception_type=%s detail=%s",
+                type(exc).__name__,
+                sanitize_error_text(exc),
+            )
             # Fallback to local buffer on error
             async with self._lock:
                 if self._connections:
@@ -130,15 +173,29 @@ class HighLoadBroadcaster:
                                 data = data.decode("utf-8")
                             event = json.loads(data)
 
+                            if (
+                                not _event_tenant_id(event)
+                                or _event_owner_user_id(event) is None
+                            ) and not str(event.get("type", "")).startswith("system."):
+                                logger.warning("Dropping tenantless telemetry event")
+                                continue
                             async with self._lock:
                                 if self._connections:
                                     self._buffer.append(event)
-                        except Exception:
-                            logger.exception("Failed to process pubsub message")
+                        except Exception as exc:
+                            logger.error(
+                                "Failed to process pubsub message exception_type=%s detail=%s",
+                                type(exc).__name__,
+                                sanitize_error_text(exc),
+                            )
             except asyncio.CancelledError:
                 break
-            except Exception:
-                logger.exception("Redis Pub/Sub listener disconnected. Retrying...")
+            except Exception as exc:
+                logger.error(
+                    "Redis Pub/Sub listener disconnected; retrying exception_type=%s detail=%s",
+                    type(exc).__name__,
+                    sanitize_error_text(exc),
+                )
                 await asyncio.sleep(1)
 
     async def _flush_loop(self) -> None:
@@ -154,7 +211,7 @@ class HighLoadBroadcaster:
 
                     batch = list(self._buffer)
                     self._buffer.clear()
-                    connections = list(self._connections)
+                    connections = list(self._connections.values())
 
                 if not connections or not batch:
                     continue
@@ -167,23 +224,61 @@ class HighLoadBroadcaster:
                 }
 
                 stale_connections: list[WebSocket] = []
-                for websocket in connections:
+                for client in connections:
                     try:
-                        await websocket.send_json(consolidated_payload)
+                        scoped_events = [
+                            event
+                            for event in batch
+                            if (
+                                str(event.get("type", "")).startswith("system.")
+                                or (
+                                    _event_tenant_id(event) == client.tenant_id
+                                    and _event_owner_user_id(event) == client.user_id
+                                )
+                            )
+                        ]
+                        if not scoped_events:
+                            continue
+                        await client.socket.send_json(
+                            {
+                                **consolidated_payload,
+                                "payload": {"events": scoped_events},
+                            }
+                        )
                         record_websocket_frame_sent()
-                    except Exception:
+                    except Exception as exc:
                         record_websocket_send_failure()
-                        stale_connections.append(websocket)
-                        logger.exception(
-                            "Failed to send consolidated telemetry frame to WebSocket client"
+                        stale_connections.append(client.socket)
+                        logger.error(
+                            "Failed to send consolidated telemetry frame to WebSocket client exception_type=%s detail=%s",
+                            type(exc).__name__,
+                            sanitize_error_text(exc),
                         )
 
                 if stale_connections:
                     async with self._lock:
                         for websocket in stale_connections:
-                            self._connections.discard(websocket)
+                            self._connections.pop(websocket, None)
 
             except asyncio.CancelledError:
                 break
-            except Exception:
-                logger.exception("Unexpected error in broadcaster flush loop")
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error in broadcaster flush loop exception_type=%s detail=%s",
+                    type(exc).__name__,
+                    sanitize_error_text(exc),
+                )
+
+
+def _event_tenant_id(event: dict[str, Any]) -> str | None:
+    value = event.get("tenant_id")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _event_owner_user_id(event: dict[str, Any]) -> int | None:
+    value = event.get("owner_user_id")
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+        else None
+    )

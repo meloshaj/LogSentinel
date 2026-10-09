@@ -35,8 +35,8 @@ def test_drain_worker_extracts_tenant_id_from_payload():
     assert metadata.get("correlation_id") == "corr-456"
 
 
-def test_drain_worker_extract_entry_allows_tenant_id_override():
-    """Verify that tenant_id in an individual entry overrides the parent payload."""
+def test_drain_worker_extract_entry_cannot_override_parent_tenant():
+    """Verify that child tenant metadata cannot replace the parent tenant."""
 
     class DummyBatchManager:
         pass
@@ -64,4 +64,4 @@ def test_drain_worker_extract_entry_allows_tenant_id_override():
     assert len(extracted) == 1
     _, metadata = extracted[0]
 
-    assert metadata.get("tenant_id") == "tenant-child"
+    assert metadata.get("tenant_id") == "tenant-parent"

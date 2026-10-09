@@ -11,7 +11,7 @@ import networkx as nx
 
 from .runtime_dependency_parser import TraceObservation
 
-TransactionKey = tuple[str | None, str]
+TransactionKey = tuple[str, int, str | None, str]
 
 
 @dataclass(frozen=True)
@@ -84,7 +84,14 @@ class NetworkXTopologyPipeline:
             self.rejected_observation_count += 1
             return False
 
-        key = self._transaction_key(transaction_id, observation.environment)
+        tenant_id = self._clean_text(observation.tenant_id)
+        owner_user_id = int(observation.owner_user_id)
+        if tenant_id is None or owner_user_id <= 0:
+            self.rejected_observation_count += 1
+            return False
+        key = self._transaction_key(
+            tenant_id, owner_user_id, transaction_id, observation.environment
+        )
         stored = _StoredObservation(
             observation=observation,
             service=service,
@@ -113,14 +120,22 @@ class NetworkXTopologyPipeline:
         self.accepted_observation_count += 1
         return True
 
-    def build_graph(self) -> nx.DiGraph:
-        """Return a newly built directed graph from retained observations."""
+    def build_graph(
+        self, tenant_id: str | None = None, owner_user_id: int | None = None
+    ) -> nx.DiGraph:
+        """Return a graph restricted to one tenant-and-owner scope."""
         graph = nx.DiGraph()  # type: ignore
         node_stats: dict[str, dict[str, Any]] = {}
         edge_stats: dict[tuple[str, str], dict[str, Any]] = {}
         latest_seen: datetime | None = None
+        scoped_transaction_count = 0
 
         for key, observations in self._transactions.items():
+            if tenant_id is not None and key[0] != tenant_id:
+                continue
+            if owner_user_id is not None and key[1] != owner_user_id:
+                continue
+            scoped_transaction_count += 1
             vector = self._transaction_vector_from_observations(observations)
             transaction_label = self._transaction_label(key)
 
@@ -213,17 +228,21 @@ class NetworkXTopologyPipeline:
                 target_hint_evidence_count=stats["target_hint_evidence_count"],
             )
 
-        graph.graph["transaction_count"] = len(self._transactions)
+        graph.graph["transaction_count"] = scoped_transaction_count
         graph.graph["generated_at"] = latest_seen
         return graph
 
-    def get_graph_copy(self) -> nx.DiGraph:
+    def get_graph_copy(
+        self, tenant_id: str | None = None, owner_user_id: int | None = None
+    ) -> nx.DiGraph:
         """Return a safe current topology copy with caller-to-callee edge direction."""
-        return self.build_graph().copy(as_view=False)
+        return self.build_graph(tenant_id, owner_user_id).copy(as_view=False)
 
-    def get_snapshot(self) -> dict[str, Any]:
-        """Return deterministic JSON-compatible topology data."""
-        graph = self.build_graph()
+    def get_snapshot(
+        self, tenant_id: str | None = None, owner_user_id: int | None = None
+    ) -> dict[str, Any]:
+        """Return topology data restricted to one tenant."""
+        graph = self.build_graph(tenant_id, owner_user_id)
         nodes = [
             self._serialize_attrs({"id": node, **attrs})
             for node, attrs in sorted(graph.nodes(data=True), key=lambda item: item[0])
@@ -253,13 +272,17 @@ class NetworkXTopologyPipeline:
         self,
         transaction_id: str,
         environment: str | None = None,
+        tenant_id: str = "default",
+        owner_user_id: int = 0,
     ) -> list[dict[str, Any]]:
         """Return one retained transaction's temporal start vector."""
         cleaned_transaction_id = self._clean_text(transaction_id)
         if cleaned_transaction_id is None:
             return []
 
-        key = self._find_transaction_key(cleaned_transaction_id, environment)
+        key = self._find_transaction_key(
+            cleaned_transaction_id, environment, tenant_id, owner_user_id
+        )
         if key is None:
             return []
 
@@ -293,29 +316,41 @@ class NetworkXTopologyPipeline:
 
     def _transaction_key(
         self,
+        tenant_id: str,
+        owner_user_id: int,
         transaction_id: str,
         environment: str | None,
     ) -> TransactionKey:
-        return (self._clean_text(environment), transaction_id)
+        return (tenant_id, owner_user_id, self._clean_text(environment), transaction_id)
 
     def _find_transaction_key(
         self,
         transaction_id: str,
         environment: str | None,
+        tenant_id: str = "default",
+        owner_user_id: int = 0,
     ) -> TransactionKey | None:
         if environment is not None:
-            key = self._transaction_key(transaction_id, environment)
+            key = self._transaction_key(
+                tenant_id, owner_user_id, transaction_id, environment
+            )
             return key if key in self._transactions else None
 
-        exact_key = (None, transaction_id)
+        exact_key = (tenant_id, owner_user_id, None, transaction_id)
         if exact_key in self._transactions:
             return exact_key
 
-        matches = [key for key in self._transactions if key[1] == transaction_id]
+        matches = [
+            key
+            for key in self._transactions
+            if key[0] == tenant_id
+            and key[1] == owner_user_id
+            and key[3] == transaction_id
+        ]
         return matches[0] if len(matches) == 1 else None
 
     def _transaction_label(self, key: TransactionKey) -> str:
-        environment, transaction_id = key
+        _, _, environment, transaction_id = key
         return f"{environment}\x1f{transaction_id}" if environment else transaction_id
 
     def _transaction_vector_from_observations(

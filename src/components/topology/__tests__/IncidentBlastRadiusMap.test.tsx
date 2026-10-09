@@ -6,6 +6,13 @@ let topology = { nodes: [] as any[], edges: [] as any[] };
 vi.mock("../../../hooks/useTopology", () => ({
   useTopology: () => ({
     ...topology,
+    dataState: {
+      status: topology.nodes.length > 0 ? "available" : "empty",
+      data: null,
+      lastUpdated: new Date().toISOString(),
+      source: "test",
+      error: null,
+    },
     isLoading: false,
     error: null,
     updatedAt: null,

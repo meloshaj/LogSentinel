@@ -1,86 +1,71 @@
 #!/usr/bin/env bash
-set -eo pipefail
+set -Eeuo pipefail
 
-if [ -z "$1" ]; then
-    echo "Usage: $0 <backup_filename_or_path>"
-    echo "Example: $0 logsentinel_backup_20260826_120000.sql.gz"
-    exit 1
+usage() {
+  echo "Usage: $0 --source <dump path or object name> --target-db <disposable database> --confirm-replace" >&2
+}
+
+source_ref=""
+target_db=""
+confirm_replace="false"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --source) source_ref="${2:-}"; shift 2 ;;
+    --target-db) target_db="${2:-}"; shift 2 ;;
+    --confirm-replace) confirm_replace="true"; shift ;;
+    *) usage; exit 2 ;;
+  esac
+done
+[[ -n "$source_ref" && -n "$target_db" && "$confirm_replace" == "true" ]] || { usage; exit 2; }
+[[ "$target_db" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { echo "Invalid target database name" >&2; exit 2; }
+if [[ "$target_db" == "${POSTGRES_DB:-}" && "${ALLOW_RESTORE_TO_CONFIGURED_DATABASE:-false}" != "true" ]]; then
+  echo "Refusing to replace configured database; restore to a disposable target or set the explicit override" >&2
+  exit 3
 fi
 
-TARGET_FILE="$1"
-BACKUP_DIR=${BACKUP_DIR:-/tmp/backups}
+: "${POSTGRES_HOST:?POSTGRES_HOST is required}"
+: "${POSTGRES_USER:?POSTGRES_USER is required}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+BACKUP_DIR="${BACKUP_DIR:-/tmp/backups}"
+S3_BUCKET="${S3_BUCKET:-${S3_BACKUP_BUCKET:-${S3_BUCKET_NAME:-}}}"
+S3_ENDPOINT="${S3_ENDPOINT:-${S3_ENDPOINT_URL:-}}"
+S3_REGION="${S3_REGION:-}"
+mkdir -p "$BACKUP_DIR"
+export PGPASSWORD="${POSTGRES_PASSWORD:-}"
 
-POSTGRES_USER=${POSTGRES_USER:-logsentinel}
-POSTGRES_HOST=${POSTGRES_HOST:-localhost}
-POSTGRES_PORT=${POSTGRES_PORT:-5432}
-POSTGRES_DB=${POSTGRES_DB:-logsentinel_db}
-S3_BACKUP_BUCKET=${S3_BACKUP_BUCKET:-$S3_BUCKET_NAME}
-
-if [ -n "$POSTGRES_PASSWORD" ]; then
-    export PGPASSWORD="$POSTGRES_PASSWORD"
+local_path="$source_ref"
+if [[ ! -f "$local_path" ]]; then
+  local_path="$BACKUP_DIR/$(basename "$source_ref")"
+  if [[ ! -f "$local_path" ]]; then
+    : "${S3_BUCKET:?backup not local and S3_BUCKET is not configured}"
+    : "${S3_REGION:?S3_REGION is required for download}"
+    export S3_BUCKET S3_ENDPOINT S3_REGION
+    python3 - "$source_ref" "$local_path" <<'PY'
+import os, pathlib, sys, boto3
+key, local = sys.argv[1:]
+if "/" not in key:
+    key = f"backups/{key}"
+client = boto3.client("s3", endpoint_url=os.getenv("S3_ENDPOINT") or None,
+    region_name=os.environ["S3_REGION"], aws_access_key_id=os.getenv("S3_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("S3_SECRET_ACCESS_KEY"))
+client.download_file(os.environ["S3_BUCKET"], key, local)
+for suffix in (".sha256", ".manifest.json"):
+    client.download_file(os.environ["S3_BUCKET"], key + suffix, local + suffix)
+PY
+  fi
 fi
 
-# Resolve file locally or download from S3
-LOCAL_PATH="$TARGET_FILE"
-if [ ! -f "$LOCAL_PATH" ]; then
-    LOCAL_PATH="${BACKUP_DIR}/${TARGET_FILE}"
-    if [ ! -f "$LOCAL_PATH" ]; then
-        if [ -n "$S3_BACKUP_BUCKET" ] && [ -n "$S3_ACCESS_KEY_ID" ]; then
-            echo "File not found locally. Attempting to download from S3..."
-            mkdir -p "$BACKUP_DIR"
-            python3 -c "
-import os, boto3, sys
-bucket = os.environ.get('S3_BACKUP_BUCKET')
-endpoint = os.environ.get('S3_ENDPOINT_URL')
-file_name = os.path.basename(sys.argv[1])
-local_path = sys.argv[2]
+[[ -f "${local_path}.sha256" ]] || { echo "Checksum sidecar is required" >&2; exit 4; }
+(cd "$(dirname "$local_path")" && sha256sum --check "$(basename "${local_path}.sha256")")
 
-s3 = boto3.client('s3', 
-    endpoint_url=endpoint,
-    aws_access_key_id=os.environ.get('S3_ACCESS_KEY_ID'),
-    aws_secret_access_key=os.environ.get('S3_SECRET_ACCESS_KEY'),
-    region_name='us-east-1'
-)
-try:
-    s3.download_file(bucket, f'backups/{file_name}', local_path)
-    print(f'Successfully downloaded {file_name} from s3://{bucket}/backups/')
-except Exception as e:
-    print(f'Failed to download from S3: {e}')
-    sys.exit(1)
-" "$TARGET_FILE" "$LOCAL_PATH"
-        else
-            echo "Error: File not found locally and S3 credentials not provided."
-            exit 1
-        fi
-    fi
-fi
-
-echo "Initiating restore from ${LOCAL_PATH}..."
-
-psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "postgres" -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${POSTGRES_DB}' AND pid <> pg_backend_pid();"
-psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "postgres" -c "DROP DATABASE IF EXISTS \"${POSTGRES_DB}\";"
-psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "postgres" -c "CREATE DATABASE \"${POSTGRES_DB}\";"
-
-# Re-create timescaledb extension before restore to avoid version mismatch errors
-psql -X -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
-psql -X -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT timescaledb_pre_restore();"
-
-# 2. Restore schema and data
-echo "Restoring data..."
-zcat "$LOCAL_PATH" | psql -X -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -q || true
-
-# Post-restore
-psql -X -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT timescaledb_post_restore();"
-
-# 3. Verify TimescaleDB extension and hypertable integrity
-echo "Verifying TimescaleDB extension and hypertable..."
-psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
-    SELECT extname, extversion FROM pg_extension WHERE extname = 'timescaledb';
-"
-psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
-    SELECT hypertable_name, num_dimensions, num_chunks FROM timescaledb_information.hypertables WHERE hypertable_name = 'logs';
-"
-
-# 4. Note on Sidecar Reconciliation
-echo "Restore complete."
-echo "Note: The sidecar reconciliation helper will automatically run to ensure 'archive_manifest' consistency when the ArchiveWorker is started."
+admin=(psql -X -v ON_ERROR_STOP=1 --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" --username "$POSTGRES_USER" --dbname postgres)
+"${admin[@]}" -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${target_db}' AND pid <> pg_backend_pid();"
+"${admin[@]}" -c "DROP DATABASE IF EXISTS \"${target_db}\";"
+"${admin[@]}" -c "CREATE DATABASE \"${target_db}\";"
+target=(psql -X -v ON_ERROR_STOP=1 --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" --username "$POSTGRES_USER" --dbname "$target_db")
+"${target[@]}" -c "CREATE EXTENSION IF NOT EXISTS timescaledb;"
+"${target[@]}" -c "SELECT timescaledb_pre_restore();"
+pg_restore --exit-on-error --no-owner --no-acl --host "$POSTGRES_HOST" --port "$POSTGRES_PORT" --username "$POSTGRES_USER" --dbname "$target_db" "$local_path"
+"${target[@]}" -c "SELECT timescaledb_post_restore();"
+POSTGRES_DB="$target_db" bash "$(dirname "$0")/verify_restore.sh"
+echo "Restore and structural verification completed for explicit target ${target_db}"

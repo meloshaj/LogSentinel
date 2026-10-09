@@ -4,12 +4,13 @@ import pytest
 from prometheus_client import REGISTRY
 
 # Set test environment variables BEFORE any app modules are imported
-os.environ["ENVIRONMENT"] = "test"
-os.environ["ENCRYPTION_KEY"] = "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE="
-os.environ["JWT_SECRET_KEY"] = "test-secret-key-32-bytes-minimum-length-for-hs256"
-os.environ["REDIS_URL"] = "redis://localhost:6379/0"
-os.environ["DATABASE_URL"] = (
-    "postgresql+asyncpg://postgres:postgres@localhost:5432/logsentinel_test"
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("ENCRYPTION_KEY", "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=")
+os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-key-32-bytes-minimum-length")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/logsentinel_test",
 )
 
 

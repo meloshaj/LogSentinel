@@ -1,28 +1,67 @@
-{$DOMAIN_NAME} {
-    # Block internal routes from external access
-    @internal {
-        path /metrics /readiness /docs* /redoc* /openapi.json
-    }
-    respond @internal 403
+{
+    http_port 8080
+    https_port 8443
+}
 
-    # API endpoints must be handled separately from the SPA file server
-    handle /api/* {
-        reverse_proxy backend:8000
+# Separate HTTP health listener also works with automatic HTTPS enabled.
+http://:8080 {
+    handle /health {
+        respond "ok" 200
     }
-    handle /ingest-log {
-        reverse_proxy backend:8000
-    }
-    handle /v1/* {
-        reverse_proxy backend:8000
-    }
-    handle /ws/* {
-        reverse_proxy backend:8000
-    }
-
-    # Serve static frontend files (SPA) for any unhandled routes
     handle {
-        root * /usr/share/caddy/html
-        try_files {path} /index.html
-        file_server
+        redir https://{host}{uri} permanent
+    }
+}
+
+{$DOMAIN_NAME:localhost} {
+    encode zstd gzip
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' wss: https://login.microsoftonline.com https://graph.microsoft.com; frame-src https://login.microsoftonline.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://login.microsoftonline.com"
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+
+    # route preserves the deliberate order below. The diagnostic deny rule
+    # must run before the SPA fallback; otherwise /ready and /readiness become
+    # public HTML 200 responses instead of explicit edge denials.
+    route {
+        request_body {
+            max_size 10MB
+        }
+
+        # Block diagnostics at the public edge. Prometheus scrapes the API's
+        # internal ClusterIP/container network directly with a machine token.
+        @internal {
+            path /metrics /readiness /ready /docs* /redoc* /openapi.json
+        }
+        respond @internal 403
+
+        handle /health {
+            respond "ok" 200
+        }
+
+        # API endpoints must be handled separately from the SPA file server
+        handle /api/* {
+            reverse_proxy backend:8000
+        }
+        handle /ingest-log {
+            reverse_proxy backend:8000
+        }
+        handle /v1/* {
+            reverse_proxy backend:8000
+        }
+        handle /ws/* {
+            reverse_proxy backend:8000
+        }
+
+        # Serve static frontend files (SPA) for any unhandled routes
+        handle {
+            root * /usr/share/caddy/html
+            try_files {path} /index.html
+            file_server
+        }
     }
 }
