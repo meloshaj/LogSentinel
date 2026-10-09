@@ -86,7 +86,7 @@ printf 'valid custom-format dump for contract test\\n' > "$output"
         """#!/bin/sh
 case "$*" in
   *'SHOW server_version'*) printf '%s\\n' "${FAKE_SERVER_VERSION:-16.6}" ;;
-  *timescaledb*) printf '%s\\n' '2.17.2' ;;
+  *extname*) printf '%s\\n' '2.17.2' ;;
   *schema_migrations*) printf '%s\\n' '20260913_0010_per_user_data_ownership' ;;
   *) printf '%s\\n' 'ok' ;;
 esac
@@ -282,7 +282,7 @@ def test_remote_upload_failure_fails_closed_without_secret_output(
     (module_dir / "boto3.py").write_text(
         """class Client:
     def upload_file(self, *args, **kwargs):
-        raise RuntimeError('remote failure with credentials must not escape')
+        raise RuntimeError('remote failure with secret=credentials_must_not_escape')
 
 def client(*args, **kwargs):
     return Client()
@@ -303,7 +303,7 @@ def client(*args, **kwargs):
 
     assert result.returncode != 0
     assert "Remote backup upload or verification failed" in result.stderr
-    assert "credentials must not escape" not in result.stderr
+    assert "credentials_must_not_escape" not in result.stderr
     assert "test-secret-marker" not in result.stderr
 
 

@@ -36,10 +36,10 @@ _JWT_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}(?![A-Za-z0-9_-])"
 )
 _QUERY_SECRET_PATTERN = re.compile(
-    r"(?i)(\b(?:access_token|refresh_token|id_token|code|state|password|passwd|secret|api[_-]?key|client_secret|smtp_password|s3_access_key_id|s3_secret_access_key|aws_access_key_id|aws_secret_access_key)\s*[=:]\s*)([^\s&,;]+)"
+    r"(?i)(\b(?:access_token|refresh_token|id_token|code|state|password|passwd|secret|api[_-]?key|client_secret|smtp_password|s3_access_key_id|s3_secret_access_key|aws_access_key_id|aws_secret_access_key|aws_session_token|session_token|token)\s*[=:]\s*)([^\s&,;]+)"
 )
 _NAMED_SECRET_PATTERN = re.compile(
-    r"(?i)(\b(?:smtp_password|smtp_pass|password|passwd|secret|token|session_token|api[_-]?key|authorization|client_secret|s3_access_key_id|s3_secret_access_key|aws_access_key_id|aws_secret_access_key)\s*[:=]\s*)([^\s,;]+)"
+    r"(?i)(\b(?:smtp_password|smtp_pass|password|passwd|secret|token|session_token|api[_-]?key|authorization|client_secret|s3_access_key_id|s3_secret_access_key|aws_access_key_id|aws_secret_access_key|aws_session_token)\s*[:=]\s*)([^\s,;]+)"
 )
 _LOGSENTINEL_KEY_PATTERN = re.compile(r"\blsn_(?:live|test)_[A-Za-z0-9_-]+\b")
 
