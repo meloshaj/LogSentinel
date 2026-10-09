@@ -224,8 +224,7 @@ async def resolve_tenant_destination(
 ) -> tuple[str, str]:
     """Resolve only an enabled destination owned by the supplied user."""
     query = select(
-        TenantIntegrationRecord.id,
-        TenantIntegrationRecord.destination_url
+        TenantIntegrationRecord.id, TenantIntegrationRecord.destination_url
     ).where(
         TenantIntegrationRecord.tenant_id == tenant_id,
         TenantIntegrationRecord.owner_user_id == owner_user_id,
