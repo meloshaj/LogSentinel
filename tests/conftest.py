@@ -77,6 +77,10 @@ def mock_redis_globally():
         yield
         return
     
+    if os.environ.get("LOGSENTINEL_RUN_DISTRIBUTED_INTEGRATION") == "1":
+        yield
+        return
+    
     class MockRedisPipeline:
         def xadd(self, *args, **kwargs): pass
         def xlen(self, *args, **kwargs): return 0
