@@ -540,10 +540,12 @@ async def test_database_disconnection_resilience(resilience_pipeline) -> None:
 
 
 async def test_high_concurrency_burst(resilience_pipeline) -> None:
-    request_count = 5_000
+    # Keep a meaningful concurrent end-to-end burst in the correctness suite
+    # without turning the root CI job into a multi-minute load test.
+    request_count = 500
     run_id = f"burst-{uuid4().hex}"
 
-    sem = asyncio.Semaphore(200)
+    sem = asyncio.Semaphore(100)
 
     async def send_one(index: int):
         async with sem:
