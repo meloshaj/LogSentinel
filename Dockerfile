@@ -33,9 +33,43 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
+# Build Caddy v2.11.4 from its pinned upstream commit with the fixed Go/module
+# dependency graph to satisfy vulnerability gates.
+# Go 1.26.6 immutable multi-arch OCI index:
+# sha256:e57c41c1d5864341031181b0db34b9a537bb5773eb6428e4e5bdaea0f9135406
+FROM --platform=$BUILDPLATFORM golang@sha256:e57c41c1d5864341031181b0db34b9a537bb5773eb6428e4e5bdaea0f9135406 AS caddy-build
+
+ARG CADDY_COMMIT=e2eee6a7fce366321294c9c2a79f3146891dcbdf
+ARG CADDY_TAG=v2.11.4
+
+RUN apk add --no-cache git
+
+WORKDIR /src
+
+RUN git init . && \
+    git remote add origin https://github.com/caddyserver/caddy.git && \
+    git fetch --depth 1 origin "refs/tags/${CADDY_TAG}:refs/tags/${CADDY_TAG}" && \
+    test "$(git rev-list -n 1 "${CADDY_TAG}")" = "${CADDY_COMMIT}" && \
+    git checkout --detach "${CADDY_TAG}"
+
+# Fixed versions are selected from the Trivy fixed-version evidence for the
+# embedded Caddy/Go dependency graph. The Go toolchain supplies the fixed stdlib.
+RUN cp go.mod /tmp/caddy-patched.mod && \
+    cp go.sum /tmp/caddy-patched.sum && \
+    go get -modfile=/tmp/caddy-patched.mod \
+        github.com/smallstep/certificates@v0.30.0 \
+        google.golang.org/grpc@v1.83.2 \
+        golang.org/x/crypto@v0.55.0 \
+        golang.org/x/net@v0.58.0 \
+        golang.org/x/text@v0.41.0 && \
+    go mod tidy -modfile=/tmp/caddy-patched.mod && \
+    go build -modfile=/tmp/caddy-patched.mod -trimpath -ldflags="-s -w" -o /out/caddy ./cmd/caddy
+
 # caddy:2.11.4-alpine; immutable multi-arch OCI index.
 # Registry manifest digest: sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
 FROM caddy@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e AS production
+
+COPY --from=caddy-build /out/caddy /usr/bin/caddy
 
 WORKDIR /app
 
