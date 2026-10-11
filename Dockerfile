@@ -35,9 +35,9 @@ RUN npm run build
 
 # Build Caddy v2.11.4 from its pinned upstream commit with the fixed Go/module
 # dependency graph to satisfy vulnerability gates.
-# Go 1.26.6 immutable multi-arch OCI index:
-# sha256:e57c41c1d5864341031181b0db34b9a537bb5773eb6428e4e5bdaea0f9135406
-FROM --platform=$BUILDPLATFORM golang@sha256:e57c41c1d5864341031181b0db34b9a537bb5773eb6428e4e5bdaea0f9135406 AS caddy-build
+# Go 1.26.9 immutable multi-arch OCI index:
+# sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade
+FROM --platform=$BUILDPLATFORM golang@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS caddy-build
 
 ARG CADDY_COMMIT=e2eee6a7fce366321294c9c2a79f3146891dcbdf
 ARG CADDY_TAG=v2.11.4
@@ -60,7 +60,7 @@ RUN cp go.mod /tmp/caddy-patched.mod && \
         github.com/smallstep/certificates@v0.30.0 \
         google.golang.org/grpc@v1.83.2 \
         golang.org/x/crypto@v0.55.0 \
-        golang.org/x/net@v0.58.0 \
+        golang.org/x/net@v0.60.0 \
         golang.org/x/text@v0.41.0 && \
     go mod tidy -modfile=/tmp/caddy-patched.mod && \
     go build -modfile=/tmp/caddy-patched.mod -trimpath -ldflags="-s -w" -o /out/caddy ./cmd/caddy
