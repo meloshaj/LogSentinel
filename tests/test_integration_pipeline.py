@@ -38,6 +38,18 @@ pytestmark = pytest.mark.asyncio
 INGEST_API_KEY = "integration-ingest-key"
 
 
+@pytest.fixture(autouse=True)
+def _owned_ingestion_key_override():
+    from backend.app.security.data_scope import DataScope
+    from backend.app.security.ingest_guard import require_ingestion_api_key
+
+    main_module.app.dependency_overrides[require_ingestion_api_key] = lambda: DataScope(
+        "integration-tenant", 100
+    )
+    yield
+    main_module.app.dependency_overrides.pop(require_ingestion_api_key, None)
+
+
 @dataclass
 class PgConnectionSettings:
     user: str
@@ -377,18 +389,39 @@ async def _wait_for_fetchval(
     pytest.fail(f"Timed out waiting for database condition; last value={last_value!r}")
 
 
-async def _drain_and_flush(pipeline: SimpleNamespace) -> None:
-    # Give the drain worker time to process the stream
-    for _ in range(50):
-        await asyncio.sleep(0.1)
+async def _drain_and_flush(
+    pipeline: SimpleNamespace,
+    *,
+    timeout: float = 60.0,
+    expected_count: int | None = None,
+) -> None:
+    deadline = time.monotonic() + timeout
+    last_processed = -1
+    stable_cycles = 0
+    while time.monotonic() < deadline:
         if pipeline.batch_manager.size() > 0:
             await pipeline.batch_manager.flush()
+        current_processed = pipeline.drain_worker.processed_count
         if (
-            pipeline.drain_worker.processed_count > 0
+            expected_count is not None
+            and current_processed >= expected_count
             and pipeline.batch_manager.size() == 0
         ):
             break
-    await pipeline.batch_manager.flush()
+        if (
+            current_processed > 0
+            and current_processed == last_processed
+            and pipeline.batch_manager.size() == 0
+        ):
+            stable_cycles += 1
+            if stable_cycles >= 5:
+                break
+        else:
+            stable_cycles = 0
+            last_processed = current_processed
+        await asyncio.sleep(0.1)
+    if pipeline.batch_manager.size() > 0:
+        await pipeline.batch_manager.flush()
 
 
 async def _extract_and_wait_for_features(
@@ -437,7 +470,7 @@ async def test_e2e_valid_log_ingestion_to_db(integration_pipeline) -> None:
 
     assert max(response_times) < 1.0
 
-    await _drain_and_flush(integration_pipeline)
+    await _drain_and_flush(integration_pipeline, expected_count=100)
     persisted_count = await _wait_for_fetchval(
         integration_pipeline.pool,
         "SELECT count(*) FROM logs WHERE correlation_id LIKE $1",
@@ -580,7 +613,7 @@ async def test_e2e_malformed_log_resilience(
     assert parser_failure.status_code == 202
     assert subsequent_valid.status_code == 202
 
-    await _drain_and_flush(integration_pipeline)
+    await _drain_and_flush(integration_pipeline, expected_count=7)
 
     valid_count = await _wait_for_fetchval(
         integration_pipeline.pool,

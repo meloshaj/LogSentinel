@@ -47,10 +47,8 @@ class ParsedLogBatchManager:
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than 0")
 
-        self.batch_size = min(batch_size, MAX_BATCH_SIZE)
-        self.flush_interval_seconds = min(
-            flush_interval_seconds, MAX_FLUSH_INTERVAL_MS / 1000.0
-        )
+        self.batch_size = batch_size
+        self.flush_interval_seconds = flush_interval_seconds
         self.sink = sink
         self.benchmarking_collector = benchmarking_collector
         self.max_retries = max_retries

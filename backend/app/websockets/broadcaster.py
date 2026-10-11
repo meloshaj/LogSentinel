@@ -160,6 +160,7 @@ class HighLoadBroadcaster:
             return
 
         while True:
+            pubsub = None
             try:
                 pubsub = self.redis_client.pubsub()
                 await pubsub.subscribe(self.channel_name)
@@ -197,6 +198,13 @@ class HighLoadBroadcaster:
                     sanitize_error_text(exc),
                 )
                 await asyncio.sleep(1)
+            finally:
+                if pubsub is not None:
+                    try:
+                        await pubsub.unsubscribe(self.channel_name)
+                        await pubsub.aclose()
+                    except Exception:
+                        pass
 
     async def _flush_loop(self) -> None:
         """Background loop that drains the buffer at the configured frame rate."""

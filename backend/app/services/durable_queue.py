@@ -105,6 +105,34 @@ async def enqueue(
     return identity
 
 
+async def enqueue_batch(
+    conn,
+    records: list[dict[str, Any]],
+    chunk_size: int = 500,
+) -> None:
+    """Batch-enqueue multiple outbox deliveries with idempotent conflict handling."""
+    if not records:
+        return
+    for i in range(0, len(records), chunk_size):
+        chunk = records[i : i + chunk_size]
+        stmt = insert(outbox).values(chunk)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[
+                outbox.c.tenant_id,
+                outbox.c.owner_user_id,
+                outbox.c.topic,
+                outbox.c.dedup_key,
+            ],
+            set_={
+                "payload": stmt.excluded.payload,
+                "available_at": func.coalesce(stmt.excluded.available_at, func.now()),
+                "updated_at": func.now(),
+            },
+            where=outbox.c.status.in_(["pending", "retry"]),
+        )
+        await conn.execute(stmt)
+
+
 async def enqueue_email(
     session,
     *,
