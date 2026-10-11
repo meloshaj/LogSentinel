@@ -521,7 +521,8 @@ async def test_e2e_valid_log_ingestion_to_db(integration_pipeline) -> None:
 
     worker_stats = integration_pipeline.drain_worker.get_stats()
     assert worker_stats["processed_count"] == 100
-    assert worker_stats["queue_size"] == 0
+    # This fixture drives the worker directly without a queue adapter.
+    assert worker_stats["queue_size"] is None
     assert worker_stats["batch"]["last_sink_error"] is None
 
 
