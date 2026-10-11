@@ -42,7 +42,7 @@ class HighLoadBroadcaster:
         self.redis_client: Redis | None = None
         self.channel_name = "logsentinel:telemetry:pubsub"
 
-    def set_redis_client(self, redis_client: Redis) -> None:
+    def set_redis_client(self, redis_client: Redis | None) -> None:
         """Set the Redis client for pub/sub."""
         self.redis_client = redis_client
 
@@ -82,6 +82,8 @@ class HighLoadBroadcaster:
             finally:
                 self._listener_task = None
 
+        self.redis_client = None
+
     async def connect(
         self,
         websocket: WebSocket,
@@ -107,6 +109,13 @@ class HighLoadBroadcaster:
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
             self._connections.pop(websocket, None)
+            if not self._connections:
+                if self._task:
+                    self._task.cancel()
+                    self._task = None
+                if self._listener_task:
+                    self._listener_task.cancel()
+                    self._listener_task = None
 
     def connection_count(self) -> int:
         return len(self._connections)
