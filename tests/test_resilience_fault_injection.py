@@ -414,7 +414,10 @@ async def _wait_for_fetchval(
 
 
 async def _drain_and_flush(
-    pipeline: SimpleNamespace, *, timeout: float = 120.0
+    pipeline: SimpleNamespace,
+    *,
+    timeout: float = 120.0,
+    expected_count: int | None = None,
 ) -> None:
     deadline = time.monotonic() + timeout
     last_processed = -1
@@ -423,7 +426,17 @@ async def _drain_and_flush(
         if pipeline.batch_manager.size() > 0:
             await pipeline.batch_manager.flush()
         current_processed = pipeline.drain_worker.processed_count
-        if current_processed == last_processed and pipeline.batch_manager.size() == 0:
+        if (
+            expected_count is not None
+            and current_processed >= expected_count
+            and pipeline.batch_manager.size() == 0
+        ):
+            break
+        if (
+            current_processed > 0
+            and current_processed == last_processed
+            and pipeline.batch_manager.size() == 0
+        ):
             stable_cycles += 1
             if stable_cycles >= 5:
                 break
@@ -553,7 +566,9 @@ async def test_high_concurrency_burst(resilience_pipeline) -> None:
     assert all(response.status_code == 202 for response in responses)
     assert all(response.json()["accepted"] is True for response in responses)
 
-    await _drain_and_flush(resilience_pipeline, timeout=180.0)
+    await _drain_and_flush(
+        resilience_pipeline, timeout=180.0, expected_count=request_count
+    )
     persisted = await _wait_for_fetchval(
         resilience_pipeline.pool,
         "SELECT count(*) FROM logs WHERE correlation_id LIKE $1",
