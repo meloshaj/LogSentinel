@@ -88,6 +88,7 @@ class DrainWorker:
         benchmarking_collector: Any = None,
         dlq_stream_name: str = DLQ_STREAM_NAME,
         max_retries: int = MAX_PARSE_RETRIES,
+        persist_before_ack: bool = True,
     ) -> None:
         """
         Initialize the Drain worker with dependencies and configuration.
@@ -105,6 +106,7 @@ class DrainWorker:
             benchmarking_collector: Optional collector for performance metrics.
             dlq_stream_name: Redis stream name for dead-letter queue.
             max_retries: Consecutive failure threshold before routing to DLQ.
+            persist_before_ack: Whether to synchronously persist stream batches before ACK.
 
         Raises:
             ValueError: If queue_drain_timeout_seconds is not positive.
@@ -134,6 +136,7 @@ class DrainWorker:
         self.group_name: str = LOG_WORKERS_GROUP
         self.dlq_stream_name: str = dlq_stream_name
         self.max_retries: int = max_retries
+        self.persist_before_ack: bool = persist_before_ack
         self._retry_counts: dict[str, int] = {}
         self.dlq_count: int = 0
         self._task: asyncio.Task[None] | None = None
@@ -495,7 +498,7 @@ class DrainWorker:
                 envelope.payload if envelope is not None else payload,
                 message_id=message_id,
                 _raise_on_parser_error=True,
-                _persist_before_ack=True,
+                _persist_before_ack=self.persist_before_ack,
                 trusted_tenant_id=envelope.tenant_id if envelope is not None else None,
                 trusted_owner_user_id=envelope.owner_user_id
                 if envelope is not None
@@ -716,6 +719,11 @@ class DrainWorker:
                 await self._clear_retry_count(retry_key, metadata)
             except Exception as exc:
                 self.error_count += 1
+                logger.error(
+                    "Drain parser failed for log message %s: %s",
+                    log_id,
+                    redact_text(str(exc)),
+                )
                 if _raise_on_parser_error:
                     # Stream ownership handles retry counters and DLQ routing.
                     # Raising here prevents the outer loop from ACKing a parser

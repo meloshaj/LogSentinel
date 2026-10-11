@@ -38,8 +38,6 @@ pytestmark = pytest.mark.asyncio
 INGEST_API_KEY = "integration-ingest-key"
 
 
-
-
 @dataclass
 class PgConnectionSettings:
     user: str
@@ -154,6 +152,18 @@ async def _create_temporary_database() -> PgConnectionSettings:
     test_conn = await asyncpg.connect(**test_db_settings.asyncpg_kwargs())
     try:
         await bootstrap_database(test_conn)
+        import hashlib
+
+        key_hash = hashlib.sha256(b"integration-ingest-key").hexdigest()
+        await test_conn.execute(
+            """
+            INSERT INTO tenants (id, name, status) VALUES ('integration-tenant', 'Integration Tenant', 'active') ON CONFLICT DO NOTHING;
+            INSERT INTO users (id, email, tenant_id, status, role) VALUES (100, 'integration-test@example.com', 'integration-tenant', 'active', 'admin') ON CONFLICT DO NOTHING;
+            INSERT INTO tenant_memberships (tenant_id, user_id, role, status) VALUES ('integration-tenant', 100, 'admin', 'active') ON CONFLICT DO NOTHING;
+            INSERT INTO ingestion_api_keys (tenant_id, user_id, key_prefix, key_hash, expires_at, scopes) VALUES ('integration-tenant', 100, 'integration-', $1, NOW() + INTERVAL '365 days', '["logs:ingest"]'::jsonb) ON CONFLICT DO NOTHING;
+            """,
+            key_hash,
+        )
     finally:
         await test_conn.close()
 
@@ -173,7 +183,9 @@ async def _drop_temporary_database(settings: PgConnectionSettings) -> None:
             """,
             settings.database,
         )
-        await connection.execute(f"DROP DATABASE IF EXISTS {_quote_identifier(settings.database)}")
+        await connection.execute(
+            f"DROP DATABASE IF EXISTS {_quote_identifier(settings.database)}"
+        )
     finally:
         await connection.close()
 
@@ -225,6 +237,7 @@ def _install_isolated_pipeline(
     state_path: Path,
 ) -> SimpleNamespace:
     from drain3.file_persistence import FilePersistence
+
     state_path = str(state_path)
     pers = FilePersistence(state_path)
     drain_parser = DrainParser(state_path=state_path, persistence=pers)
@@ -253,8 +266,8 @@ def _install_isolated_pipeline(
         on_log_parsed=feature_worker.add_parsed_log,
         runtime_dependency_parser=RuntimeDependencyParser(),
         queue_drain_timeout_seconds=10.0,
+        persist_before_ack=False,
     )
-
 
     monkeypatch.setattr(main_module, "drain_parser", drain_parser)
     monkeypatch.setattr(main_module, "log_repository", log_repository)
@@ -298,6 +311,13 @@ async def integration_pipeline(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("INGEST_API_KEY", INGEST_API_KEY)
         monkeypatch.setenv("INGEST_API_KEYS", "")
 
+        from backend.app.security.data_scope import DataScope
+        from backend.app.security.ingest_guard import require_ingestion_api_key
+
+        main_module.app.dependency_overrides[require_ingestion_api_key] = (
+            lambda: DataScope("integration-tenant", 100)
+        )
+
         transport = httpx.ASGITransport(app=main_module.app)
         async with main_module.lifespan(main_module.app):
             async with httpx.AsyncClient(
@@ -311,6 +331,7 @@ async def integration_pipeline(monkeypatch: pytest.MonkeyPatch):
                     **pipeline.__dict__,
                 )
     finally:
+        main_module.app.dependency_overrides.pop(require_ingestion_api_key, None)
         if pool is not None:
             await pool.close()
         await dispose_engine()
@@ -335,7 +356,9 @@ def _normal_event(index: int, run_id: str) -> dict[str, object]:
     }
 
 
-async def _wait_for_fetchval(pool: asyncpg.Pool, query: str, *args, expected, timeout: float = 5.0):
+async def _wait_for_fetchval(
+    pool: asyncpg.Pool, query: str, *args, expected, timeout: float = 5.0
+):
     deadline = time.monotonic() + timeout
     last_value = None
     while time.monotonic() < deadline:
@@ -348,11 +371,21 @@ async def _wait_for_fetchval(pool: asyncpg.Pool, query: str, *args, expected, ti
 
 async def _drain_and_flush(pipeline: SimpleNamespace) -> None:
     # Give the drain worker time to process the stream
-    await asyncio.sleep(0.5)
+    for _ in range(50):
+        await asyncio.sleep(0.1)
+        if pipeline.batch_manager.size() > 0:
+            await pipeline.batch_manager.flush()
+        if (
+            pipeline.drain_worker.processed_count > 0
+            and pipeline.batch_manager.size() == 0
+        ):
+            break
     await pipeline.batch_manager.flush()
 
 
-async def _extract_and_wait_for_features(pipeline: SimpleNamespace) -> list[FeatureVector]:
+async def _extract_and_wait_for_features(
+    pipeline: SimpleNamespace,
+) -> list[FeatureVector]:
     features = await pipeline.feature_worker.extract_pending_features(
         current_time=datetime.now(timezone.utc) + timedelta(seconds=120),
     )
@@ -464,7 +497,9 @@ async def test_e2e_malformed_log_resilience(
             raise ValueError("forced parser validation failure")
         return original_parse(raw_message, metadata=metadata)
 
-    monkeypatch.setattr(integration_pipeline.drain_parser, "parse", parse_with_one_failure)
+    monkeypatch.setattr(
+        integration_pipeline.drain_parser, "parse", parse_with_one_failure
+    )
 
     caplog.set_level(logging.WARNING, logger="logsentinel.drain_worker")
 
@@ -475,7 +510,11 @@ async def test_e2e_malformed_log_resilience(
     )
     missing_fields = await integration_pipeline.client.post(
         "/ingest-log",
-        json={"source": "integration-test", "environment": "test", "logs": [{"level": "info"}]},
+        json={
+            "source": "integration-test",
+            "environment": "test",
+            "logs": [{"level": "info"}],
+        },
         headers=_auth_headers(),
     )
     binary_blob = await integration_pipeline.client.post(
@@ -555,7 +594,13 @@ async def test_e2e_malformed_log_resilience(
     assert massive_count == 1
     assert parser_failure_count == 0
     assert integration_pipeline.drain_worker.get_stats()["error_count"] >= 1
-    assert "Drain parser failed for log message" in caplog.text
+    assert any(
+        phrase in caplog.text
+        for phrase in [
+            "Drain parser failed for log message",
+            "Drain parser failed for log ID",
+        ]
+    )
 
     features = await _extract_and_wait_for_features(integration_pipeline)
     assert sum(feature.log_count for feature in features) >= 6

@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 
-from redis.asyncio import ConnectionPool, Redis
+from redis.asyncio import BlockingConnectionPool, ConnectionPool, Redis
 
 from ..security.redaction import sanitize_error_text
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://valkey:6379/0")
 
-_redis_pool: ConnectionPool | None = None
+_redis_pool: ConnectionPool | BlockingConnectionPool | None = None
 
 _MAX_RETRIES = 5
 _BASE_DELAY_SECONDS = 1.0
@@ -32,10 +32,12 @@ async def init_redis_pool() -> Redis:
 
     for attempt in range(1, _MAX_RETRIES + 1):
         try:
-            _redis_pool = ConnectionPool.from_url(
+            max_connections = int(os.getenv("REDIS_MAX_CONNECTIONS", "500"))
+            _redis_pool = BlockingConnectionPool.from_url(
                 REDIS_URL,
                 decode_responses=True,
-                max_connections=100,
+                max_connections=max_connections,
+                timeout=30.0,
             )
             client = Redis(connection_pool=_redis_pool)
             await client.ping()  # type: ignore

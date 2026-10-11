@@ -42,6 +42,7 @@ class ParsedLogBatchManager:
         flush_interval_seconds: float = MAX_FLUSH_INTERVAL_MS / 1000.0,
         sink: BatchSink | None = None,
         benchmarking_collector: Any = None,
+        max_retries: int = 3,
     ) -> None:
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than 0")
@@ -52,6 +53,7 @@ class ParsedLogBatchManager:
         )
         self.sink = sink
         self.benchmarking_collector = benchmarking_collector
+        self.max_retries = max_retries
 
         self._buffer: list[ParsedLog] = []
         self._flushed_batches: list[list[ParsedLog]] = []
@@ -195,7 +197,7 @@ class ParsedLogBatchManager:
         async with self._state_lock:
             self._flush_active = True
 
-        retries = 3
+        retries = getattr(self, "max_retries", 3)
         result = None
         for attempt in range(retries):
             try:
