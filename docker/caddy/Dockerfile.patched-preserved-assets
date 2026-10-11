@@ -27,9 +27,9 @@ RUN cp go.mod /tmp/caddy-patched.mod && \
     go get -modfile=/tmp/caddy-patched.mod \
         github.com/smallstep/certificates@v0.30.0 \
         google.golang.org/grpc@v1.83.2 \
-        golang.org/x/crypto@v0.55.0 \
+        golang.org/x/crypto@v0.57.0 \
         golang.org/x/net@v0.60.0 \
-        golang.org/x/text@v0.41.0 && \
+        golang.org/x/text@v0.42.0 && \
     go mod tidy -modfile=/tmp/caddy-patched.mod && \
     go build -modfile=/tmp/caddy-patched.mod -trimpath -ldflags="-s -w" -o /out/caddy ./cmd/caddy
 
