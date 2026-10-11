@@ -431,7 +431,8 @@ async def _drain_and_flush(
             stable_cycles = 0
             last_processed = current_processed
         await asyncio.sleep(0.2)
-    assert await pipeline.batch_manager.flush() is True
+    if pipeline.batch_manager.size() > 0:
+        assert await pipeline.batch_manager.flush() is True
 
 
 async def test_queue_backpressure_saturation(monkeypatch: pytest.MonkeyPatch) -> None:

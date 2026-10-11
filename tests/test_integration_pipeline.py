@@ -156,11 +156,19 @@ async def _create_temporary_database() -> PgConnectionSettings:
 
         key_hash = hashlib.sha256(b"integration-ingest-key").hexdigest()
         await test_conn.execute(
+            "INSERT INTO tenants (id, name, status) VALUES ('integration-tenant', 'Integration Tenant', 'active') ON CONFLICT DO NOTHING;"
+        )
+        await test_conn.execute(
+            "INSERT INTO users (id, email, tenant_id, status, role) VALUES (100, 'integration-test@example.com', 'integration-tenant', 'active', 'admin') ON CONFLICT DO NOTHING;"
+        )
+        await test_conn.execute(
+            "INSERT INTO tenant_memberships (tenant_id, user_id, role, status) VALUES ('integration-tenant', 100, 'admin', 'active') ON CONFLICT DO NOTHING;"
+        )
+        await test_conn.execute(
             """
-            INSERT INTO tenants (id, name, status) VALUES ('integration-tenant', 'Integration Tenant', 'active') ON CONFLICT DO NOTHING;
-            INSERT INTO users (id, email, tenant_id, status, role) VALUES (100, 'integration-test@example.com', 'integration-tenant', 'active', 'admin') ON CONFLICT DO NOTHING;
-            INSERT INTO tenant_memberships (tenant_id, user_id, role, status) VALUES ('integration-tenant', 100, 'admin', 'active') ON CONFLICT DO NOTHING;
-            INSERT INTO ingestion_api_keys (tenant_id, user_id, key_prefix, key_hash, expires_at, scopes) VALUES ('integration-tenant', 100, 'integration-', $1, NOW() + INTERVAL '365 days', '["logs:ingest"]'::jsonb) ON CONFLICT DO NOTHING;
+            INSERT INTO ingestion_api_keys (tenant_id, user_id, key_prefix, key_hash, expires_at, scopes)
+            VALUES ('integration-tenant', 100, 'integration-', $1, NOW() + INTERVAL '365 days', '["logs:ingest"]'::jsonb)
+            ON CONFLICT DO NOTHING;
             """,
             key_hash,
         )
