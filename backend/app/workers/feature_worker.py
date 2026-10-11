@@ -532,7 +532,7 @@ class FeatureExtractionWorker:
         ):
             return self._anomaly_detectors[scope_key]
         if self.anomaly_model_path is None:
-            return None
+            return self._anomaly_detectors.get(scope_key) or self.anomaly_detector
         try:
             registered = await load_registered_detector(
                 self.anomaly_model_path, tenant_id, owner_user_id
@@ -555,9 +555,9 @@ class FeatureExtractionWorker:
                 sanitize_error_text(exc),
             )
             self._model_checked_at[scope_key] = now
-            return self._anomaly_detectors.get(scope_key)
+            return self._anomaly_detectors.get(scope_key) or self.anomaly_detector
         if active_detector is None:
-            return self._anomaly_detectors.get(scope_key)
+            return self._anomaly_detectors.get(scope_key) or self.anomaly_detector
         self._anomaly_detectors[scope_key] = active_detector
         self._model_checked_at[scope_key] = now
         return active_detector

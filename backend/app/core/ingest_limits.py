@@ -24,7 +24,7 @@ MAX_OTLP_BODY_BYTES = _positive_int("MAX_OTLP_BODY_BYTES", 10 * 1024 * 1024)
 MAX_RECORDS_PER_BATCH = _positive_int("MAX_RECORDS_PER_BATCH", 5000)
 MAX_LINE_LENGTH = _positive_int("MAX_LINE_LENGTH", 1024 * 1024)
 MAX_METADATA_DEPTH = _positive_int("MAX_METADATA_DEPTH", 16)
-MAX_STRING_LENGTH = _positive_int("MAX_STRING_LENGTH", 65536)
+MAX_STRING_LENGTH = _positive_int("MAX_STRING_LENGTH", 262144)
 
 
 def validate_bounded_structure(

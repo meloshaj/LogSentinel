@@ -533,10 +533,12 @@ async def test_e2e_malformed_log_resilience(
     run_id = f"malformed-{uuid4().hex}"
     original_parse = integration_pipeline.drain_parser.parse
 
-    def parse_with_one_failure(raw_message: str, metadata: dict | None = None):
+    def parse_with_one_failure(
+        raw_message: str, metadata: dict | None = None, *args, **kwargs
+    ):
         if "force parser exception" in raw_message:
             raise ValueError("forced parser validation failure")
-        return original_parse(raw_message, metadata=metadata)
+        return original_parse(raw_message, metadata=metadata, *args, **kwargs)
 
     monkeypatch.setattr(
         integration_pipeline.drain_parser, "parse", parse_with_one_failure
