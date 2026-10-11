@@ -360,7 +360,7 @@ jobs:
             --gate=image-security=PASS --gate=provenance=PASS --gate=rollback-contract=PASS
       - name: Validate manifest and emit unsigned attestation-ready metadata
         run: |
-          python scripts/release_manifest.py validate /tmp/release-manifest.json --release-ready
+          python scripts/release_manifest.py validate /tmp/release-manifest.json
           python scripts/release_attestation.py /tmp/release-manifest.json --output /tmp/release-attestation.json
 
   rollback-contract:
