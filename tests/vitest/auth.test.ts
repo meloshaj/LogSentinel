@@ -5,12 +5,19 @@ import {
   clearAuthToken,
   isAuthTokenValid,
   getAuthErrorMessage,
+  logoutSession,
+  refreshSession,
 } from '../../src/utils/auth';
 
 describe('Remember Me (Auth Utils)', () => {
   beforeEach(() => {
     localStorage.clear();
     sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it('keeps access JWT in memory when remember-me is checked', () => {
@@ -102,5 +109,67 @@ describe('Remember Me (Auth Utils)', () => {
     await expect(getAuthErrorMessage(response, 'Authentication is temporarily unavailable')).resolves.toBe(
       'Authentication is temporarily unavailable',
     );
+  });
+
+  it('bootstraps CSRF and refreshes a session against the configured API origin', async () => {
+    vi.stubEnv('VITE_API_URL', 'https://api.example.test/');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ csrf_token: 'csrf-value' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ access_token: 'fresh-access-token' }), {
+          status: 200,
+        }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(refreshSession()).resolves.toBe('fresh-access-token');
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://api.example.test/api/auth/csrf',
+      expect.objectContaining({ method: 'GET', credentials: 'include' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://api.example.test/api/auth/refresh',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': 'csrf-value' },
+      }),
+    );
+    expect(getAuthToken()).toBe('fresh-access-token');
+  });
+
+  it('bootstraps CSRF and invalidates the backend session on logout', async () => {
+    vi.stubEnv('VITE_API_URL', 'https://api.example.test');
+    setAuthToken('internal-access-token');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ csrf_token: 'csrf-value' }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await logoutSession();
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://api.example.test/api/auth/csrf',
+      expect.objectContaining({ method: 'GET', credentials: 'include' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://api.example.test/api/auth/logout',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-CSRF-Token': 'csrf-value' },
+      }),
+    );
+    expect(getAuthToken()).toBeNull();
   });
 });

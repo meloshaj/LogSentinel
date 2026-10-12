@@ -65,36 +65,38 @@ function isSameOriginUrl(value: string, requiredPath?: string): boolean {
 }
 
 function isSupportedRedirectUrl(value: string): boolean {
-  return (
-    isSameOriginUrl(value, "/redirect.html") ||
-    isSameOriginUrl(value, "/auth/callback")
-  );
+  return isSameOriginUrl(value, "/auth/callback");
 }
 
+const azureClientId = import.meta.env.VITE_AZURE_CLIENT_ID?.trim() || "";
+const microsoftClientId =
+  import.meta.env.VITE_MICROSOFT_SPA_CLIENT_ID?.trim() || "";
+const configuredAuthEnabled =
+  import.meta.env.VITE_AZURE_AUTH_ENABLED?.trim() ||
+  import.meta.env.VITE_MICROSOFT_AUTH_ENABLED?.trim();
+
 export const msalConfig = {
-  enabled: import.meta.env.VITE_MICROSOFT_AUTH_ENABLED?.trim()
-    ? readBoolean(import.meta.env.VITE_MICROSOFT_AUTH_ENABLED)
-    : Boolean(import.meta.env.VITE_AZURE_CLIENT_ID?.trim()),
-  clientId:
-    import.meta.env.VITE_MICROSOFT_SPA_CLIENT_ID?.trim() ||
-    import.meta.env.VITE_AZURE_CLIENT_ID?.trim() ||
-    "",
+  enabled: configuredAuthEnabled
+    ? readBoolean(configuredAuthEnabled)
+    : Boolean(azureClientId || microsoftClientId),
+  clientId: azureClientId || microsoftClientId,
   authority:
-    import.meta.env.VITE_MICROSOFT_AUTHORITY?.trim() ||
     import.meta.env.VITE_AZURE_AUTHORITY?.trim() ||
+    import.meta.env.VITE_MICROSOFT_AUTHORITY?.trim() ||
     "",
   apiScope:
-    import.meta.env.VITE_MICROSOFT_API_SCOPE?.trim() ||
+    import.meta.env.VITE_AZURE_API_SCOPE?.trim() ||
     import.meta.env.VITE_AZURE_SCOPES?.trim() ||
+    import.meta.env.VITE_MICROSOFT_API_SCOPE?.trim() ||
     "",
   redirectUri: sanitizeSameOriginUrl(
-      import.meta.env.VITE_MICROSOFT_REDIRECT_URI?.trim() ||
-      import.meta.env.VITE_AZURE_REDIRECT_URI?.trim(),
+    import.meta.env.VITE_AZURE_REDIRECT_URI?.trim() ||
+      import.meta.env.VITE_MICROSOFT_REDIRECT_URI?.trim(),
     "/auth/callback",
   ),
   postLogoutRedirectUri: sanitizeSameOriginUrl(
-    import.meta.env.VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI?.trim() ||
-      import.meta.env.VITE_AZURE_POST_LOGOUT_REDIRECT_URI?.trim(),
+    import.meta.env.VITE_AZURE_POST_LOGOUT_REDIRECT_URI?.trim() ||
+      import.meta.env.VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI?.trim(),
     "/login",
   ),
 };

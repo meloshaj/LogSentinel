@@ -3,6 +3,13 @@
 interface ImportMetaEnv {
   readonly VITE_WS_URL?: string;
   readonly VITE_API_URL?: string;
+  readonly VITE_AZURE_AUTH_ENABLED?: string;
+  readonly VITE_AZURE_CLIENT_ID?: string;
+  readonly VITE_AZURE_AUTHORITY?: string;
+  readonly VITE_AZURE_API_SCOPE?: string;
+  readonly VITE_AZURE_SCOPES?: string;
+  readonly VITE_AZURE_REDIRECT_URI?: string;
+  readonly VITE_AZURE_POST_LOGOUT_REDIRECT_URI?: string;
   readonly VITE_MICROSOFT_AUTH_ENABLED?: string;
   readonly VITE_MICROSOFT_SPA_CLIENT_ID?: string;
   readonly VITE_MICROSOFT_AUTHORITY?: string;

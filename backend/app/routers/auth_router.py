@@ -23,7 +23,7 @@ import os
 import secrets
 import urllib.parse
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from fastapi import (
@@ -185,6 +185,10 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class CsrfResponse(BaseModel):
+    csrf_token: str
+
+
 def _secure_cookie(request: Request) -> bool:
     return (
         request.url.scheme == "https"
@@ -196,12 +200,15 @@ def _set_session_cookies(response: Response, request: Request, issued) -> None:
     max_age = max(
         0, int((issued.expires_at - datetime.now(timezone.utc)).total_seconds())
     )
+    cookie_samesite: Literal["none", "lax"] = (
+        "none" if _secure_cookie(request) else "lax"
+    )
     response.set_cookie(
         REFRESH_COOKIE_NAME,
         issued.refresh_token,
         httponly=True,
         secure=_secure_cookie(request),
-        samesite="lax",
+        samesite=cookie_samesite,
         path="/api/auth",
         max_age=max_age,
     )
@@ -210,7 +217,7 @@ def _set_session_cookies(response: Response, request: Request, issued) -> None:
         issued.csrf_token,
         httponly=False,
         secure=_secure_cookie(request),
-        samesite="lax",
+        samesite=cookie_samesite,
         path="/",
         max_age=max_age,
     )
@@ -229,7 +236,7 @@ async def _issue_session(
     )
 
 
-def _validate_cookie_request(request: Request) -> str:
+def _validate_request_origin(request: Request) -> None:
     origin = request.headers.get("origin")
     allowed = {
         value.strip().rstrip("/")
@@ -237,6 +244,10 @@ def _validate_cookie_request(request: Request) -> str:
     }
     if origin and origin.rstrip("/") not in allowed:
         raise HTTPException(status_code=403, detail="invalid_request_origin")
+
+
+def _validate_cookie_request(request: Request) -> str:
+    _validate_request_origin(request)
     csrf = request.headers.get("x-csrf-token", "")
     cookie_csrf = request.cookies.get(CSRF_COOKIE_NAME, "")
     if not csrf or not cookie_csrf or not secrets.compare_digest(csrf, cookie_csrf):
@@ -1232,6 +1243,19 @@ async def refresh_session(
             session_id=issued.session_id,
         )
     )
+
+
+@router.get("/csrf", response_model=CsrfResponse)
+async def get_csrf_token(request: Request, response: Response) -> CsrfResponse:
+    """Return the double-submit token for an existing cookie session."""
+    _validate_request_origin(request)
+    if not request.cookies.get(REFRESH_COOKIE_NAME):
+        raise HTTPException(status_code=401, detail="session_required")
+    csrf = request.cookies.get(CSRF_COOKIE_NAME)
+    if not csrf:
+        raise HTTPException(status_code=401, detail="session_required")
+    response.headers["Cache-Control"] = "no-store"
+    return CsrfResponse(csrf_token=csrf)
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

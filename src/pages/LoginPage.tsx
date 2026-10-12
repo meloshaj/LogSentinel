@@ -32,7 +32,7 @@ import {
   useMicrosoftAuthStatus,
   type MicrosoftAuthStatus,
 } from "../providers/MsalProviderWrapper";
-import { getAuthErrorMessage, isAuthTokenValid, sanitizeAuthCallbackUrl, setAuthToken } from "../utils/auth";
+import { getAuthErrorMessage, isAuthTokenValid, refreshSession, sanitizeAuthCallbackUrl, setAuthToken } from "../utils/auth";
 import { FeatureFlag } from "../components/common/FeatureFlag";
 
 type AuthOperation = "email" | "google" | "microsoft";
@@ -164,6 +164,7 @@ export function LoginPage() {
     const searchParams = new URLSearchParams(window.location.search);
     const searchToken = searchParams.get("token");
     const searchErrorMsg = searchParams.get("error");
+    const restoredSession = searchParams.get("session") === "restored";
 
     const token = hashToken || searchToken;
     const errorMsg = hashErrorMsg || searchErrorMsg;
@@ -186,6 +187,21 @@ export function LoginPage() {
         setErrors({ submit: decodedError });
       }
       sanitizeAuthCallbackUrl();
+    } else if (restoredSession) {
+      sanitizeAuthCallbackUrl();
+      void refreshSession().then((restoredToken) => {
+        if (restoredToken) {
+          setSuccess(true);
+          navigationTimerRef.current = window.setTimeout(() => {
+            navigate("/");
+          }, 1500);
+        } else {
+          setErrors({
+            submit:
+              "The GitHub session could not be restored. Your browser may be blocking cross-site cookies.",
+          });
+        }
+      });
     }
 
     return () => {
@@ -531,16 +547,14 @@ export function LoginPage() {
                     Remember me
                   </span>
                 </label>
-                <FeatureFlag flag="ENABLE_PASSWORD_RESET">
-                  <button
-                    type="button"
-                    onClick={() => navigate("/forgot-password")}
-                    className="text-xs text-sky-600 hover:text-sky-700 font-semibold transition-colors select-none cursor-pointer disabled:opacity-60"
-                    disabled={isLoading}
-                  >
-                    Forgot password?
-                  </button>
-                </FeatureFlag>
+                <button
+                  type="button"
+                  onClick={() => navigate("/forgot-password")}
+                  className="text-xs text-sky-600 hover:text-sky-700 font-semibold transition-colors select-none cursor-pointer disabled:opacity-60"
+                  disabled={isLoading}
+                >
+                  Forgot password?
+                </button>
               </div>
 
               <button
