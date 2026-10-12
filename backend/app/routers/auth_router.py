@@ -1734,8 +1734,12 @@ async def github_login_callback(
         cookie_origin if cookie_origin in allowed_origins else allowed_origins[0]
     )
 
+    token = create_access_token(
+        {"sub": user.email, "full_name": user.full_name or ""},
+        session_id=issued.session_id,
+    )
     redirect = RedirectResponse(
-        f"{frontend_url}/login?session=restored", status_code=303
+        f"{frontend_url}/login#token={token}", status_code=303
     )
     _set_session_cookies(redirect, request, issued)
     redirect.delete_cookie("github_oauth_state")
