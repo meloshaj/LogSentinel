@@ -26,6 +26,7 @@ x-backend-environment: &backend-environment
   JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY must be set in production}
   ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
   FRONTEND_URL: ${FRONTEND_URL:-https://${DOMAIN_NAME:-logsentinel.example.com}}
+  SSO_UNMAPPED_PROVIDER_POLICY: ${SSO_UNMAPPED_PROVIDER_POLICY:-personal}
 
 x-email-environment: &email-environment
   SMTP_HOST: ${SMTP_HOST:?SMTP_HOST must be set in production}

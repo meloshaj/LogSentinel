@@ -149,6 +149,7 @@ services:
       - AZURE_JWKS_TIMEOUT=${AZURE_JWKS_TIMEOUT:-5.0}
       - AZURE_JWKS_CACHE_TTL=${AZURE_JWKS_CACHE_TTL:-3600}
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+      - SSO_UNMAPPED_PROVIDER_POLICY=${SSO_UNMAPPED_PROVIDER_POLICY:-personal}
     depends_on:
       timescaledb:
         condition: service_healthy
