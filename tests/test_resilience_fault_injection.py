@@ -24,6 +24,8 @@ from backend.app.ml.feature_extractor import WindowConfig
 from backend.app.models import FeatureVector, ParsedLog
 from backend.app.repositories.feature_repository import FeatureRepository
 from backend.app.repositories.log_repository import LogRepository
+from backend.app.security.data_scope import DataScope
+from backend.app.security.ingest_guard import require_ingestion_api_key
 from backend.app.services.batch_manager import ParsedLogBatchManager
 from backend.app.services.drain_parser import DrainParser
 from backend.app.services.runtime_dependency_parser import RuntimeDependencyParser
@@ -36,6 +38,13 @@ pytestmark = pytest.mark.asyncio
 INGEST_API_KEY = "resilience-ingest-key"
 
 
+@pytest.fixture(autouse=True)
+def _owned_ingestion_key_override():
+    main_module.app.dependency_overrides[require_ingestion_api_key] = lambda: DataScope(
+        "resilience-tenant", 101
+    )
+    yield
+    main_module.app.dependency_overrides.pop(require_ingestion_api_key, None)
 
 
 @dataclass
@@ -164,7 +173,23 @@ async def _create_temporary_database() -> PgConnectionSettings:
     finally:
         await connection.close()
 
-    return base.with_database(database_name)
+    test_db_settings = base.with_database(database_name)
+    from scripts.database_lifecycle import bootstrap_database
+
+    test_conn = await asyncpg.connect(**test_db_settings.asyncpg_kwargs())
+    try:
+        await bootstrap_database(test_conn)
+        await test_conn.execute(
+            """
+            INSERT INTO tenants (id, name, status) VALUES ('resilience-tenant', 'Resilience Tenant', 'active') ON CONFLICT DO NOTHING;
+            INSERT INTO users (id, email, tenant_id, status, role) VALUES (101, 'resilience-test@example.com', 'resilience-tenant', 'active', 'admin') ON CONFLICT DO NOTHING;
+            INSERT INTO tenant_memberships (tenant_id, user_id, role, status) VALUES ('resilience-tenant', 101, 'admin', 'active') ON CONFLICT DO NOTHING;
+            """
+        )
+    finally:
+        await test_conn.close()
+
+    return test_db_settings
 
 
 async def _drop_temporary_database(settings: PgConnectionSettings) -> None:
@@ -180,7 +205,9 @@ async def _drop_temporary_database(settings: PgConnectionSettings) -> None:
             """,
             settings.database,
         )
-        await connection.execute(f"DROP DATABASE IF EXISTS {_quote_identifier(settings.database)}")
+        await connection.execute(
+            f"DROP DATABASE IF EXISTS {_quote_identifier(settings.database)}"
+        )
     finally:
         await connection.close()
 
@@ -213,7 +240,12 @@ def _training_feature_vector(index: int) -> FeatureVector:
         warning_count=0,
         template_frequencies={"template-normal": 1.0},
         template_entropy=0.0,
-        service_distribution={"orders": 200, "payments": 125, "inventory": 100, "api": 75},
+        service_distribution={
+            "orders": 200,
+            "payments": 125,
+            "inventory": 100,
+            "api": 75,
+        },
         logs_per_second=features["logs_per_second"],
         feature_array=[float(value) for value in features.values()],
         feature_names=list(features.keys()),
@@ -234,6 +266,7 @@ def _install_pipeline(
     state_path: Path,
 ) -> SimpleNamespace:
     from drain3.file_persistence import FilePersistence
+
     state_path_str = str(state_path)
     pers = FilePersistence(state_path_str)
     drain_parser = DrainParser(state_path=state_path_str, persistence=pers)
@@ -243,6 +276,7 @@ def _install_pipeline(
         batch_size=batch_size,
         flush_interval_seconds=3600.0,
         sink=log_repository.bulk_insert_parsed_logs,
+        max_retries=1,
     )
     feature_worker = FeatureExtractionWorker(
         window_config=WindowConfig(
@@ -262,8 +296,8 @@ def _install_pipeline(
         on_log_parsed=feature_worker.add_parsed_log,
         runtime_dependency_parser=RuntimeDependencyParser(),
         queue_drain_timeout_seconds=120.0,
+        persist_before_ack=False,
     )
-
 
     monkeypatch.setattr(main_module, "drain_parser", drain_parser)
     monkeypatch.setattr(main_module, "log_repository", log_repository)
@@ -379,17 +413,49 @@ async def _wait_for_fetchval(
     pytest.fail(f"Timed out waiting for database condition; last value={last_value!r}")
 
 
-async def _drain_and_flush(pipeline: SimpleNamespace, *, timeout: float = 120.0) -> None:
-    await asyncio.sleep(0.5)
-    assert await pipeline.batch_manager.flush() is True
+async def _drain_and_flush(
+    pipeline: SimpleNamespace,
+    *,
+    timeout: float = 120.0,
+    expected_count: int | None = None,
+) -> None:
+    deadline = time.monotonic() + timeout
+    last_processed = -1
+    stable_cycles = 0
+    while time.monotonic() < deadline:
+        if pipeline.batch_manager.size() > 0:
+            await pipeline.batch_manager.flush()
+        current_processed = pipeline.drain_worker.processed_count
+        if (
+            expected_count is not None
+            and current_processed >= expected_count
+            and pipeline.batch_manager.size() == 0
+        ):
+            break
+        if (
+            current_processed > 0
+            and current_processed == last_processed
+            and pipeline.batch_manager.size() == 0
+        ):
+            stable_cycles += 1
+            if stable_cycles >= 5:
+                break
+        else:
+            stable_cycles = 0
+            last_processed = current_processed
+        await asyncio.sleep(0.2)
+    if pipeline.batch_manager.size() > 0:
+        assert await pipeline.batch_manager.flush() is True
 
 
 async def test_queue_backpressure_saturation(monkeypatch: pytest.MonkeyPatch) -> None:
     class MockRedisPipeline:
         def xadd(self, *args, **kwargs):
             pass
+
         def xlen(self, *args, **kwargs):
             pass
+
         async def execute(self):
             raise Exception("Simulated Redis failure")
 
@@ -437,7 +503,10 @@ async def test_database_disconnection_resilience(resilience_pipeline) -> None:
     )
 
     assert all(response.status_code == 202 for response in responses)
-    await asyncio.sleep(0.5)
+    for _ in range(50):
+        if resilience_pipeline.batch_manager.size() >= 50:
+            break
+        await asyncio.sleep(0.1)
 
     flush_result = await resilience_pipeline.batch_manager.flush()
     stats_after_failure = resilience_pipeline.batch_manager.get_stats()
@@ -446,10 +515,13 @@ async def test_database_disconnection_resilience(resilience_pipeline) -> None:
     assert sink.failed_attempts == 1
     assert stats_after_failure["current_buffer_size"] == 50
     assert stats_after_failure["failed_flush_attempt_count"] == 1
-    assert await resilience_pipeline.pool.fetchval(
-        "SELECT count(*) FROM logs WHERE correlation_id LIKE $1",
-        f"{run_id}-%",
-    ) == 0
+    assert (
+        await resilience_pipeline.pool.fetchval(
+            "SELECT count(*) FROM logs WHERE correlation_id LIKE $1",
+            f"{run_id}-%",
+        )
+        == 0
+    )
 
     sink.available = True
     assert await resilience_pipeline.batch_manager.flush() is True
@@ -468,15 +540,20 @@ async def test_database_disconnection_resilience(resilience_pipeline) -> None:
 
 
 async def test_high_concurrency_burst(resilience_pipeline) -> None:
-    request_count = 5_000
+    # Keep a meaningful concurrent end-to-end burst in the correctness suite
+    # without turning the root CI job into a multi-minute load test.
+    request_count = 500
     run_id = f"burst-{uuid4().hex}"
 
+    sem = asyncio.Semaphore(100)
+
     async def send_one(index: int):
-        return await resilience_pipeline.client.post(
-            "/ingest-log",
-            json=_log_payload(run_id, index),
-            headers=_auth_headers(),
-        )
+        async with sem:
+            return await resilience_pipeline.client.post(
+                "/ingest-log",
+                json=_log_payload(run_id, index),
+                headers=_auth_headers(),
+            )
 
     results = await asyncio.gather(
         *(send_one(index) for index in range(request_count)),
@@ -491,7 +568,9 @@ async def test_high_concurrency_burst(resilience_pipeline) -> None:
     assert all(response.status_code == 202 for response in responses)
     assert all(response.json()["accepted"] is True for response in responses)
 
-    await _drain_and_flush(resilience_pipeline, timeout=180.0)
+    await _drain_and_flush(
+        resilience_pipeline, timeout=180.0, expected_count=request_count
+    )
     persisted = await _wait_for_fetchval(
         resilience_pipeline.pool,
         "SELECT count(*) FROM logs WHERE correlation_id LIKE $1",

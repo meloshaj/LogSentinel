@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { X, Activity, Server, Database, AlignLeft, ShieldAlert } from "lucide-react";
 import { TopologyNode } from "../../types/topology";
+import type { LogEntry } from "../../types/monitoring";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { useLiveLogs } from "../../hooks/useLiveLogs";
 
@@ -29,25 +30,22 @@ export function ServiceInvestigationDrawer({ nodeId, nodes, onClose }: ServiceIn
   if (!node) return null;
 
   // Filter logs for this service
-  const serviceLogs = filteredLogs.filter((log: any) => {
-    const serviceName = (log.service_name || log.service || "").toLowerCase();
+  const serviceLogs: LogEntry[] = filteredLogs.filter((log) => {
+    const serviceName = log.service.toLowerCase();
     return serviceName === node.name.toLowerCase() || serviceName === node.id.toLowerCase();
   }).slice(-20);
 
   // Find active anomalies affecting this service
   const anomalies = activeTrackingLoops.filter(loop => {
     if (loop.suspected_root_service === node.name || loop.suspected_root_service === node.id) return true;
-    const blastRadius = loop.blast_radius as any[];
-    if (Array.isArray(blastRadius)) {
-      return blastRadius.some(br => br.service_name === node.name || br.service_name === node.id);
-    }
-    return false;
+    return (loop.blast_radius ?? []).some((br) => br.service_name === node.name || br.service_name === node.id);
   });
 
   return (
     <>
       {/* Backdrop */}
       <div 
+        aria-hidden="true"
         className={`fixed inset-0 bg-black/50 backdrop-blur-sm z-40 transition-opacity duration-300 ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         onClick={onClose}
       />
@@ -79,6 +77,8 @@ export function ServiceInvestigationDrawer({ nodeId, nodes, onClose }: ServiceIn
             </div>
           </div>
           <button 
+            type="button"
+            aria-label="Close service investigation"
             onClick={onClose}
             className="p-1.5 rounded-md text-[#8b949e] hover:text-[#e6edf3] hover:bg-[#21262d] transition-colors"
           >
@@ -98,17 +98,17 @@ export function ServiceInvestigationDrawer({ nodeId, nodes, onClose }: ServiceIn
             <div className="grid grid-cols-3 gap-3">
               <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-3">
                 <div className="text-[#8b949e] text-[10px] uppercase font-semibold tracking-wider mb-1">Latency p95</div>
-                <div className="text-[#e6edf3] font-mono text-lg">{node.metrics?.latency_p95_ms?.toFixed(1) || '0.0'}ms</div>
+                <div className="text-[#e6edf3] font-mono text-lg">{node.metrics.latency_p95_ms.toFixed(1)}ms</div>
               </div>
               <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-3">
                 <div className="text-[#8b949e] text-[10px] uppercase font-semibold tracking-wider mb-1">Error Rate</div>
-                <div className={`font-mono text-lg ${node.metrics?.error_rate_pct > 5 ? 'text-[#ef4444]' : 'text-[#e6edf3]'}`}>
-                  {node.metrics?.error_rate_pct?.toFixed(2) || '0.00'}%
+                <div className={`font-mono text-lg ${node.metrics.error_rate_pct > 5 ? 'text-[#ef4444]' : 'text-[#e6edf3]'}`}>
+                  {node.metrics.error_rate_pct.toFixed(2)}%
                 </div>
               </div>
               <div className="bg-[#161b22] border border-[#21262d] rounded-lg p-3">
                 <div className="text-[#8b949e] text-[10px] uppercase font-semibold tracking-wider mb-1">Throughput</div>
-                <div className="text-[#e6edf3] font-mono text-lg">{node.metrics?.throughput_rps?.toFixed(0) || '0'} rps</div>
+                <div className="text-[#e6edf3] font-mono text-lg">{node.metrics.throughput_rps.toFixed(0)} rps</div>
               </div>
             </div>
           </div>
@@ -129,10 +129,14 @@ export function ServiceInvestigationDrawer({ nodeId, nodes, onClose }: ServiceIn
                         <span className={`text-xs font-bold px-2 py-0.5 rounded ${isRoot ? 'bg-[#ef4444] text-white' : 'bg-[#f59e0b] text-[#161b22]'}`}>
                           {isRoot ? 'ROOT CAUSE' : 'BLAST RADIUS'}
                         </span>
-                        <span className="text-[#8b949e] text-xs font-mono">ID: {anomaly.window_id?.split('-')[0] || (anomaly as any).id || 'unknown'}</span>
+                        <span className="text-[#8b949e] text-xs font-mono">ID: {anomaly.window_id.split('-')[0]}</span>
                       </div>
                       <div className="text-sm text-[#e6edf3]">
-                        Confidence: <span className="font-mono text-[#388bfd]">{(((anomaly as any).root_cause_confidence || 0) * 100).toFixed(1)}%</span>
+                        Confidence: <span className="font-mono text-[#388bfd]">
+                          {typeof anomaly.root_cause_confidence === "number" && Number.isFinite(anomaly.root_cause_confidence)
+                            ? `${(anomaly.root_cause_confidence * 100).toFixed(1)}%`
+                            : "Unavailable"}
+                        </span>
                       </div>
                     </div>
                   );
@@ -154,7 +158,12 @@ export function ServiceInvestigationDrawer({ nodeId, nodes, onClose }: ServiceIn
                     <div key={idx} className="text-xs font-mono py-1 border-b border-[#21262d]/50 last:border-0 hover:bg-[#21262d]/30 px-1 rounded">
                       <div className="flex gap-2">
                         <span className="text-[#8b949e] whitespace-nowrap">
-                          {new Date(log.timestamp).toLocaleTimeString([], { hour12: false, fractionalSecondDigits: 3 } as any)}
+                          {(() => {
+                            const parsed = new Date(log.timestamp);
+                            return Number.isFinite(parsed.getTime())
+                              ? parsed.toLocaleTimeString([], { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                              : "Time unavailable";
+                          })()}
                         </span>
                         <span className={`${
                           log.level === 'ERROR' || log.level === 'FATAL' || log.level === 'CRITICAL' ? 'text-[#ef4444]' :

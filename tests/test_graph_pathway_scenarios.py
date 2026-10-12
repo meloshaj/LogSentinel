@@ -41,7 +41,7 @@ class StaticTopologyPipeline:
                     average_delay_ms=25.0,
                 )
 
-    def get_graph_copy(self) -> nx.DiGraph:
+    def get_graph_copy(self, tenant_id: str, owner_user_id: int) -> nx.DiGraph:
         return self.graph.copy(as_view=False)
 
 
@@ -163,6 +163,8 @@ def feature_vector_for_contexts(
         for service in context["feature_vector"]["service_distribution"]
     }
     return FeatureVector(
+        tenant_id="test-tenant",
+        owner_user_id=101,
         window_id=window_id,
         timestamp=BASE_TIME,
         window_start=BASE_TIME,
@@ -337,6 +339,7 @@ def test_runtime_chain_persists_broadcasts_and_rest_retrieves(monkeypatch) -> No
     def _make_fake_user():
         user = MagicMock()
         user.id = 1
+        user.tenant_id = "test-tenant"
         return user
         
     app.dependency_overrides[get_current_user] = _make_fake_user

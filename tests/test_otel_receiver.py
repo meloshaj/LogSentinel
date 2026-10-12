@@ -5,6 +5,8 @@ from unittest.mock import patch, MagicMock
 from backend.app.main import app
 from backend.app.core.dependencies import get_redis_client
 from backend.app.core.settings import get_ingestion_security_settings
+from backend.app.security.data_scope import DataScope
+from backend.app.security.ingest_guard import require_ingestion_api_key
 
 client = TestClient(app)
 
@@ -24,10 +26,14 @@ def setup_mocks():
     mock_pipeline.execute = AsyncMock(return_value=[1, 1])
     
     app.dependency_overrides[get_redis_client] = lambda: mock_redis
+    app.dependency_overrides[require_ingestion_api_key] = lambda: DataScope(
+        "test-tenant", 101
+    )
     yield
     app.dependency_overrides.clear()
 
 def test_ingest_logs_rejects_without_auth():
+    app.dependency_overrides.pop(require_ingestion_api_key, None)
     with patch.dict("os.environ", {"INGEST_API_KEY": VALID_KEY}, clear=False):
         response = client.post("/v1/logs", json={})
     assert response.status_code == 401

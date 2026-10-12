@@ -1,0 +1,18 @@
+[Unit]
+Description=LogSentinel PostgreSQL remote backup
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/LogSentinel
+UMask=0077
+TimeoutStartSec=30min
+# Compose v5.5 on the production host resolves profiled one-shot services
+# reliably through COMPOSE_PROFILES. --no-deps prevents a timer run from
+# creating or restarting the production database/application stack.
+Environment=COMPOSE_PROFILES=backup
+ExecStart=/usr/bin/docker compose --env-file /home/ubuntu/LogSentinel/.env -f /home/ubuntu/LogSentinel/docker-compose.prod.yml run --rm --no-deps backup
+SyslogIdentifier=logsentinel-backup

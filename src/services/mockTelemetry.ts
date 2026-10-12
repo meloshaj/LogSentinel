@@ -11,7 +11,7 @@
  * - `anomaly.detected` & `infrastructure.tracking_loop.triggered` (root cause & blast radius)
  */
 
-import type { LogEntry } from "../types/monitoring";
+import type { LogEntry, LogLevel } from "../types/monitoring";
 import type { TelemetryEvent } from "../types/telemetry";
 
 export interface MockTelemetryOptions {
@@ -28,7 +28,25 @@ const SERVICES = [
   "postgres-db",
 ];
 
-const TEMPLATES: Record<string, { tpl: string; level: string; msg: (params: any) => string }> = {
+type TemplateParams = {
+  ip: string;
+  user: string;
+  dur: number;
+  orderId: string;
+  sku: string;
+  amount: string;
+  txId: string;
+  pool: number;
+  queued: number;
+};
+
+type TelemetryTemplate = {
+  tpl: string;
+  level: LogLevel;
+  msg: (params: TemplateParams) => string;
+};
+
+const TEMPLATES: Record<string, TelemetryTemplate> = {
   gw_200: {
     tpl: "POST /api/v1/orders HTTP/1.1 <*:IP> status 200 user=<*:STR>",
     level: "INFO",
@@ -116,7 +134,7 @@ export class MockTelemetryEmitter {
       const log: LogEntry = {
         id: generateULID(),
         service,
-        level: (isErr ? "ERROR" : template.level) as any,
+        level: isErr ? "ERROR" : template.level,
         message: template.msg({
           ip: `192.168.1.${(i % 50) + 10}`,
           user: `usr_${1000 + i}`,

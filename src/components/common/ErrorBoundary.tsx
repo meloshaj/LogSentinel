@@ -7,6 +7,7 @@ import type { ErrorInfo, ReactNode } from "react";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
+  fallback?: ReactNode;
 }
 
 interface ErrorBoundaryState {
@@ -19,10 +20,10 @@ interface ErrorBoundaryState {
 // ---------------------------------------------------------------------------
 
 /**
- * Global React error boundary.
+ * React error boundary.
  *
- * Catches unhandled render errors anywhere in the component tree and presents
- * a clean recovery screen instead of unmounting to a blank page.
+ * Catches unhandled render errors and presents either a local fallback or the
+ * application recovery screen instead of unmounting to a blank page.
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
@@ -46,6 +47,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   render() {
     if (!this.state.hasError) {
       return this.props.children;
+    }
+
+    if (this.props.fallback) {
+      return this.props.fallback;
     }
 
     return (

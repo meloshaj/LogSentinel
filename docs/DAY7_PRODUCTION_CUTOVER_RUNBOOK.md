@@ -43,29 +43,24 @@ Execute the deployment in a strict, dependency-ordered sequence to prevent race 
 
 ### Phase A: State & Storage (Database & Stream)
 1. Deploy the production TimescaleDB cluster and Valkey/Redis StatefulSet (if not using managed cloud services like AWS RDS/ElastiCache).
-2. Execute the schema initialization:
-   ```bash
-   psql -h $PROD_DB_HOST -U logsentinel -d logsentinel_db -f scripts/init.sql
-   ```
+2. Let the single Helm migration Job run `database_lifecycle.py --ensure`.
+   Do not run `scripts/init.sql` directly against a populated production DB.
 
 ### Phase B: Background Workers (Consumers)
-Deploy the heavy data processors first. They will connect to Valkey, build the consumer groups, and wait idly for data.
+Helm renders one composite pipeline worker and the durable webhook outbox
+worker. Do not deploy separate drain/feature/event pods while their handoffs
+remain process-local.
 ```bash
 helm upgrade --install logsentinel deploy/helm/logsentinel \
   --namespace logsentinel-prod \
-  --set replicaCount.api=0 \
-  --set replicaCount.drainWorker=2 \
-  --set replicaCount.eventWorker=1
+  --set replicaCount.api=2 \
+  --set image.digest=sha256:<verified-backend-digest>
 ```
 *Wait for pods to report `Running` and `Ready` via `kubectl get pods -n logsentinel-prod`.*
 
 ### Phase C: API Gateway & Ingress (Producers)
-Scale up the ingestion layer to open the floodgates.
-```bash
-helm upgrade --install logsentinel deploy/helm/logsentinel \
-  --namespace logsentinel-prod \
-  --set replicaCount.api=2
-```
+The API is part of the same release and becomes ready only after the migration
+contract and database/Valkey checks pass.
 
 ### Phase D: Edge Cutover (DNS & Log Forwarders)
 1. Update DNS records (e.g., Route53, Cloudflare) for `logsentinel.local` to point to your Production Ingress Controller IP.
@@ -95,9 +90,7 @@ If severe data corruption, memory leaks, or unrecoverable crashes occur, execute
    # Rollback to revision 1 (or your last known good state)
    helm rollback logsentinel 1 -n logsentinel-prod
    ```
-3. **Purge Corrupted Queues**: If the Valkey stream contains poison pills that bypassed the DLQ, truncate the stream:
-   ```bash
-   kubectl exec -it logsentinel-redis-0 -- redis-cli XTRIM logs:stream MAXLEN 0
-   ```
+3. **Preserve evidence**: inspect the durable DLQ and pending entries. Do not
+   truncate the ingestion stream as an unreviewed rollback action.
 
 🎉 **Congratulations on a successful deployment of LogSentinel!** 🎉

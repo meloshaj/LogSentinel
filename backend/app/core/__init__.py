@@ -11,7 +11,6 @@ from .database import (
     verify_connectivity,
     verify_schema_ready,
 )
-from .orm import AnomalyEventRecord, Base, FeatureWindowRecord, LogRecord
 from .settings import (
     DatabaseSettings,
     IngestionSecuritySettings,
@@ -45,3 +44,17 @@ __all__: list[str] = [
     "async_transactional",
     "transactional",
 ]
+
+
+def __getattr__(name: str):
+    """Load ORM symbols only when requested.
+
+    Database-only tooling such as the migration runner must be able to import
+    settings without loading encrypted ORM types.  The ORM module still fails
+    closed when it is explicitly imported without ``ENCRYPTION_KEY``.
+    """
+    if name in {"Base", "LogRecord", "FeatureWindowRecord", "AnomalyEventRecord"}:
+        from . import orm
+
+        return getattr(orm, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

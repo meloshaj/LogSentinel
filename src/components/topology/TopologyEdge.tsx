@@ -5,6 +5,7 @@ const STATUS_CONFIG: Record<string, { stroke: string, class: string, speed: stri
   healthy: { stroke: "#388bfd", class: "opacity-75", speed: "3s", dotFill: "#388bfd" },
   degraded: { stroke: "#f59e0b", class: "animate-pulse", speed: "1.6s", dotFill: "#f59e0b" },
   critical: { stroke: "#ef4444", class: "animate-pulse", speed: "0.9s", dotFill: "#ef4444" },
+  unknown: { stroke: "#30363d", class: "opacity-60", speed: "0s", dotFill: "#30363d" },
 };
 
 type CustomEdge = Edge<{ status?: string; latency_ms?: number }, 'custom'>;
@@ -31,8 +32,8 @@ export function TopologyEdge({
     curvature: 0.25,
   });
 
-  const status = data?.status || "healthy";
-  const config = STATUS_CONFIG[status] || STATUS_CONFIG.healthy;
+  const status = data?.status ?? "unknown";
+  const config = STATUS_CONFIG[status] || STATUS_CONFIG.unknown;
   const isCritical = status === "critical";
   const isDegraded = status === "degraded";
 

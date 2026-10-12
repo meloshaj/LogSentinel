@@ -1,4 +1,5 @@
 import hashlib
+from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -6,12 +7,12 @@ from backend.app.archive.s3_client import LocalMockStorageClient
 from backend.app.archive.verifier import ArchiveVerifier
 
 
-def test_mock_storage_client():
-    client = LocalMockStorageClient(base_dir="/tmp/test_archive_mock")
+def test_mock_storage_client(tmp_path: Path):
+    client = LocalMockStorageClient(base_dir=str(tmp_path / "test_archive_mock"))
 
     # Test put
-    assert client.put_if_absent("test/obj.txt", b"hello world") == True
-    assert client.put_if_absent("test/obj.txt", b"new data") == False
+    assert client.put_if_absent("test/obj.txt", b"hello world")
+    assert not client.put_if_absent("test/obj.txt", b"new data")
 
     # Test head
     meta = client.head("test/obj.txt")
@@ -25,12 +26,12 @@ def test_mock_storage_client():
     stream.close()
 
     # Test delete
-    assert client.delete("test/obj.txt") == True
+    assert client.delete("test/obj.txt")
     assert client.head("test/obj.txt") is None
 
 
-def test_verifier():
-    client = LocalMockStorageClient(base_dir="/tmp/test_archive_mock2")
+def test_verifier(tmp_path: Path):
+    client = LocalMockStorageClient(base_dir=str(tmp_path / "test_archive_mock2"))
     verifier = ArchiveVerifier(client)
 
     # Create valid parquet
@@ -48,7 +49,7 @@ def test_verifier():
 
     # Test valid record
     manifest = {"object_key": "test/data.parquet", "sha256": sha256, "row_count": 3}
-    assert verifier.verify_archive(manifest) == True
+    assert verifier.verify_archive(manifest)
 
     # Test corrupt checksum
     corrupt_manifest_1 = {
@@ -56,7 +57,7 @@ def test_verifier():
         "sha256": "badhash",
         "row_count": 3,
     }
-    assert verifier.verify_archive(corrupt_manifest_1) == False
+    assert not verifier.verify_archive(corrupt_manifest_1)
 
     # Test wrong row count
     corrupt_manifest_2 = {
@@ -64,4 +65,4 @@ def test_verifier():
         "sha256": sha256,
         "row_count": 4,
     }
-    assert verifier.verify_archive(corrupt_manifest_2) == False
+    assert not verifier.verify_archive(corrupt_manifest_2)

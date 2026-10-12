@@ -175,6 +175,8 @@ async def test_e2e_sliding_window_feature_extraction(
     for i in range(15):
         log_time = base_time + timedelta(seconds=i * 0.5)
         parsed = ParsedLog(
+            tenant_id="test-tenant",
+            owner_user_id=101,
             id=f"01J5E2Z00000000000000000{i:02d}",
             service="order-service",
             raw_message=f"Order created order_id=ord_{i} amount=${10 + i}.00",
@@ -190,6 +192,8 @@ async def test_e2e_sliding_window_feature_extraction(
     for i in range(5):
         log_time = base_time + timedelta(seconds=4 + i * 0.5)
         parsed = ParsedLog(
+            tenant_id="test-tenant",
+            owner_user_id=101,
             id=f"01J5E2Z00000000000000001{i:02d}",
             service="order-service",
             raw_message=f"Database query timeout after 5000ms query_id=q_{i}",
@@ -290,6 +294,8 @@ async def test_e2e_topology_dynamic_dependency_inference(
 
     # 1. API Gateway -> Order Service call
     obs1 = TraceObservation(
+        tenant_id="test-tenant",
+        owner_user_id=101,
         canonical_transaction_id=txn_id,
         service="api-gateway",
         timestamp=now,
@@ -302,6 +308,8 @@ async def test_e2e_topology_dynamic_dependency_inference(
 
     # 2. Order Service -> Payment Gateway call
     obs2 = TraceObservation(
+        tenant_id="test-tenant",
+        owner_user_id=101,
         canonical_transaction_id=txn_id,
         service="order-service",
         timestamp=now + timedelta(milliseconds=10),
@@ -314,6 +322,8 @@ async def test_e2e_topology_dynamic_dependency_inference(
 
     # 3. Payment Gateway -> Postgres DB call
     obs3 = TraceObservation(
+        tenant_id="test-tenant",
+        owner_user_id=101,
         canonical_transaction_id=txn_id,
         service="payment-gateway",
         timestamp=now + timedelta(milliseconds=20),
@@ -326,6 +336,8 @@ async def test_e2e_topology_dynamic_dependency_inference(
 
     # Also add final Postgres observation in the same trace
     obs4 = TraceObservation(
+        tenant_id="test-tenant",
+        owner_user_id=101,
         canonical_transaction_id=txn_id,
         service="postgres-db",
         timestamp=now + timedelta(milliseconds=30),
@@ -357,6 +369,8 @@ async def test_e2e_graph_pathway_root_cause_and_blast_radius(
     # Build caller -> callee topology
     topology_pipeline.add_observation(
         TraceObservation(
+            tenant_id="test-tenant",
+            owner_user_id=101,
             canonical_transaction_id=trace_id,
             service="api-gateway",
             timestamp=now,
@@ -368,6 +382,8 @@ async def test_e2e_graph_pathway_root_cause_and_blast_radius(
     )
     topology_pipeline.add_observation(
         TraceObservation(
+            tenant_id="test-tenant",
+            owner_user_id=101,
             canonical_transaction_id=trace_id,
             service="order-service",
             timestamp=now + timedelta(milliseconds=5),
@@ -379,6 +395,8 @@ async def test_e2e_graph_pathway_root_cause_and_blast_radius(
     )
     topology_pipeline.add_observation(
         TraceObservation(
+            tenant_id="test-tenant",
+            owner_user_id=101,
             canonical_transaction_id=trace_id,
             service="payment-gateway",
             timestamp=now + timedelta(milliseconds=10),
@@ -390,6 +408,8 @@ async def test_e2e_graph_pathway_root_cause_and_blast_radius(
     )
     topology_pipeline.add_observation(
         TraceObservation(
+            tenant_id="test-tenant",
+            owner_user_id=101,
             canonical_transaction_id=trace_id,
             service="postgres-db",
             timestamp=now + timedelta(milliseconds=15),

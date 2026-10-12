@@ -21,10 +21,16 @@ try:
 except ImportError:
     pytest.skip("testcontainers not installed", allow_module_level=True)
 
-from backend.app.core.orm import UserRecord
+from backend.app.core.orm import TenantRecord, UserRecord
 from backend.app.core.user_status import ACTIVE, PENDING_VERIFICATION
 from backend.app.repositories.user_repository import UserRepository
-from backend.app.security.auth import get_current_user
+from backend.app.security.auth import (
+    JWT_ALGORITHM,
+    JWT_AUDIENCE,
+    JWT_ISSUER,
+    JWT_SECRET_KEY,
+    get_current_user,
+)
 
 # ---------------------------------------------------------------------------
 # Test Database Fixtures
@@ -72,6 +78,14 @@ async def db_session(postgres_engine):
         postgres_engine, expire_on_commit=False, class_=AsyncSession
     )
     async with factory() as session:
+        await session.merge(
+            TenantRecord(
+                id="auth-postgres-test-tenant",
+                name="Auth PostgreSQL test tenant",
+                status="active",
+            )
+        )
+        await session.commit()
         yield session
 
 
@@ -88,6 +102,7 @@ async def test_garbage_collection_pending_users(db_session: AsyncSession):
     # 1. Stale pending user (> 24 hours old)
     stale_user = UserRecord(
         email="stale@example.com",
+        tenant_id="auth-postgres-test-tenant",
         status=PENDING_VERIFICATION,
         created_at=now - timedelta(hours=25),
     )
@@ -95,6 +110,7 @@ async def test_garbage_collection_pending_users(db_session: AsyncSession):
     # 2. Fresh pending user (< 24 hours old)
     fresh_user = UserRecord(
         email="fresh@example.com",
+        tenant_id="auth-postgres-test-tenant",
         status=PENDING_VERIFICATION,
         created_at=now - timedelta(hours=23),
     )
@@ -102,6 +118,7 @@ async def test_garbage_collection_pending_users(db_session: AsyncSession):
     # 3. Stale active user (should NEVER be deleted)
     active_user = UserRecord(
         email="active@example.com",
+        tenant_id="auth-postgres-test-tenant",
         status=ACTIVE,
         created_at=now - timedelta(hours=48),
         email_verified_at=now - timedelta(hours=48),
@@ -173,13 +190,15 @@ async def test_get_current_user_timestamp_collision(db_session: AsyncSession):
     # Issue a token at the EXACT SAME SECOND (10:00:00), which results in iat lacking microseconds
     # We fake the iat by backdating it
     import jwt
-    from backend.app.security.auth import JWT_ALGORITHM, JWT_SECRET_KEY
 
     token = jwt.encode(
         {
             "sub": user.email,
             "exp": fake_changed_at.timestamp() + 3600,
             "iat": int(fake_changed_at.timestamp()),
+            "iss": JWT_ISSUER,
+            "aud": JWT_AUDIENCE,
+            "jti": "auth-postgres-timestamp-collision",
         },
         JWT_SECRET_KEY,
         algorithm=JWT_ALGORITHM,

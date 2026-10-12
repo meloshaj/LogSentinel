@@ -2,7 +2,9 @@ import { LogStream } from "../components/logs/LogStream";
 import { useLiveLogs } from "../hooks/useLiveLogs";
 import { Download, Search, SlidersHorizontal } from "lucide-react";
 import { useState } from "react";
+import { useSearchParams } from "react-router";
 import { filterLogEntries } from "../utils/logFilters";
+import { displayOperationalStatus } from "../components/common/OperationalState";
 
 const services = [
   "All Services",
@@ -22,7 +24,7 @@ function LogHistoryTable({
   serviceFilter?: string;
   searchQuery?: string;
 }) {
-  const { filteredLogs } = useLiveLogs();
+  const { filteredLogs, dataState, connectionState } = useLiveLogs();
   const rows = filterLogEntries(filteredLogs, serviceFilter, searchQuery)
     .slice(-10)
     .reverse();
@@ -75,6 +77,17 @@ function LogHistoryTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-[#21262d]/50">
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-[#7d8590]" style={{ fontSize: "12px" }}>
+                  {displayOperationalStatus(dataState, connectionState) === "empty"
+                    ? "No logs were returned for this scope."
+                    : displayOperationalStatus(dataState, connectionState) === "loading"
+                      ? "Loading log history…"
+                      : "Log history is unavailable."}
+                </td>
+              </tr>
+            )}
             {rows.map((log) => (
               <tr key={log.id} className="hover:bg-[#21262d]/30 transition-colors">
                 <td
@@ -119,7 +132,12 @@ function LogHistoryTable({
 }
 
 export function LogsPage() {
-  const [service, setService] = useState("All Services");
+  const [searchParams] = useSearchParams();
+  const incidentService = searchParams.get("service");
+  const initialService = incidentService && services.includes(incidentService)
+    ? incidentService
+    : "All Services";
+  const [service, setService] = useState(initialService);
   const [timeRange, setTimeRange] = useState("Last 15 min");
   const [search, setSearch] = useState("");
 
@@ -131,7 +149,9 @@ export function LogsPage() {
           Live Logs
         </h1>
         <p className="text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>
-          Real-time log ingestion from all services - 2,450 logs/min
+          {searchParams.get("incident")
+            ? `Tenant-scoped logs related to incident ${searchParams.get("incident")}`
+            : "Real-time and recent persisted log data"}
         </p>
       </div>
 

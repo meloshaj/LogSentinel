@@ -27,6 +27,8 @@ def feature_vector(
     services: dict[str, int] | None = None,
 ) -> FeatureVector:
     return FeatureVector(
+        tenant_id="test-tenant",
+        owner_user_id=101,
         window_id=window_id,
         timestamp=BASE_TIME,
         window_start=BASE_TIME - timedelta(seconds=60),
@@ -53,7 +55,7 @@ class FakeTopology:
         self.graph = graph
         self.get_graph_copy_calls = 0
 
-    def get_graph_copy(self) -> nx.DiGraph:
+    def get_graph_copy(self, tenant_id: str, owner_user_id: int) -> nx.DiGraph:
         self.get_graph_copy_calls += 1
         return self.graph.copy(as_view=False)
 

@@ -1,0 +1,23 @@
+# caddy:2.11.4-alpine; immutable multi-arch OCI index.
+# Registry manifest digest: sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+FROM caddy@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+
+WORKDIR /app
+
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY static/ /usr/share/caddy/html/
+
+# Create non-root group and user appuser (UID 10001).
+RUN addgroup -g 10001 -S appuser && \
+    adduser -u 10001 -S appuser -G appuser && \
+    mkdir -p /data /config && \
+    chown -R appuser:appuser /app /usr/share/caddy/html /etc/caddy/Caddyfile /data /config
+
+USER appuser
+
+EXPOSE 8080 8443
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1
+
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

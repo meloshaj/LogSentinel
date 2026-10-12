@@ -1,0 +1,18 @@
+[Unit]
+Description=LogSentinel read-only host and recovery metrics collector
+Wants=docker.service
+After=docker.service
+ConditionPathExists=/home/ubuntu/LogSentinel/scripts/monitoring_collector.py
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0022
+WorkingDirectory=/home/ubuntu/LogSentinel
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/node_exporter/textfile_collector /var/lib/logsentinel-ops-collector
+ExecStart=/usr/bin/python3 /home/ubuntu/LogSentinel/scripts/monitoring_collector.py --output-dir /var/lib/node_exporter/textfile_collector --canary-file /var/lib/logsentinel-ops-collector/canary.state

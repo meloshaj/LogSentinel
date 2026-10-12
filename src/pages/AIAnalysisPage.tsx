@@ -1,21 +1,36 @@
 import { ServiceTopologyGraph } from "../components/topology/ServiceTopologyGraph";
 import { ServiceInvestigationDrawer } from "../components/investigation/ServiceInvestigationDrawer";
 import { useState } from "react";
-import { Brain, ChevronRight, Lightbulb, Network, Sparkles, Target, Wrench, Activity, ShieldCheck } from "lucide-react";
+import { Brain, Lightbulb, Target, Wrench } from "lucide-react";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useLiveLogs } from "../hooks/useLiveLogs";
 import { useTopology } from "../hooks/useTopology";
 import type { RootCause } from "../types/monitoring";
+import { OperationalStateNotice, displayOperationalStatus, operationalStatusLabel } from "../components/common/OperationalState";
+
+type AnalysisSummary = {
+  service: string;
+  summary: string;
+  severity: string;
+};
+
+type SuggestedFix = {
+  priority: number;
+  action: string;
+  detail: string;
+  effort: string;
+};
 
 export function AIAnalysisPage() {
-  const { activeTrackingLoops } = useTelemetryStream();
-  const { totalLogCount } = useLiveLogs();
+  const { activeTrackingLoops, trackingLoopsDataState, connectionStatus } = useTelemetryStream();
+  const { totalLogCount, dataState: logDataState } = useLiveLogs();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const { nodes } = useTopology();
+  const logStatus = displayOperationalStatus(logDataState, connectionStatus);
 
   const rootCauses: RootCause[] = [];
-  const dynamicSummaries: any[] = [];
-  const dynamicFixes: any[] = [];
+  const dynamicSummaries: AnalysisSummary[] = [];
+  const dynamicFixes: SuggestedFix[] = [];
   
   if (activeTrackingLoops.length > 0) {
     const loop = activeTrackingLoops[0];
@@ -53,11 +68,12 @@ export function AIAnalysisPage() {
 
     const blastNodes = (loop.blast_radius && Array.isArray(loop.blast_radius)) ? loop.blast_radius : [];
 
-    blastNodes.forEach((node: any) => {
-      const score = (node.impact_score > 1 ? node.impact_score : node.impact_score * 100) || Math.round(loop.anomaly_score * 100);
+    blastNodes.forEach((node) => {
+      if (!Number.isFinite(node.impact_score) || !node.service_name) return;
+      const score = node.impact_score > 1 ? node.impact_score : node.impact_score * 100;
       dynamicSummaries.push({
         service: node.service_name,
-        summary: `Topological impact analysis indicates classification '${node.impact_classification || "direct"}'. Impact score is ${score.toFixed(0)} with propagation pathways across dependent services.`,
+        summary: `Topological impact analysis indicates classification '${node.impact_classification}'. Impact score is ${score.toFixed(0)} with propagation pathways across dependent services.`,
         severity: score > 75 ? "#ef4444" : score > 45 ? "#ffa657" : "#f59e0b",
       });
     });
@@ -99,7 +115,9 @@ export function AIAnalysisPage() {
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#bc8cff]/10 border border-[#bc8cff]/25 shadow-sm">
           <span className="w-2 h-2 rounded-full bg-[#bc8cff] animate-pulse" />
           <span className="text-[#bc8cff] text-xs font-mono font-bold">
-            {totalLogCount > 0 ? `${totalLogCount.toLocaleString()} logs analyzed` : "Live ingestion streaming"}
+            {logStatus === "available" || logStatus === "stale"
+              ? `${totalLogCount.toLocaleString()} logs ${logStatus === "stale" ? "in last known snapshot" : "analyzed"}`
+              : operationalStatusLabel(logStatus)}
           </span>
         </div>
       </div>
@@ -144,11 +162,12 @@ export function AIAnalysisPage() {
         </div>
         <div className="p-4 space-y-2.5">
           {rootCauses.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-8 text-center text-[#7d8590]">
-              <ShieldCheck className="w-8 h-8 text-[#3fb950] mb-2" />
-              <span className="text-sm font-semibold text-[#e6edf3]">No root causes detected</span>
-              <span className="text-xs text-[#7d8590] mt-1">All service metrics and transaction pathways are behaving nominally.</span>
-            </div>
+            <OperationalStateNotice
+              state={trackingLoopsDataState}
+              connectionState={connectionStatus}
+              emptyMessage="No root-cause evidence was returned for this scope."
+              errorMessage="Root-cause telemetry is unavailable; no healthy conclusion is being inferred."
+            />
           )}
           {rootCauses.map((rc, idx) => {
             const pct = Math.round(rc.probability * 100);
@@ -208,7 +227,7 @@ export function AIAnalysisPage() {
           <span className="text-[#e6edf3] text-[13px] font-bold">AI Log & Template Summaries</span>
         </div>
         <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
-            {dynamicSummaries.map((sum: any, idx: number) => (
+            {dynamicSummaries.map((sum, idx) => (
               <div key={idx} className="p-3.5 rounded-xl bg-[#0d1117] border border-[#21262d]">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[#e6edf3] text-xs font-bold font-mono">{sum.service}</span>
@@ -220,9 +239,13 @@ export function AIAnalysisPage() {
               </div>
             ))}
             {dynamicSummaries.length === 0 && (
-              <div className="text-[#7d8590] p-6 text-center text-xs">
-                No active anomalies to summarize. Ingest logs to generate real-time AI summaries.
-              </div>
+              <OperationalStateNotice
+                state={trackingLoopsDataState}
+                connectionState={connectionStatus}
+                emptyMessage="No active anomaly summaries were returned."
+                errorMessage="AI summaries are unavailable because anomaly telemetry is unavailable."
+                className="m-3"
+              />
             )}
         </div>
       </div>
@@ -236,7 +259,7 @@ export function AIAnalysisPage() {
         </div>
         <div className="p-4">
           <div className="space-y-2.5">
-            {dynamicFixes.map((fix: any, idx: number) => (
+            {dynamicFixes.map((fix, idx) => (
               <div key={idx} className="flex gap-3.5 p-3.5 rounded-xl bg-[#0d1117] border border-[#21262d] hover:border-[#30363d] transition-colors">
                 <div className="flex flex-col items-center justify-center w-7 h-7 rounded-lg bg-[#388bfd]/15 text-[#388bfd] font-bold text-xs shrink-0 mt-0.5 border border-[#388bfd]/30">
                   {fix.priority}
@@ -251,9 +274,13 @@ export function AIAnalysisPage() {
               </div>
             ))}
             {dynamicFixes.length === 0 && (
-              <div className="text-center py-6 text-[#7d8590] text-xs">
-                No active remediation steps required. All telemetry healthy.
-              </div>
+              <OperationalStateNotice
+                state={trackingLoopsDataState}
+                connectionState={connectionStatus}
+                emptyMessage="No remediation suggestions were returned."
+                errorMessage="Remediation suggestions are unavailable because anomaly telemetry is unavailable."
+                className="m-3"
+              />
             )}
           </div>
         </div>

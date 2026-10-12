@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: timescale/timescaledb@sha256:4e459e217f00cbb09920c34d245501e63427e6767a495de57ce76823ff280f12 # 2.17.2-pg16; multi-arch index
+    environment:
+      POSTGRES_USER: ${LS06B_POSTGRES_USER:?LS06B_POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${LS06B_POSTGRES_PASSWORD:?LS06B_POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${LS06B_POSTGRES_DB:?LS06B_POSTGRES_DB is required}
+    ports:
+      - "127.0.0.1:${LS06B_POSTGRES_PORT:?LS06B_POSTGRES_PORT is required}:5432"
+    volumes:
+      - ../../scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    tmpfs:
+      - /var/lib/postgresql/data
+    shm_size: 256m
+    command:
+      - postgres
+      - -c
+      - fsync=on
+      - -c
+      - synchronous_commit=on
+      - -c
+      - full_page_writes=on
+      - -c
+      - max_connections=100
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  valkey:
+    image: valkey/valkey@sha256:752ba000a58bc8925d11ee863a39b5225617cd2cb3dbc9ec8ac65268b65ebb6d # 8.0.2-alpine; multi-arch index
+    ports:
+      - "127.0.0.1:${LS06B_VALKEY_PORT:?LS06B_VALKEY_PORT is required}:6379"
+    tmpfs:
+      - /data
+    command:
+      - valkey-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - always
+      - --save
+      - ""
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 2s

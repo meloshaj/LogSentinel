@@ -77,6 +77,17 @@ def test_manifest_blocks_incompatible_historical_sequences() -> None:
         "scripts/migrations/20260826_0001_multitenant_partitioning.sql",
         "scripts/migrations/20260826_0002_archive_manifest.sql",
         "scripts/migrations/20260831_0001_auth_lifecycle.sql",
+        "scripts/migrations/20260907_0001_archive_rehydration_sessions.sql",
+        "scripts/migrations/20260907_0002_ingestion_api_keys.sql",
+        "scripts/migrations/20260907_0003_archive_security_and_model_registry.sql",
+        "scripts/migrations/20260911_0004_legacy_logsentinel_tenant_bridge.sql",
+        "scripts/migrations/20260911_0005_distributed_correctness.sql",
+        "scripts/migrations/20260911_0006_durable_webhook_delivery.sql",
+        "scripts/migrations/20260912_0007_application_release_gates.sql",
+        "scripts/migrations/20260912_0008_tenant_authority.sql",
+        "scripts/migrations/20260912_0009_pipeline_feature_durability.sql",
+        "scripts/migrations/20260913_0010_per_user_data_ownership.sql",
+        "scripts/migrations/20260917_0011_password_reset_atomicity.sql",
     ]
     assert (
         blocked["scripts/migrations/20260805_add_ulid_to_logs.sql"]["status"]
@@ -193,6 +204,10 @@ async def test_disposable_timescale_bootstrap_is_repeatable() -> None:
     finally:
         await connection.close()
 
-    assert applied in ([], ["20260822_0001_schema_reconciliation"])
+    assert applied in (
+        [],
+        ["20260917_0011_password_reset_atomicity"],
+        ["20260822_0001_schema_reconciliation"],
+    )
     assert result["schema_id"] == "logsentinel-timescale-v1"
     assert "0000_canonical_init" in result["applied_migrations"]

@@ -25,11 +25,13 @@ def test_ingestion_security_settings_combines_and_strips_keys() -> None:
     assert settings.configured is True
 
 
-def test_guard_allows_valid_key() -> None:
+def test_guard_rejects_legacy_key_without_authoritative_owner() -> None:
     with patch.dict("os.environ", {"INGEST_API_KEY": "valid-key"}, clear=False):
-        result = asyncio.run(require_ingestion_api_key("valid-key"))
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(require_ingestion_api_key("valid-key"))
 
-    assert result == "default"
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "legacy_ingestion_key_has_no_owner"
 
 
 def test_guard_rejects_missing_key() -> None:

@@ -1,0 +1,19 @@
+[Unit]
+Description=LogSentinel read-only retention eligibility plan
+Wants=docker.service
+After=docker.service
+ConditionPathExists=/home/ubuntu/LogSentinel/config/retention-policy.yml
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/LogSentinel
+UMask=0077
+TimeoutStartSec=10min
+Environment=COMPOSE_PROFILES=retention-plan
+# This service intentionally has no --apply flag. It is safe while policy
+# approval is pending and emits only bounded metadata to the journal.
+ExecStart=/usr/bin/docker compose --env-file /home/ubuntu/LogSentinel/.env -f /home/ubuntu/LogSentinel/docker-compose.prod.yml run --rm --no-deps backend python /repo/scripts/retention.py --policy /repo/config/retention-policy.yml
+ExecStartPost=/usr/bin/docker compose --env-file /home/ubuntu/LogSentinel/.env -f /home/ubuntu/LogSentinel/docker-compose.prod.yml run --rm --no-deps backend python /repo/scripts/recovery_retention.py --policy /repo/config/retention-policy.yml
+ExecStartPost=/usr/bin/docker compose --env-file /home/ubuntu/LogSentinel/.env -f /home/ubuntu/LogSentinel/docker-compose.prod.yml run --rm --no-deps backend python /repo/scripts/local_retention.py --policy /repo/config/retention-policy.yml

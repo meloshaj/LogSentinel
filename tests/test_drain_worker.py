@@ -125,7 +125,10 @@ def make_worker_with_batch_size(tmp_path, batch_size: int) -> DrainWorker:
     return DrainWorker(None, parser, batch_manager=batch_manager)
 
 
-def test_drain_worker_processes_sample_payload(tmp_path) -> None:
+def test_drain_worker_processes_sample_payload(tmp_path, monkeypatch) -> None:
+    async def durable_alert_stub(*args, **kwargs):
+        return None
+    monkeypatch.setattr("backend.app.workers.drain_worker.dispatch_incident_alert", durable_alert_stub)
     worker = make_worker(tmp_path)
 
     parsed_logs = asyncio.run(

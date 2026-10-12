@@ -1,0 +1,31 @@
+# Local HTTP edge. Production uses Caddyfile with automatic HTTPS.
+:8080 {
+    encode zstd gzip
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss: https://login.microsoftonline.com https://graph.microsoft.com; frame-src https://login.microsoftonline.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self' https://login.microsoftonline.com"
+    }
+    # Keep diagnostic denials ahead of the SPA fallback in local HTTP too.
+    route {
+        request_body {
+            max_size 10MB
+        }
+        @internal path /metrics /readiness /ready /docs* /redoc* /openapi.json
+        respond @internal 403
+        handle /health {
+            respond "ok" 200
+        }
+        @api path /api/* /ingest-log /v1/* /ws/*
+        handle @api {
+            reverse_proxy backend:8000
+        }
+        handle {
+            root * /usr/share/caddy/html
+            try_files {path} /index.html
+            file_server
+        }
+    }
+}

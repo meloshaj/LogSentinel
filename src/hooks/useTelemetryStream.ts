@@ -17,6 +17,8 @@ export function useTelemetryStream() {
   const {
     connectionState,
     activeTrackingLoops,
+    trackingLoopsDataState,
+    lastTelemetryAt,
     latestPerformanceEvents,
     clearTrackingLoops,
     clearPerformanceEvents,
@@ -28,6 +30,8 @@ export function useTelemetryStream() {
   return {
     connectionStatus,
     activeTrackingLoops,
+    trackingLoopsDataState,
+    lastTelemetryAt,
     latestPerformanceEvents,
     clearTrackingLoops,
     clearPerformanceEvents,

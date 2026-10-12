@@ -1,0 +1,58 @@
+{{- if .Values.workers.archive.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "logsentinel.fullname" . }}-archive-worker
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "logsentinel.name" . }}-archive-worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "logsentinel.name" . }}-archive-worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ include "logsentinel.fullname" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds.archiveWorker }}
+      containers:
+        - name: archive-worker
+          image: {{ include "logsentinel.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "app.cli.worker"]
+          args: ["run", "archive"]
+          env:
+            - {name: S3_ENDPOINT_URL, value: {{ .Values.workers.archive.s3Endpoint | quote }}}
+            - {name: S3_REGION, value: {{ required "workers.archive.s3Region is required" .Values.workers.archive.s3Region | quote }}}
+            - {name: S3_BUCKET_NAME, value: {{ required "workers.archive.s3Bucket is required" .Values.workers.archive.s3Bucket | quote }}}
+            - name: WORKER_INSTANCE_ID
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+          envFrom:
+            - configMapRef: {name: {{ include "logsentinel.fullname" . }}-config}
+            - secretRef: {name: {{ include "logsentinel.secretName" . }}}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          livenessProbe:
+            exec: {command: ["python", "-c", "import os; os.kill(1, 0)"]}
+            initialDelaySeconds: {{ .Values.probes.worker.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.worker.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.worker.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.worker.failureThreshold }}
+          readinessProbe:
+            exec: {command: ["python", "-m", "app.cli.worker", "healthcheck", "archive"]}
+            initialDelaySeconds: {{ .Values.probes.worker.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.worker.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.worker.timeoutSeconds }}
+            failureThreshold: {{ .Values.probes.worker.failureThreshold }}
+          resources:
+            {{- toYaml .Values.resources.archiveWorker | nindent 12 }}
+{{- end }}

@@ -1,15 +1,27 @@
-import { createBrowserRouter, Navigate, Outlet } from "react-router";
+import { createBrowserRouter, Link, Navigate, Outlet, useLocation } from "react-router";
+import { useEffect, useState } from "react";
 import { RootLayout } from "./layouts/RootLayout";
 import { AuthLayout } from "./layouts/AuthLayout";
 import {
   clearAuthToken,
   getAuthToken,
   isAuthTokenValid,
+  refreshSession,
 } from "./utils/auth";
 
 function ProtectedRoute() {
   const token = getAuthToken();
   const isValid = isAuthTokenValid(token);
+  const [restoring, setRestoring] = useState(!isValid);
+
+  useEffect(() => {
+    if (isValid) return;
+    let active = true;
+    refreshSession().finally(() => { if (active) setRestoring(false); });
+    return () => { active = false; };
+  }, [isValid]);
+
+  if (restoring) return <GlobalLoading />;
 
   if (!isValid) {
     clearAuthToken();
@@ -17,6 +29,13 @@ function ProtectedRoute() {
   }
 
   return <Outlet />;
+}
+
+function NotFound() {
+  const location = useLocation();
+  return <main id="main-content" className="min-h-screen bg-[#0d1117] text-[#e6edf3] flex items-center justify-center p-6">
+    <div className="max-w-md text-center"><p className="text-sky-400 font-mono">404</p><h1 className="text-2xl font-bold mt-2">Page not found</h1><p className="text-[#8b949e] mt-3">No LogSentinel page exists at {location.pathname}.</p><Link className="inline-block mt-6 text-sky-400 underline" to="/">Return to dashboard</Link></div>
+  </main>;
 }
 
 function GlobalLoading() {
@@ -112,4 +131,5 @@ export const router = createBrowserRouter([
       },
     ],
   },
+  { path: "*", Component: NotFound },
 ]);

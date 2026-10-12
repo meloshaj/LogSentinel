@@ -12,9 +12,9 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useGoogleLogin } from "@react-oauth/google";
+import type { TokenResponse } from "@react-oauth/google";
+import { GoogleLoginButton } from "../components/auth/GoogleLoginButton";
 import {
-  GoogleIcon,
   GitHubIcon,
   InputField,
   LogSentinelLogo,
@@ -121,7 +121,6 @@ function MicrosoftRegisterEntry(props: {
 
 export function RegisterPage() {
   const navigate = useNavigate();
-  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [org, setOrg] = useState("");
@@ -159,6 +158,7 @@ export function RegisterPage() {
       ).replace(/\/+$/, "");
       const response = await fetch(`${apiBase}/api/auth/register`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email,
@@ -192,20 +192,18 @@ export function RegisterPage() {
     }
   };
 
-  const googleLogin = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
-      setLoading(true);
-      setErrors({});
+  const handleGoogleSuccess = async (tokenResponse: TokenResponse) => {
+    setLoading(true);
+    setErrors({});
 
-      try {
-        const apiBase = (
-          import.meta.env.VITE_API_URL || ""
-        ).replace(/\/+$/, "");
-        const response = await fetch(`${apiBase}/api/auth/google`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ credential: tokenResponse.access_token }),
-        });
+    try {
+      const apiBase = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
+      const response = await fetch(`${apiBase}/api/auth/google`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: tokenResponse.access_token }),
+      });
 
       if (!response.ok) {
         if (response.status === 409) {
@@ -249,9 +247,7 @@ export function RegisterPage() {
     } finally {
       setLoading(false);
     }
-  },
-  onError: () => handleGoogleError(),
-  });
+  };
 
   const handleGoogleError = () => {
     setErrors({ submit: "Google sign-in failed. Please try again." });
@@ -488,40 +484,13 @@ export function RegisterPage() {
               </div>
 
               <div className="space-y-2">
-                {googleClientId ? (
-                  loading ? (
-                    <SSOButton
-                      provider={{
-                        id: "Google",
-                        label: "Continue with Google",
-                        icon: <GoogleIcon />,
-                        onLogin: () => undefined,
-                        disabled: true,
-                      }}
-                    />
-                  ) : (
-                    <SSOButton
-                      provider={{
-                        id: "Google",
-                        label: "Continue with Google",
-                        icon: <GoogleIcon />,
-                        onLogin: () => googleLogin(),
-                        disabled: loading,
-                      }}
-                    />
-                  )
-                ) : (
-                  <SSOButton
-                    provider={{
-                      id: "Google",
-                      label: "Continue with Google",
-                      icon: <GoogleIcon />,
-                      onLogin: () => undefined,
-                      disabled: true,
-                      title: "Google sign-in is not configured.",
-                    }}
-                  />
-                )}
+                <GoogleLoginButton
+                  disabled={loading}
+                  loading={loading}
+                  label="Continue with Google"
+                  onSuccess={handleGoogleSuccess}
+                  onError={handleGoogleError}
+                />
 
                 <MicrosoftRegisterEntry
                   disabled={loading}

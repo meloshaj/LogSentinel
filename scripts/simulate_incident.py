@@ -12,7 +12,7 @@ Two Execution Phases:
        breaker trips in order-service, and HTTP 504 Gateway Timeouts at api-gateway.
 
 Usage:
-    python scripts/simulate_incident.py --url http://localhost:8000 --api-key dev-local-key
+    INGEST_API_KEY=<tenant-scoped-key> python scripts/simulate_incident.py --url http://localhost:8000
     python scripts/simulate_incident.py --rate 10 --steady-duration 20 --incident-duration 25
 """
 
@@ -35,6 +35,8 @@ try:
     import httpx
 except ImportError:
     httpx = None  # Handled with graceful fallback to standard urllib if needed
+
+from backend.app.security.redaction import sanitize_error_text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -330,12 +332,16 @@ class IncidentTrafficGenerator:
                 logger.warning(
                     "Ingest rejected HTTP %s: %s",
                     response.status_code,
-                    response.text[:120],
+                    sanitize_error_text(response.text[:120]),
                 )
                 self.stats.failed_deliveries += 1
                 return False
         except Exception as exc:
-            logger.error("Delivery error to %s: %s", self.ingest_endpoint, exc)
+            logger.error(
+                "Delivery error to %s: %s",
+                sanitize_error_text(self.ingest_endpoint),
+                sanitize_error_text(exc),
+            )
             self.stats.failed_deliveries += 1
             return False
 
@@ -349,7 +355,9 @@ class IncidentTrafficGenerator:
         logger.info("=" * 64)
         logger.info("LogSentinel Realistic Incident & Microservice Traffic Generator")
         logger.info("=" * 64)
-        logger.info("Target Ingest URL    : %s", self.ingest_endpoint)
+        logger.info(
+            "Target Ingest URL    : %s", sanitize_error_text(self.ingest_endpoint)
+        )
         logger.info("Target Rate          : %.1f batches/sec", rate_hz)
         logger.info("Phase A (Steady)     : %.1f seconds", steady_duration_s)
         logger.info("Phase B (Incident)   : %.1f seconds", incident_duration_s)
@@ -444,7 +452,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--api-key",
-        default=os.getenv("INGEST_API_KEY", "dev-local-key"),
+        default=os.getenv("INGEST_API_KEY"),
         help="LogSentinel Ingest API Key (X-API-Key)",
     )
     parser.add_argument(

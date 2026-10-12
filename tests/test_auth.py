@@ -12,7 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
 from backend.app.core.database import get_async_session
-from backend.app.core.orm import UserRecord
+from backend.app.core.orm import (
+    AuthSessionRecord,
+    TenantMembershipRecord,
+    TenantRecord,
+    UserRecord,
+)
 from backend.app.main import _get_frontend_origins, app
 from backend.app.security.auth import (
     JWT_SECRET_KEY,
@@ -46,7 +51,7 @@ def test_jwt_generation_and_decoding() -> None:
     token = create_access_token(data)
     
     # Decode token
-    payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM], issuer="logsentinel", audience="logsentinel-api")
     assert payload["sub"] == "user@company.com"
     assert "exp" in payload
 
@@ -97,9 +102,12 @@ def test_register_user_success(client: TestClient, mock_db: AsyncMock) -> None:
     assert "verification" in body["message"].lower()
 
     # Verify db interaction
-    mock_db.add.assert_called_once()
+    # Registration now persists explicit tenant membership and durable email
+    # work in addition to the user row.
+    added_types = {type(call.args[0]).__name__ for call in mock_db.add.call_args_list}
+    assert {"TenantRecord", "UserRecord", "TenantMembershipRecord", "EmailOutboxRecord"} <= added_types
     mock_db.commit.assert_called_once()
-    mock_db.refresh.assert_called_once()
+    mock_db.flush.assert_awaited()
 
 
 def test_register_user_already_exists(client: TestClient, mock_db: AsyncMock) -> None:
@@ -173,32 +181,166 @@ def test_login_user_invalid_credentials(client: TestClient, mock_db: AsyncMock) 
     assert response.json()["detail"] == "Invalid email or password"
 
 
-def test_get_profile_success(client: TestClient, mock_db: AsyncMock) -> None:
-    user = UserRecord(
-        id=42,
-        email="profile@company.com",
-        hashed_password="hash",
-        full_name="Profile User",
-        organization="Test Org",
-    )
-    
-    # Mock token validation db lookup
-    mock_execute_result = MagicMock()
-    mock_execute_result.scalar_one_or_none.return_value = user
-    mock_db.execute.return_value = mock_execute_result
+def _configure_profile_context(
+    mock_db: AsyncMock,
+    user: UserRecord | None,
+    *,
+    tenant: TenantRecord | None = None,
+    membership: TenantMembershipRecord | None = None,
+    session: AuthSessionRecord | None = None,
+) -> None:
+    """Provision the same user/tenant/membership authority used by production."""
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = user
+    session_result = MagicMock()
+    session_result.scalar_one_or_none.return_value = session
 
-    # Generate a valid token
-    token = create_access_token({"sub": "profile@company.com"})
+    async def execute(statement):
+        entity = statement.column_descriptions[0].get("entity")
+        return session_result if entity is AuthSessionRecord else user_result
+
+    async def scalar(statement):
+        entity = statement.column_descriptions[0].get("entity")
+        if user is None:
+            return None
+        if entity is TenantRecord:
+            return tenant if tenant is not None and tenant.id == user.tenant_id else None
+        if entity is TenantMembershipRecord:
+            return (
+                membership
+                if membership is not None
+                and membership.tenant_id == user.tenant_id
+                and membership.user_id == user.id
+                else None
+            )
+        return None
+
+    mock_db.execute = AsyncMock(side_effect=execute)
+    mock_db.scalar = AsyncMock(side_effect=scalar)
+
+
+def _profile_user(**changes) -> UserRecord:
+    values = {
+        "id": 42,
+        "email": "profile@company.com",
+        "hashed_password": "hash",
+        "full_name": "Profile User",
+        "organization": "Test Org",
+        "tenant_id": "tenant-a",
+        "status": "active",
+        "role": "viewer",
+    }
+    values.update(changes)
+    return UserRecord(**values)
+
+
+def _active_profile_tenant(status_value: str = "active") -> TenantRecord:
+    return TenantRecord(id="tenant-a", name="Tenant A", status=status_value)
+
+
+def _active_profile_membership(status_value: str = "active") -> TenantMembershipRecord:
+    return TenantMembershipRecord(
+        tenant_id="tenant-a", user_id=42, role="viewer", status=status_value
+    )
+
+
+def test_get_profile_success(client: TestClient, mock_db: AsyncMock) -> None:
+    user = _profile_user()
+    _configure_profile_context(
+        mock_db,
+        user,
+        tenant=_active_profile_tenant(),
+        membership=_active_profile_membership(),
+    )
+
+    token = create_access_token({"sub": user.email})
     headers = {"Authorization": f"Bearer {token}"}
 
     response = client.get("/api/auth/me", headers=headers)
-    
+
     assert response.status_code == status.HTTP_200_OK
     body = response.json()
     assert body["id"] == 42
     assert body["email"] == "profile@company.com"
     assert body["full_name"] == "Profile User"
     assert body["organization"] == "Test Org"
+
+
+def test_get_profile_missing_user_fails_closed(client: TestClient, mock_db: AsyncMock) -> None:
+    _configure_profile_context(mock_db, None)
+    token = create_access_token({"sub": "missing@company.com"})
+
+    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_get_profile_inactive_user_fails_closed(client: TestClient, mock_db: AsyncMock) -> None:
+    user = _profile_user(status="suspended")
+    _configure_profile_context(
+        mock_db,
+        user,
+        tenant=_active_profile_tenant(),
+        membership=_active_profile_membership(),
+    )
+    token = create_access_token({"sub": user.email})
+
+    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.parametrize(
+    "tenant,membership",
+    [
+        (_active_profile_tenant(), None),
+        (_active_profile_tenant(), _active_profile_membership("suspended")),
+        (_active_profile_tenant("suspended"), _active_profile_membership()),
+        (TenantRecord(id="tenant-b", name="Tenant B", status="active"), _active_profile_membership()),
+    ],
+    ids=["missing-membership", "inactive-membership", "inactive-tenant", "wrong-tenant"],
+)
+def test_get_profile_inactive_or_wrong_tenant_context_fails_closed(
+    client: TestClient,
+    mock_db: AsyncMock,
+    tenant: TenantRecord,
+    membership: TenantMembershipRecord | None,
+) -> None:
+    user = UserRecord(
+        id=42,
+        email="profile@company.com",
+        hashed_password="hash",
+        full_name="Profile User",
+        organization="Test Org",
+        tenant_id="tenant-a",
+        status="active",
+        role="viewer",
+    )
+    _configure_profile_context(
+        mock_db, user, tenant=tenant, membership=membership
+    )
+    token = create_access_token({"sub": user.email})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.get("/api/auth/me", headers=headers)
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_get_profile_invalid_session_fails_closed(client: TestClient, mock_db: AsyncMock) -> None:
+    user = _profile_user()
+    _configure_profile_context(
+        mock_db,
+        user,
+        tenant=_active_profile_tenant(),
+        membership=_active_profile_membership(),
+        session=None,
+    )
+    token = create_access_token({"sub": user.email}, session_id="missing-session")
+
+    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 def test_get_profile_unauthorized_missing_token(client: TestClient) -> None:

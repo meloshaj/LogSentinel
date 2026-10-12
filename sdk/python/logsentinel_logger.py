@@ -1,6 +1,7 @@
 import atexit
 import json
 import logging
+import os
 import queue
 import sys
 import threading
@@ -210,7 +211,7 @@ if __name__ == "__main__":
     # 2. Configure the custom LogSentinelHandler
     # Change endpoint to match your local setup, e.g., if behind a different port
     logsentinel_handler = LogSentinelHandler(
-        api_key="dev-local-key",  # Matches the INGEST_API_KEY in docker-compose.yml
+        api_key=os.environ["INGEST_API_KEY"],
         service_name="payment-gateway",
         endpoint="http://localhost:8000/api/v1/ingest/bulk",
         batch_size=10,        # Small batch size for demo purposes

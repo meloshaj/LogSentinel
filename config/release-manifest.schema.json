@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LogSentinel release manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "release_id",
+    "source",
+    "artifacts",
+    "images",
+    "migration",
+    "sbom",
+    "security_scan",
+    "gates",
+    "provenance",
+    "production_verification"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "release_id": {"type": "string", "minLength": 1},
+    "source": {
+      "type": "object",
+      "required": ["commit", "runtime_manifest_sha256", "runtime_file_count", "dirty_worktree", "authority", "scope"],
+      "properties": {
+        "commit": {"type": "string", "minLength": 7},
+        "runtime_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "runtime_file_count": {"type": "integer", "minimum": 0},
+        "dirty_worktree": {"type": "boolean"},
+        "authority": {"type": "string", "minLength": 1},
+        "scope": {"type": "string", "minLength": 1}
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["runtime_source_manifest_sha256", "artifact_sha256", "scope"],
+      "properties": {
+        "runtime_source_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "artifact_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "scope": {"type": "string", "minLength": 1}
+      }
+    },
+    "images": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["identity", "immutable"],
+        "properties": {
+          "identity": {"type": "string", "minLength": 1},
+          "immutable": {"type": "boolean"},
+          "tag": {"type": "string"},
+          "architecture": {"type": "string"}
+        }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "required": ["head", "required_head"],
+      "properties": {
+        "head": {"type": "string", "minLength": 1},
+        "required_head": {"type": "string", "minLength": 1},
+        "matches_required": {"type": "boolean"}
+      }
+    },
+    "sbom": {
+      "type": "object",
+      "required": ["required", "artifacts"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["format", "sha256", "image_identity"],
+            "properties": {
+              "format": {"const": "SPDX-JSON"},
+              "sha256": {"$ref": "#/$defs/sha256"},
+              "image_identity": {"type": "string", "minLength": 1},
+              "artifact": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "security_scan": {
+      "type": "object",
+      "required": ["status", "policy"],
+      "properties": {
+        "status": {"enum": ["PASS", "VULNERABILITIES FOUND", "SCANNER FAILURE", "SCAN NOT RUN", "UNKNOWN"]},
+        "policy": {"type": "string", "minLength": 1},
+        "tool": {"type": "string"},
+        "tool_version": {"type": "string"},
+        "images": {"type": "object"},
+        "exceptions": {"type": "array"}
+      }
+    },
+    "gates": {"type": "object", "additionalProperties": {"type": "string"}},
+    "provenance": {
+      "type": "object",
+      "required": ["manifest_status", "classification", "attestation_state", "signature_state", "signature_enforced", "verification_command"],
+      "properties": {
+        "manifest_status": {"type": "string", "minLength": 1},
+        "classification": {"enum": ["BOOTSTRAPPED_CURRENT_STATE", "HISTORICAL_BUILD_OUTPUT"]},
+        "attestation": {"type": "string"},
+        "attestation_state": {"enum": ["UNSIGNED", "SIGNED"]},
+        "signature": {"type": "string"},
+        "signature_state": {"type": "string", "minLength": 1},
+        "signature_enforced": {"type": "boolean"},
+        "verification_command": {"type": "string", "minLength": 1}
+      }
+    },
+    "production_verification": {
+      "type": "object",
+      "required": ["status", "source", "images", "migration", "sbom"],
+      "properties": {
+        "status": {"enum": ["PASS", "MISMATCH", "UNKNOWN", "NOT_RUN"]},
+        "source": {"type": "string"},
+        "images": {"type": "string"},
+        "migration": {"type": "string"},
+        "sbom": {"type": "string"}
+        }
+    },
+    "rollback": {
+      "type": "object",
+      "required": ["status", "metadata"],
+      "properties": {
+        "status": {"type": "string"},
+        "metadata": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

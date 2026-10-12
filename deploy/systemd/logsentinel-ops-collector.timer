@@ -1,0 +1,11 @@
+[Unit]
+Description=Run LogSentinel read-only host and recovery metrics collector
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+Persistent=true
+Unit=logsentinel-ops-collector.service
+
+[Install]
+WantedBy=timers.target

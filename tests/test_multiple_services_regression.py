@@ -34,9 +34,10 @@ def test_three_services_survive_drain_and_feature_window() -> None:
                     "service": service,
                     "level": "ERROR" if index else "INFO",
                     "timestamp": base + timedelta(seconds=index),
-                    "tenant_id": "tenant-a",
                     "correlation_id": "trace-3-service",
                 },
+                trusted_tenant_id="tenant-a",
+                trusted_owner_user_id=101,
             )
             for index, service in enumerate(services)
         ]
@@ -57,6 +58,7 @@ def test_three_services_survive_drain_and_feature_window() -> None:
 
     assert len(vectors) == 1
     assert vectors[0].tenant_id == "tenant-a"
+    assert vectors[0].owner_user_id == 101
     assert set(vectors[0].service_distribution) == set(services)
     assert vectors[0].features["active_services"] == 3.0
 
@@ -104,6 +106,7 @@ def _anomalous_vector() -> FeatureVector:
     now = datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc)
     return FeatureVector(
         tenant_id="tenant-a",
+        owner_user_id=101,
         window_id="window-tenant-a",
         timestamp=now,
         window_start=now,
@@ -160,18 +163,22 @@ def test_event_manager_graph_failure_preserves_alert_without_synthetic_root() ->
 async def test_graph_analysis_passes_feature_tenant_to_bounded_queries() -> None:
     class FeatureRepo:
         async def get_recent_anomaly_contexts(self, **kwargs: Any) -> list[dict[str, Any]]:
-            assert kwargs["tenant_id"] == "tenant-a"
+            assert kwargs["scope"].tenant_id == "tenant-a"
+            assert kwargs["scope"].owner_user_id == 101
             return []
 
     class LogRepo:
         async def get_recent_correlation_evidence(self, **kwargs: Any) -> list[dict[str, Any]]:
             assert kwargs["tenant_id"] == "tenant-a"
+            assert kwargs["owner_user_id"] == 101
             return []
 
     topology = NetworkXTopologyPipeline()
     topology.add_observation(
-        TraceObservation(
-            canonical_transaction_id="trace-3-service",
+            TraceObservation(
+                tenant_id="tenant-a",
+                owner_user_id=101,
+                canonical_transaction_id="trace-3-service",
             service="payment-gateway",
             timestamp=datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc),
             template_id="payment-error",

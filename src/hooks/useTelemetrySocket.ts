@@ -1,7 +1,8 @@
 import { useTelemetryContext } from "../providers/TelemetryProvider";
+import type { ConnectionState } from "../providers/TelemetryProvider";
 import type { TelemetryEvent } from "../types/telemetry";
 
-export type TelemetryConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
+export type TelemetryConnectionStatus = ConnectionState;
 
 /**
  * useTelemetrySocket — thin hook that exposes raw telemetry events from

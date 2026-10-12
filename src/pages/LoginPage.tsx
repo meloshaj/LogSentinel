@@ -16,10 +16,10 @@ import {
   Mail,
 } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
-import { useGoogleLogin } from "@react-oauth/google";
+import type { TokenResponse } from "@react-oauth/google";
+import { GitHubLoginButton } from "../components/auth/GitHubLoginButton";
+import { GoogleLoginButton } from "../components/auth/GoogleLoginButton";
 import {
-  GoogleIcon,
-  GitHubIcon,
   InputField,
   LogSentinelLogo,
   MicrosoftIcon,
@@ -32,10 +32,18 @@ import {
   useMicrosoftAuthStatus,
   type MicrosoftAuthStatus,
 } from "../providers/MsalProviderWrapper";
-import { getAuthErrorMessage, setAuthToken } from "../utils/auth";
+import { getAuthErrorMessage, isAuthTokenValid, sanitizeAuthCallbackUrl, setAuthToken } from "../utils/auth";
 import { FeatureFlag } from "../components/common/FeatureFlag";
 
 type AuthOperation = "email" | "google" | "microsoft";
+
+function decodeCallbackError(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return "The sign-in callback contained invalid error data. Please try again.";
+  }
+}
 
 interface MicrosoftButtonProps {
   rememberMe: boolean;
@@ -133,7 +141,6 @@ function MicrosoftLoginEntry(props: MicrosoftButtonProps) {
 export function LoginPage() {
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
-  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -161,28 +168,24 @@ export function LoginPage() {
     const token = hashToken || searchToken;
     const errorMsg = hashErrorMsg || searchErrorMsg;
 
-    if (token) {
+    if (token && isAuthTokenValid(token)) {
       setAuthToken(token, rememberMe);
       setSuccess(true);
       navigationTimerRef.current = window.setTimeout(() => {
         navigate("/");
       }, 1500);
-      // Clean up URL including hash
-      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
-      if (hashToken) {
-        window.location.hash = ""; // Clear the hash specifically to remove it from browser bar
-      }
+      sanitizeAuthCallbackUrl();
+    } else if (token) {
+      setErrors({ submit: "The sign-in callback was invalid. Please try again." });
+      sanitizeAuthCallbackUrl();
     } else if (errorMsg) {
-      if (errorMsg.includes("different provider")) {
-        setErrors({ conflict: decodeURIComponent(errorMsg) });
+      const decodedError = decodeCallbackError(errorMsg);
+      if (decodedError.includes("different provider")) {
+        setErrors({ conflict: decodedError });
       } else {
-        setErrors({ submit: decodeURIComponent(errorMsg) });
+        setErrors({ submit: decodedError });
       }
-      // Clean up URL including hash
-      window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
-      if (hashErrorMsg) {
-        window.location.hash = ""; // Clear the hash specifically to remove it from browser bar
-      }
+      sanitizeAuthCallbackUrl();
     }
 
     return () => {
@@ -268,6 +271,7 @@ export function LoginPage() {
       ).replace(/\/+$/, "");
       const response = await fetch(`${apiBase}/api/auth/login`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: email.trim().toLowerCase(),
@@ -312,21 +316,19 @@ export function LoginPage() {
     }
   };
 
-  const googleLogin = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
-      if (operationRef.current) return;
+  const handleGoogleSuccess = async (tokenResponse: TokenResponse) => {
+    if (operationRef.current) return;
 
-      if (!beginOperation("google")) return;
+    if (!beginOperation("google")) return;
 
-      try {
-        const apiBase = (
-          import.meta.env.VITE_API_URL || ""
-        ).replace(/\/+$/, "");
-        const response = await fetch(`${apiBase}/api/auth/google`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ credential: tokenResponse.access_token }),
-        });
+    try {
+      const apiBase = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
+      const response = await fetch(`${apiBase}/api/auth/google`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: tokenResponse.access_token }),
+      });
 
       if (!response.ok) {
         if (response.status === 409) {
@@ -366,9 +368,7 @@ export function LoginPage() {
     } finally {
       endOperation("google");
     }
-  },
-  onError: () => handleGoogleError(),
-  });
+  };
 
   const handleGoogleError = () => {
     if (operationRef.current) return;
@@ -581,44 +581,17 @@ export function LoginPage() {
               </div>
 
               <div className="space-y-2">
-                {googleClientId ? (
-                  operation ? (
-                    <SSOButton
-                      provider={{
-                        id: "Google",
-                        label:
-                          operation === "google"
-                            ? "Signing in with Google…"
-                            : "Continue with Google",
-                        icon: <GoogleIcon />,
-                        onLogin: () => undefined,
-                        disabled: true,
-                        loading: operation === "google",
-                      }}
-                    />
-                  ) : (
-                    <SSOButton
-                      provider={{
-                        id: "Google",
-                        label: "Continue with Google",
-                        icon: <GoogleIcon />,
-                        onLogin: () => googleLogin(),
-                        disabled: isLoading,
-                      }}
-                    />
-                  )
-                ) : (
-                  <SSOButton
-                    provider={{
-                      id: "Google",
-                      label: "Continue with Google",
-                      icon: <GoogleIcon />,
-                      onLogin: () => undefined,
-                      disabled: true,
-                      title: "Google sign-in is not configured.",
-                    }}
-                  />
-                )}
+                <GoogleLoginButton
+                  disabled={isLoading}
+                  loading={operation === "google"}
+                  label={
+                    operation === "google"
+                      ? "Signing in with Google…"
+                      : "Continue with Google"
+                  }
+                  onSuccess={handleGoogleSuccess}
+                  onError={handleGoogleError}
+                />
 
                 <MicrosoftLoginEntry
                   rememberMe={rememberMe}
@@ -629,24 +602,14 @@ export function LoginPage() {
                   onError={handleMicrosoftError}
                 />
 
-                <FeatureFlag flag="ENABLE_GITHUB_AUTH">
-                  <SSOButton
-                    provider={{
-                      id: "GitHub",
-                      label: "Continue with GitHub",
-                      icon: <GitHubIcon />,
-                      onLogin: () => {
-                        const apiBase = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
-                        window.location.href = `${apiBase}/api/auth/github`;
-                      },
-                      disabled: isLoading,
-                      bgClass: "bg-[#181d24]",
-                      borderClass: "border-[#181d24]",
-                      textClass: "text-white",
-                      hoverClass: "hover:bg-[#22272e] hover:border-[#22272e]",
-                    }}
-                  />
-                </FeatureFlag>
+                <GitHubLoginButton
+                  disabled={isLoading}
+                  onError={() =>
+                    setErrors({
+                      submit: "GitHub sign-in could not be started. Please try again.",
+                    })
+                  }
+                />
               </div>
             </div>
           )}
@@ -669,4 +632,3 @@ export function LoginPage() {
     </motion.div>
   );
 }
-

@@ -1,0 +1,1455 @@
+{
+  "validation": "FAIL",
+  "gates": {
+    "healthy_false_positives_max_10_of_200": false,
+    "synthetic_pure_payment_outage_all_detected": true,
+    "persisted_pure_payment_outage_detected": true,
+    "persisted_clean_normal_and_recovery_no_false_positives": false
+  },
+  "training": {
+    "count": 200,
+    "synthetic_dataset_id": "logsentinel-synthetic-healthy-demo-v2",
+    "contamination": 0.05,
+    "scikit_learn_version": "1.9.0",
+    "joblib_version": "1.5.3",
+    "python_version": "3.14.0",
+    "feature_schema_version": "logsentinel-feature-schema-v1",
+    "feature_columns": [
+      "log_count",
+      "info_count",
+      "warning_count",
+      "error_count",
+      "error_ratio",
+      "active_services",
+      "unique_templates",
+      "dominant_service_count",
+      "dominant_template_count",
+      "logs_per_second",
+      "avg_logs_per_minute",
+      "burst_indicator"
+    ]
+  },
+  "healthy_validation": {
+    "count": 200,
+    "false_positives": 12,
+    "false_positive_rate": 0.06,
+    "false_positive_windows": [
+      {
+        "window_id": "window-33e0954dbd886d39bec8d8e1116ec13ce0a9c12662e5a9a173d718a948e7b1ee",
+        "raw_score": -0.012869,
+        "anomaly_score": 0.050173,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 15.0,
+          "info_count": 12.0,
+          "warning_count": 3.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 4.0,
+          "dominant_template_count": 8.0,
+          "logs_per_second": 1.5,
+          "avg_logs_per_minute": 90.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "synthetic-recovery-20360933-11",
+        "raw_score": -0.071188,
+        "anomaly_score": 0.2478,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_recovery_profile",
+        "feature_values": {
+          "log_count": 15.0,
+          "info_count": 15.0,
+          "warning_count": 0.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 2.0,
+          "unique_templates": 1.0,
+          "dominant_service_count": 8.0,
+          "dominant_template_count": 15.0,
+          "logs_per_second": 1.5,
+          "avg_logs_per_minute": 90.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "window-b3bedede2632ed7703190e3435bb452475849b2f92ddb122433deab5f85bfc82",
+        "raw_score": -0.065785,
+        "anomaly_score": 0.231366,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 19.0,
+          "info_count": 17.0,
+          "warning_count": 1.0,
+          "error_count": 1.0,
+          "error_ratio": 0.0526,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 5.0,
+          "dominant_template_count": 11.0,
+          "logs_per_second": 1.9,
+          "avg_logs_per_minute": 114.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "window-ddb78fa5bd775eceb3f7d60f9fbc21568bdf21232ff3ba91aef11473360361fa",
+        "raw_score": -0.004798,
+        "anomaly_score": 0.019009,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 26.0,
+          "info_count": 24.0,
+          "warning_count": 2.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 7.0,
+          "dominant_template_count": 9.0,
+          "logs_per_second": 2.6,
+          "avg_logs_per_minute": 156.0,
+          "burst_indicator": 1.0
+        }
+      },
+      {
+        "window_id": "window-a7528cee8e1e43ddfedc7b6d1da095aafb6f912c4ee2df79554ba6d170053921",
+        "raw_score": -0.042275,
+        "anomaly_score": 0.155576,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 5.0,
+          "info_count": 5.0,
+          "warning_count": 0.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 2.0,
+          "dominant_service_count": 2.0,
+          "dominant_template_count": 4.0,
+          "logs_per_second": 0.5,
+          "avg_logs_per_minute": 30.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "window-0f440f7c72193567ef291043aef1d6c0dd6213e12d6106e8b66d550361a9c35a",
+        "raw_score": -0.015396,
+        "anomaly_score": 0.059725,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 20.0,
+          "info_count": 17.0,
+          "warning_count": 2.0,
+          "error_count": 1.0,
+          "error_ratio": 0.05,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 5.0,
+          "dominant_template_count": 11.0,
+          "logs_per_second": 2.0,
+          "avg_logs_per_minute": 120.0,
+          "burst_indicator": 1.0
+        }
+      },
+      {
+        "window_id": "synthetic-recovery-20360933-9",
+        "raw_score": -0.071188,
+        "anomaly_score": 0.2478,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_recovery_profile",
+        "feature_values": {
+          "log_count": 15.0,
+          "info_count": 15.0,
+          "warning_count": 0.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 2.0,
+          "unique_templates": 1.0,
+          "dominant_service_count": 8.0,
+          "dominant_template_count": 15.0,
+          "logs_per_second": 1.5,
+          "avg_logs_per_minute": 90.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "window-e7b25aa312fd6aa65e6137ee991d2f6ae8cb01552a0dbfbe264b3d576c571c06",
+        "raw_score": -0.015374,
+        "anomaly_score": 0.059643,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 16.0,
+          "info_count": 13.0,
+          "warning_count": 3.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 4.0,
+          "dominant_template_count": 8.0,
+          "logs_per_second": 1.6,
+          "avg_logs_per_minute": 96.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "window-e000d4735397822c821b417b6a0cb136a007e9051450fce38c3e77f03bbe5173",
+        "raw_score": -0.01205,
+        "anomaly_score": 0.047055,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 19.0,
+          "info_count": 16.0,
+          "warning_count": 3.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 5.0,
+          "dominant_template_count": 10.0,
+          "logs_per_second": 1.9,
+          "avg_logs_per_minute": 114.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "window-508afcacdd1676c94dcb8c4b54b0a3ca2a04c1719afd0b00794a1d7b2a04c98e",
+        "raw_score": -0.023454,
+        "anomaly_score": 0.089549,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 15.0,
+          "info_count": 12.0,
+          "warning_count": 3.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 4.0,
+          "dominant_template_count": 5.0,
+          "logs_per_second": 1.5,
+          "avg_logs_per_minute": 90.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "window-e77fa273645ed80036104e551bcff73e100bcb9dac92739386fdf4043e2a7ba8",
+        "raw_score": -0.01643,
+        "anomaly_score": 0.063606,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 25.0,
+          "info_count": 22.0,
+          "warning_count": 2.0,
+          "error_count": 1.0,
+          "error_ratio": 0.04,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 7.0,
+          "dominant_template_count": 13.0,
+          "logs_per_second": 2.5,
+          "avg_logs_per_minute": 150.0,
+          "burst_indicator": 1.0
+        }
+      },
+      {
+        "window_id": "window-31625b42ab7ce4c7324f9f294ee224df0f76932f25dcab7830c8f3b764596cda",
+        "raw_score": -0.011583,
+        "anomaly_score": 0.045274,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "scenario": "healthy_steady_state",
+        "feature_values": {
+          "log_count": 26.0,
+          "info_count": 24.0,
+          "warning_count": 2.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 7.0,
+          "dominant_template_count": 16.0,
+          "logs_per_second": 2.6,
+          "avg_logs_per_minute": 156.0,
+          "burst_indicator": 1.0
+        }
+      }
+    ]
+  },
+  "phase_predictions": {
+    "demo_normal": [
+      {
+        "window_id": "synthetic-normal-1-0",
+        "raw_score": 0.172424,
+        "anomaly_score": 0.0,
+        "is_anomaly": false,
+        "severity": "normal",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 10.0,
+          "info_count": 10.0,
+          "warning_count": 0.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 3.0,
+          "dominant_template_count": 6.0,
+          "logs_per_second": 1.0,
+          "avg_logs_per_minute": 60.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "synthetic-normal-1-1",
+        "raw_score": 0.141848,
+        "anomaly_score": 0.0,
+        "is_anomaly": false,
+        "severity": "normal",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 25.0,
+          "info_count": 25.0,
+          "warning_count": 0.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 7.0,
+          "dominant_template_count": 13.0,
+          "logs_per_second": 2.5,
+          "avg_logs_per_minute": 150.0,
+          "burst_indicator": 1.0
+        }
+      },
+      {
+        "window_id": "synthetic-normal-1-2",
+        "raw_score": 0.126545,
+        "anomaly_score": 0.0,
+        "is_anomaly": false,
+        "severity": "normal",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 25.0,
+          "info_count": 25.0,
+          "warning_count": 0.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 7.0,
+          "dominant_template_count": 12.0,
+          "logs_per_second": 2.5,
+          "avg_logs_per_minute": 150.0,
+          "burst_indicator": 1.0
+        }
+      },
+      {
+        "window_id": "synthetic-normal-1-3",
+        "raw_score": 0.195517,
+        "anomaly_score": 0.0,
+        "is_anomaly": false,
+        "severity": "normal",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 10.0,
+          "info_count": 10.0,
+          "warning_count": 0.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 4.0,
+          "unique_templates": 3.0,
+          "dominant_service_count": 3.0,
+          "dominant_template_count": 5.0,
+          "logs_per_second": 1.0,
+          "avg_logs_per_minute": 60.0,
+          "burst_indicator": 0.0
+        }
+      }
+    ],
+    "auth_failures": [
+      {
+        "window_id": "synthetic-auth_failures-2-0",
+        "raw_score": -0.09867,
+        "anomaly_score": 0.326103,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 25.0,
+          "info_count": 0.0,
+          "warning_count": 25.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 1.0,
+          "unique_templates": 1.0,
+          "dominant_service_count": 25.0,
+          "dominant_template_count": 25.0,
+          "logs_per_second": 2.5,
+          "avg_logs_per_minute": 150.0,
+          "burst_indicator": 1.0
+        }
+      },
+      {
+        "window_id": "synthetic-auth_failures-2-1",
+        "raw_score": -0.067699,
+        "anomaly_score": 0.237229,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 11.0,
+          "info_count": 0.0,
+          "warning_count": 11.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 1.0,
+          "unique_templates": 1.0,
+          "dominant_service_count": 11.0,
+          "dominant_template_count": 11.0,
+          "logs_per_second": 1.1,
+          "avg_logs_per_minute": 66.0,
+          "burst_indicator": 0.0
+        }
+      }
+    ],
+    "payment_outage": [
+      {
+        "window_id": "synthetic-payment_outage-3-0",
+        "raw_score": -0.078875,
+        "anomaly_score": 0.270576,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 25.0,
+          "info_count": 0.0,
+          "warning_count": 0.0,
+          "error_count": 25.0,
+          "error_ratio": 1.0,
+          "active_services": 2.0,
+          "unique_templates": 2.0,
+          "dominant_service_count": 16.0,
+          "dominant_template_count": 16.0,
+          "logs_per_second": 2.5,
+          "avg_logs_per_minute": 150.0,
+          "burst_indicator": 1.0
+        }
+      },
+      {
+        "window_id": "synthetic-payment_outage-3-1",
+        "raw_score": -0.054931,
+        "anomaly_score": 0.19726,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 11.0,
+          "info_count": 0.0,
+          "warning_count": 0.0,
+          "error_count": 11.0,
+          "error_ratio": 1.0,
+          "active_services": 2.0,
+          "unique_templates": 2.0,
+          "dominant_service_count": 7.0,
+          "dominant_template_count": 7.0,
+          "logs_per_second": 1.1,
+          "avg_logs_per_minute": 66.0,
+          "burst_indicator": 0.0
+        }
+      }
+    ],
+    "recovery": [
+      {
+        "window_id": "synthetic-recovery-4-0",
+        "raw_score": -0.071188,
+        "anomaly_score": 0.2478,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 15.0,
+          "info_count": 15.0,
+          "warning_count": 0.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 2.0,
+          "unique_templates": 1.0,
+          "dominant_service_count": 8.0,
+          "dominant_template_count": 15.0,
+          "logs_per_second": 1.5,
+          "avg_logs_per_minute": 90.0,
+          "burst_indicator": 0.0
+        }
+      },
+      {
+        "window_id": "synthetic-recovery-4-1",
+        "raw_score": -0.112375,
+        "anomaly_score": 0.362053,
+        "is_anomaly": true,
+        "severity": "low",
+        "model_version": "isolation_forest_v1",
+        "feature_values": {
+          "log_count": 1.0,
+          "info_count": 1.0,
+          "warning_count": 0.0,
+          "error_count": 0.0,
+          "error_ratio": 0.0,
+          "active_services": 1.0,
+          "unique_templates": 1.0,
+          "dominant_service_count": 1.0,
+          "dominant_template_count": 1.0,
+          "logs_per_second": 0.1,
+          "avg_logs_per_minute": 6.0,
+          "burst_indicator": 0.0
+        }
+      }
+    ]
+  },
+  "production_100_run_predictions": [
+    {
+      "phase_class": "normal",
+      "window_id": "window-78a80e1840ad331ee61f5318885f9d6d78fbbc2b576a6c026ba05bd851ceddb7",
+      "raw_score": 0.209111,
+      "anomaly_score": 0.0,
+      "is_anomaly": false,
+      "severity": "normal",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "normal",
+      "window_id": "window-275bf9fb756fab5f0d2a232c1eed34ffb9651453d75c11bd1e359d6265fa001c",
+      "raw_score": 0.141848,
+      "anomaly_score": 0.0,
+      "is_anomaly": false,
+      "severity": "normal",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "normal",
+      "window_id": "window-8e0e82fcaa987cc795a9c46415523186b3c5c383f586b94b4e0da921c3d62bbe",
+      "raw_score": 0.193637,
+      "anomaly_score": 0.0,
+      "is_anomaly": false,
+      "severity": "normal",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "mixed_normal_auth",
+      "window_id": "window-2d9a29c5a455b38c104e176dd033b57fca89183c7ca471363c09dbd0a238dfae",
+      "raw_score": -0.026973,
+      "anomaly_score": 0.102274,
+      "is_anomaly": true,
+      "severity": "low",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "auth_failures",
+      "window_id": "window-381f95047949dd0e7a57ee32e061a296fe1c2c22ef457757af247b713e3c97d3",
+      "raw_score": -0.083767,
+      "anomaly_score": 0.284712,
+      "is_anomaly": true,
+      "severity": "low",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "auth_failures",
+      "window_id": "window-5871e369378dd632fb06b0afe5ac3d9222edbc3950eaf68048f76cd529f5d5f5",
+      "raw_score": -0.117733,
+      "anomaly_score": 0.375581,
+      "is_anomaly": true,
+      "severity": "low",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "mixed_auth_payment_outage",
+      "window_id": "window-0af34c11efa1d63b7db756e383b0af7bb83a34d0bd29ec8157dc587ab91d322b",
+      "raw_score": -0.10097,
+      "anomaly_score": 0.332276,
+      "is_anomaly": true,
+      "severity": "low",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "payment_outage",
+      "window_id": "window-34fa4e382abaa788d8a162c979c1eba3dd995b2d0ad7958261e0208ef10b965c",
+      "raw_score": -0.078875,
+      "anomaly_score": 0.270576,
+      "is_anomaly": true,
+      "severity": "low",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "mixed_payment_outage_recovery",
+      "window_id": "window-43863140d8e729ca688d8a162e39eeb74ae",
+      "raw_score": -0.076646,
+      "anomaly_score": 0.264043,
+      "is_anomaly": true,
+      "severity": "low",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "recovery",
+      "window_id": "window-2d08f323230d230788fbe97506a4a4cc9f595649c28f721b02ee04298fa44550",
+      "raw_score": 0.048224,
+      "anomaly_score": 0.0,
+      "is_anomaly": false,
+      "severity": "normal",
+      "model_version": "isolation_forest_v1"
+    },
+    {
+      "phase_class": "recovery",
+      "window_id": "window-55fffdae281619f6c37ef01c4d7e39843e14368afcdfbca8c869b2383737a44d",
+      "raw_score": -0.013878,
+      "anomaly_score": 0.053999,
+      "is_anomaly": true,
+      "severity": "low",
+      "model_version": "isolation_forest_v1"
+    }
+  ],
+  "feature_distributions_min_median_max": {
+    "train_healthy": {
+      "log_count": {
+        "min": 4.0,
+        "median": 20.0,
+        "max": 26.0
+      },
+      "info_count": {
+        "min": 4.0,
+        "median": 20.0,
+        "max": 25.0
+      },
+      "warning_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 3.0
+      },
+      "error_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 1.0
+      },
+      "error_ratio": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0526
+      },
+      "active_services": {
+        "min": 2.0,
+        "median": 4.0,
+        "max": 4.0
+      },
+      "unique_templates": {
+        "min": 1.0,
+        "median": 3.0,
+        "max": 3.0
+      },
+      "dominant_service_count": {
+        "min": 1.0,
+        "median": 6.0,
+        "max": 8.0
+      },
+      "dominant_template_count": {
+        "min": 2.0,
+        "median": 10.0,
+        "max": 17.0
+      },
+      "logs_per_second": {
+        "min": 0.4,
+        "median": 2.0,
+        "max": 2.6
+      },
+      "avg_logs_per_minute": {
+        "min": 24.0,
+        "median": 120.0,
+        "max": 156.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 1.0,
+        "max": 1.0
+      }
+    },
+    "independent_healthy_validation": {
+      "log_count": {
+        "min": 5.0,
+        "median": 20.5,
+        "max": 26.0
+      },
+      "info_count": {
+        "min": 5.0,
+        "median": 20.0,
+        "max": 26.0
+      },
+      "warning_count": {
+        "min": 0.0,
+        "median": 1.0,
+        "max": 4.0
+      },
+      "error_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 1.0
+      },
+      "error_ratio": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0526
+      },
+      "active_services": {
+        "min": 2.0,
+        "median": 4.0,
+        "max": 4.0
+      },
+      "unique_templates": {
+        "min": 1.0,
+        "median": 3.0,
+        "max": 3.0
+      },
+      "dominant_service_count": {
+        "min": 2.0,
+        "median": 6.0,
+        "max": 8.0
+      },
+      "dominant_template_count": {
+        "min": 4.0,
+        "median": 11.0,
+        "max": 20.0
+      },
+      "logs_per_second": {
+        "min": 0.5,
+        "median": 2.05,
+        "max": 2.6
+      },
+      "avg_logs_per_minute": {
+        "min": 30.0,
+        "median": 123.0,
+        "max": 156.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 1.0,
+        "max": 1.0
+      }
+    },
+    "demo_normal": {
+      "log_count": {
+        "min": 10.0,
+        "median": 17.5,
+        "max": 25.0
+      },
+      "info_count": {
+        "min": 10.0,
+        "median": 17.5,
+        "max": 25.0
+      },
+      "warning_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_ratio": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "active_services": {
+        "min": 4.0,
+        "median": 4.0,
+        "max": 4.0
+      },
+      "unique_templates": {
+        "min": 3.0,
+        "median": 3.0,
+        "max": 3.0
+      },
+      "dominant_service_count": {
+        "min": 3.0,
+        "median": 5.0,
+        "max": 7.0
+      },
+      "dominant_template_count": {
+        "min": 5.0,
+        "median": 9.0,
+        "max": 13.0
+      },
+      "logs_per_second": {
+        "min": 1.0,
+        "median": 1.75,
+        "max": 2.5
+      },
+      "avg_logs_per_minute": {
+        "min": 60.0,
+        "median": 105.0,
+        "max": 150.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 0.5,
+        "max": 1.0
+      }
+    },
+    "auth_failures": {
+      "log_count": {
+        "min": 11.0,
+        "median": 18.0,
+        "max": 25.0
+      },
+      "info_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "warning_count": {
+        "min": 11.0,
+        "median": 18.0,
+        "max": 25.0
+      },
+      "error_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_ratio": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "active_services": {
+        "min": 1.0,
+        "median": 1.0,
+        "max": 1.0
+      },
+      "unique_templates": {
+        "min": 1.0,
+        "median": 1.0,
+        "max": 1.0
+      },
+      "dominant_service_count": {
+        "min": 11.0,
+        "median": 18.0,
+        "max": 25.0
+      },
+      "dominant_template_count": {
+        "min": 11.0,
+        "median": 18.0,
+        "max": 25.0
+      },
+      "logs_per_second": {
+        "min": 1.1,
+        "median": 1.8,
+        "max": 2.5
+      },
+      "avg_logs_per_minute": {
+        "min": 66.0,
+        "median": 108.0,
+        "max": 150.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 0.5,
+        "max": 1.0
+      }
+    },
+    "payment_outage": {
+      "log_count": {
+        "min": 11.0,
+        "median": 18.0,
+        "max": 25.0
+      },
+      "info_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "warning_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_count": {
+        "min": 11.0,
+        "median": 18.0,
+        "max": 25.0
+      },
+      "error_ratio": {
+        "min": 1.0,
+        "median": 1.0,
+        "max": 1.0
+      },
+      "active_services": {
+        "min": 2.0,
+        "median": 2.0,
+        "max": 2.0
+      },
+      "unique_templates": {
+        "min": 2.0,
+        "median": 2.0,
+        "max": 2.0
+      },
+      "dominant_service_count": {
+        "min": 7.0,
+        "median": 11.5,
+        "max": 16.0
+      },
+      "dominant_template_count": {
+        "min": 7.0,
+        "median": 11.5,
+        "max": 16.0
+      },
+      "logs_per_second": {
+        "min": 1.1,
+        "median": 1.8,
+        "max": 2.5
+      },
+      "avg_logs_per_minute": {
+        "min": 66.0,
+        "median": 108.0,
+        "max": 150.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 0.5,
+        "max": 1.0
+      }
+    },
+    "recovery": {
+      "log_count": {
+        "min": 1.0,
+        "median": 8.0,
+        "max": 15.0
+      },
+      "info_count": {
+        "min": 1.0,
+        "median": 8.0,
+        "max": 15.0
+      },
+      "warning_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_ratio": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "active_services": {
+        "min": 1.0,
+        "median": 1.5,
+        "max": 2.0
+      },
+      "unique_templates": {
+        "min": 1.0,
+        "median": 1.0,
+        "max": 1.0
+      },
+      "dominant_service_count": {
+        "min": 1.0,
+        "median": 4.5,
+        "max": 8.0
+      },
+      "dominant_template_count": {
+        "min": 1.0,
+        "median": 8.0,
+        "max": 15.0
+      },
+      "logs_per_second": {
+        "min": 0.1,
+        "median": 0.8,
+        "max": 1.5
+      },
+      "avg_logs_per_minute": {
+        "min": 6.0,
+        "median": 48.0,
+        "max": 90.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      }
+    },
+    "production_normal": {
+      "log_count": {
+        "min": 11.0,
+        "median": 24.0,
+        "max": 25.0
+      },
+      "info_count": {
+        "min": 11.0,
+        "median": 24.0,
+        "max": 25.0
+      },
+      "warning_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_ratio": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "active_services": {
+        "min": 4.0,
+        "median": 4.0,
+        "max": 4.0
+      },
+      "unique_templates": {
+        "min": 3.0,
+        "median": 3.0,
+        "max": 3.0
+      },
+      "dominant_service_count": {
+        "min": 3.0,
+        "median": 6.0,
+        "max": 7.0
+      },
+      "dominant_template_count": {
+        "min": 6.0,
+        "median": 12.0,
+        "max": 13.0
+      },
+      "logs_per_second": {
+        "min": 1.1,
+        "median": 2.4,
+        "max": 2.5
+      },
+      "avg_logs_per_minute": {
+        "min": 66.0,
+        "median": 144.0,
+        "max": 150.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 1.0,
+        "max": 1.0
+      }
+    },
+    "production_mixed_normal_auth": {
+      "log_count": {
+        "min": 19.0,
+        "median": 19.0,
+        "max": 19.0
+      },
+      "info_count": {
+        "min": 10.0,
+        "median": 10.0,
+        "max": 10.0
+      },
+      "warning_count": {
+        "min": 9.0,
+        "median": 9.0,
+        "max": 9.0
+      },
+      "error_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_ratio": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "active_services": {
+        "min": 4.0,
+        "median": 4.0,
+        "max": 4.0
+      },
+      "unique_templates": {
+        "min": 4.0,
+        "median": 4.0,
+        "max": 4.0
+      },
+      "dominant_service_count": {
+        "min": 11.0,
+        "median": 11.0,
+        "max": 11.0
+      },
+      "dominant_template_count": {
+        "min": 9.0,
+        "median": 9.0,
+        "max": 9.0
+      },
+      "logs_per_second": {
+        "min": 1.9,
+        "median": 1.9,
+        "max": 1.9
+      },
+      "avg_logs_per_minute": {
+        "min": 114.0,
+        "median": 114.0,
+        "max": 114.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      }
+    },
+    "production_auth_failures": {
+      "log_count": {
+        "min": 16.0,
+        "median": 18.0,
+        "max": 20.0
+      },
+      "info_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "warning_count": {
+        "min": 16.0,
+        "median": 18.0,
+        "max": 20.0
+      },
+      "error_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_ratio": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "active_services": {
+        "min": 1.0,
+        "median": 1.0,
+        "max": 1.0
+      },
+      "unique_templates": {
+        "min": 1.0,
+        "median": 1.0,
+        "max": 1.0
+      },
+      "dominant_service_count": {
+        "min": 16.0,
+        "median": 18.0,
+        "max": 20.0
+      },
+      "dominant_template_count": {
+        "min": 16.0,
+        "median": 18.0,
+        "max": 20.0
+      },
+      "logs_per_second": {
+        "min": 1.6,
+        "median": 1.8,
+        "max": 2.0
+      },
+      "avg_logs_per_minute": {
+        "min": 96.0,
+        "median": 108.0,
+        "max": 120.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 0.5,
+        "max": 1.0
+      }
+    },
+    "production_mixed_auth_payment_outage": {
+      "log_count": {
+        "min": 17.0,
+        "median": 17.0,
+        "max": 17.0
+      },
+      "info_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "warning_count": {
+        "min": 5.0,
+        "median": 5.0,
+        "max": 5.0
+      },
+      "error_count": {
+        "min": 12.0,
+        "median": 12.0,
+        "max": 12.0
+      },
+      "error_ratio": {
+        "min": 0.7059,
+        "median": 0.7059,
+        "max": 0.7059
+      },
+      "active_services": {
+        "min": 3.0,
+        "median": 3.0,
+        "max": 3.0
+      },
+      "unique_templates": {
+        "min": 3.0,
+        "median": 3.0,
+        "max": 3.0
+      },
+      "dominant_service_count": {
+        "min": 8.0,
+        "median": 8.0,
+        "max": 8.0
+      },
+      "dominant_template_count": {
+        "min": 8.0,
+        "median": 8.0,
+        "max": 8.0
+      },
+      "logs_per_second": {
+        "min": 1.7,
+        "median": 1.7,
+        "max": 1.7
+      },
+      "avg_logs_per_minute": {
+        "min": 102.0,
+        "median": 102.0,
+        "max": 102.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      }
+    },
+    "production_payment_outage": {
+      "log_count": {
+        "min": 25.0,
+        "median": 25.0,
+        "max": 25.0
+      },
+      "info_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "warning_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_count": {
+        "min": 25.0,
+        "median": 25.0,
+        "max": 25.0
+      },
+      "error_ratio": {
+        "min": 1.0,
+        "median": 1.0,
+        "max": 1.0
+      },
+      "active_services": {
+        "min": 2.0,
+        "median": 2.0,
+        "max": 2.0
+      },
+      "unique_templates": {
+        "min": 2.0,
+        "median": 2.0,
+        "max": 2.0
+      },
+      "dominant_service_count": {
+        "min": 16.0,
+        "median": 16.0,
+        "max": 16.0
+      },
+      "dominant_template_count": {
+        "min": 16.0,
+        "median": 16.0,
+        "max": 16.0
+      },
+      "logs_per_second": {
+        "min": 2.5,
+        "median": 2.5,
+        "max": 2.5
+      },
+      "avg_logs_per_minute": {
+        "min": 150.0,
+        "median": 150.0,
+        "max": 150.0
+      },
+      "burst_indicator": {
+        "min": 1.0,
+        "median": 1.0,
+        "max": 1.0
+      }
+    },
+    "production_mixed_payment_outage_recovery": {
+      "log_count": {
+        "min": 19.0,
+        "median": 19.0,
+        "max": 19.0
+      },
+      "info_count": {
+        "min": 6.0,
+        "median": 6.0,
+        "max": 6.0
+      },
+      "warning_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_count": {
+        "min": 13.0,
+        "median": 13.0,
+        "max": 13.0
+      },
+      "error_ratio": {
+        "min": 0.6842,
+        "median": 0.6842,
+        "max": 0.6842
+      },
+      "active_services": {
+        "min": 3.0,
+        "median": 3.0,
+        "max": 3.0
+      },
+      "unique_templates": {
+        "min": 3.0,
+        "median": 3.0,
+        "max": 3.0
+      },
+      "dominant_service_count": {
+        "min": 11.0,
+        "median": 11.0,
+        "max": 11.0
+      },
+      "dominant_template_count": {
+        "min": 8.0,
+        "median": 8.0,
+        "max": 8.0
+      },
+      "logs_per_second": {
+        "min": 1.9,
+        "median": 1.9,
+        "max": 1.9
+      },
+      "avg_logs_per_minute": {
+        "min": 114.0,
+        "median": 114.0,
+        "max": 114.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      }
+    },
+    "production_recovery": {
+      "log_count": {
+        "min": 9.0,
+        "median": 11.5,
+        "max": 14.0
+      },
+      "info_count": {
+        "min": 9.0,
+        "median": 11.5,
+        "max": 14.0
+      },
+      "warning_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_count": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "error_ratio": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      },
+      "active_services": {
+        "min": 2.0,
+        "median": 2.0,
+        "max": 2.0
+      },
+      "unique_templates": {
+        "min": 1.0,
+        "median": 1.0,
+        "max": 1.0
+      },
+      "dominant_service_count": {
+        "min": 5.0,
+        "median": 6.0,
+        "max": 7.0
+      },
+      "dominant_template_count": {
+        "min": 9.0,
+        "median": 11.5,
+        "max": 14.0
+      },
+      "logs_per_second": {
+        "min": 0.9,
+        "median": 1.15,
+        "max": 1.4
+      },
+      "avg_logs_per_minute": {
+        "min": 54.0,
+        "median": 69.0,
+        "max": 84.0
+      },
+      "burst_indicator": {
+        "min": 0.0,
+        "median": 0.0,
+        "max": 0.0
+      }
+    }
+  },
+  "candidate": null
+}

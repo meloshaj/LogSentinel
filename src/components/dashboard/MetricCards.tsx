@@ -1,9 +1,21 @@
 import React, { useMemo } from "react";
-import { Activity, AlertTriangle, CheckCircle, Database, TrendingDown, TrendingUp, EyeOff, Eye } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  CheckCircle,
+  Database,
+  TrendingDown,
+  TrendingUp,
+  EyeOff,
+} from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 import { useLiveLogs } from "../../hooks/useLiveLogs";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
 import { useTopology } from "../../hooks/useTopology";
+import {
+  displayOperationalStatus,
+  formatOperationalValue,
+} from "../common/OperationalState";
 
 interface CardProps {
   title: string;
@@ -19,7 +31,19 @@ interface CardProps {
   children?: React.ReactNode;
 }
 
-function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, iconColor, accentColor, sparkData, children }: CardProps) {
+function MetricCard({
+  title,
+  value,
+  sub,
+  trend,
+  trendLabel,
+  icon: Icon,
+  iconBg,
+  iconColor,
+  accentColor,
+  sparkData,
+  children,
+}: CardProps) {
   const TrendIcon = trend === "up" ? TrendingUp : trend === "down" ? TrendingDown : Activity;
   const trendColor =
     trend === "up"
@@ -27,145 +51,146 @@ function MetricCard({ title, value, sub, trend, trendLabel, icon: Icon, iconBg, 
         ? "text-[#f85149]"
         : "text-[#3fb950]"
       : trend === "down"
-      ? accentColor === "#da3633" || accentColor === "#f85149"
-        ? "text-[#3fb950]"
-        : "text-[#f85149]"
-      : "text-[#7d8590]";
-
-  const data = sparkData.map((v) => ({ v }));
+        ? accentColor === "#da3633" || accentColor === "#f85149"
+          ? "text-[#3fb950]"
+          : "text-[#f85149]"
+        : "text-[#7d8590]";
 
   return (
-    <div className="relative flex flex-col gap-3 p-4 rounded-xl bg-white dark:bg-[#161b22] border border-slate-200 dark:border-[#21262d] overflow-hidden shadow-sm dark:shadow-none">
-      {/* Glow accent */}
+    <div className="relative flex flex-col gap-3 overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-[#21262d] dark:bg-[#161b22] dark:shadow-none">
       <div
-        className="absolute -top-6 -right-6 w-24 h-24 rounded-full opacity-10 blur-2xl pointer-events-none"
+        className="pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full opacity-10 blur-2xl"
         style={{ background: accentColor }}
       />
-
       <div className="flex items-start justify-between">
-        <div className={`flex items-center justify-center w-9 h-9 rounded-lg`} style={{ background: iconBg }}>
-          <Icon className="w-4 h-4" style={{ color: iconColor }} />
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg" style={{ background: iconBg }}>
+          <Icon className="h-4 w-4" style={{ color: iconColor }} />
         </div>
         <div className={`flex items-center gap-1 ${trendColor}`}>
-          <TrendIcon className="w-4 h-4" />
+          <TrendIcon className="h-4 w-4" />
           <span style={{ fontSize: "13px", fontWeight: 700 }}>{trendLabel}</span>
         </div>
       </div>
 
       <div className="flex items-end justify-between">
         <div>
-          <div className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1.1 }}>{value}</div>
-          <div className="text-slate-500 dark:text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>{title}</div>
+          <div className="text-slate-900 dark:text-[#e6edf3]" style={{ fontSize: "26px", fontWeight: 700, lineHeight: 1.1 }}>
+            {value}
+          </div>
+          <div className="mt-0.5 text-slate-500 dark:text-[#7d8590]" style={{ fontSize: "12px" }}>
+            {title}
+          </div>
         </div>
         {children}
       </div>
 
-      <div className="flex items-end gap-2 mt-auto">
+      <div className="mt-auto flex items-end gap-2">
         <div style={{ width: "100%", height: 32, minWidth: 0 }}>
-          <ResponsiveContainer width="100%" height={32}>
-            <AreaChart data={data} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id={`ls-spark-grad-${title.replace(/\s+/g, '')}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={accentColor} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={accentColor} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <Area
-                key="v"
-                type="monotone"
-                dataKey="v"
-                stroke={accentColor}
-                strokeWidth={1.5}
-                fill={`url(#ls-spark-grad-${title.replace(/\s+/g, '')})`}
-                dot={false}
-                isAnimationActive={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
+          {sparkData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={32}>
+              <AreaChart data={sparkData.map((v) => ({ v }))} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id={`ls-spark-grad-${title.replace(/\s+/g, "")}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={accentColor} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={accentColor} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Area
+                  type="monotone"
+                  dataKey="v"
+                  stroke={accentColor}
+                  strokeWidth={1.5}
+                  fill={`url(#ls-spark-grad-${title.replace(/\s+/g, "")})`}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : null}
         </div>
-        <div className="text-slate-500 dark:text-[#7d8590] pb-1 shrink-0" style={{ fontSize: "11px" }}>{sub}</div>
+        <div className="shrink-0 pb-1 text-slate-500 dark:text-[#7d8590]" style={{ fontSize: "11px" }}>
+          {sub}
+        </div>
       </div>
     </div>
   );
 }
 
-export function MetricCards({ showLowSeverity = true, onToggleLowSeverity }: { showLowSeverity?: boolean, onToggleLowSeverity?: () => void }) {
-  const { totalLogCount, filteredLogs } = useLiveLogs();
-  const { activeTrackingLoops } = useTelemetryStream();
-  const { topology } = useTopology();
+function statusLabel(status: ReturnType<typeof displayOperationalStatus>) {
+  return status === "available" ? "Current" : status === "empty" ? "No data" : status === "stale" ? "Stale" : status === "loading" ? "Loading" : "Unavailable";
+}
 
-  const totalLogs = totalLogCount;
-  
-  // Compute rolling 10-minute sparklines
-  const { logsSpark, errorsSpark, healthSpark } = useMemo(() => {
-    const logs = Array(10).fill(0);
-    const errors = Array(10).fill(0);
+export function MetricCards({
+  showLowSeverity = true,
+  onToggleLowSeverity,
+}: {
+  showLowSeverity?: boolean;
+  onToggleLowSeverity?: () => void;
+}) {
+  const { totalLogCount, filteredLogs, dataState: logState, connectionState } = useLiveLogs();
+  const { activeTrackingLoops, trackingLoopsDataState } = useTelemetryStream();
+  const { topology, dataState: topologyState } = useTopology();
+
+  const logStatus = displayOperationalStatus(logState, connectionState);
+  const loopStatus = displayOperationalStatus(trackingLoopsDataState, connectionState);
+  const topologyStatus = topologyState.status;
+  const logsKnown = logStatus === "available" || logStatus === "empty" || logStatus === "stale";
+  const loopsKnown = loopStatus === "available" || loopStatus === "empty" || loopStatus === "stale";
+  const topologyKnown = topologyStatus === "available" || topologyStatus === "empty" || topologyStatus === "stale";
+
+  const { logsSpark, errorsSpark } = useMemo(() => {
+    const logs = Array.from({ length: 10 }, () => 0);
+    const errors = Array.from({ length: 10 }, () => 0);
+    if (!logsKnown) return { logsSpark: [], errorsSpark: [] };
+
     const now = Date.now();
     filteredLogs.forEach((log) => {
-      const d = new Date(log.timestamp).getTime();
-      const diffMin = Math.floor((now - d) / 60000);
+      const timestamp = new Date(log.timestamp).getTime();
+      if (!Number.isFinite(timestamp)) return;
+      const diffMin = Math.floor((now - timestamp) / 60000);
       if (diffMin >= 0 && diffMin < 10) {
-        logs[9 - diffMin]++;
-        if (log.level === 'ERROR' || log.level === 'FATAL') {
-          errors[9 - diffMin]++;
-        }
+        logs[9 - diffMin] += 1;
+        if (["ERROR", "FATAL", "CRITICAL"].includes(log.level)) errors[9 - diffMin] += 1;
       }
     });
-    
-    // Default flatlines if no data
-    if (logs.every(v => v === 0)) logs.fill(1);
-    
-    const health = errors.map(errCount => Math.max(0, 100 - errCount * 5));
-    if (health.every(v => v === 100)) health.fill(100);
-    
-    return { logsSpark: logs, errorsSpark: errors, healthSpark: health };
-  }, [filteredLogs]);
-  
-  // Severity breakdown
-  let criticalCount = 0;
-  let highCount = 0;
-  let mediumCount = 0;
-  let lowCount = 0;
-  
-  activeTrackingLoops.forEach((loop) => {
-    if (loop.severity === "critical") criticalCount++;
-    else if (loop.severity === "high") highCount++;
-    else if (loop.severity === "medium") mediumCount++;
-    else lowCount++;
-  });
-  
-  const numAnomalies = showLowSeverity ? activeTrackingLoops.length : (activeTrackingLoops.length - lowCount);
-  
-  // Compute how many services are currently affected by anomalies
-  const affectedServices = new Set<string>();
-  activeTrackingLoops.forEach(loop => {
-    if (!showLowSeverity && loop.severity === "low") return;
-    if (loop.suspected_root_service) {
-      affectedServices.add(loop.suspected_root_service);
-    }
-    if (loop.blast_radius) {
-      loop.blast_radius.forEach(node => {
-        if (node.service_name) {
-          affectedServices.add(node.service_name);
-        }
-      });
-    }
-  });
-  
-  const totalServices = topology?.nodes?.length || 0;
-  const numDegraded = affectedServices.size;
-  const healthScore = totalServices > 0 
-    ? Math.max(0, 100 - Math.round((numDegraded / totalServices) * 100))
-    : 100;
-  
+    return { logsSpark: filteredLogs.length > 0 ? logs : [], errorsSpark: filteredLogs.length > 0 ? errors : [] };
+  }, [filteredLogs, logsKnown]);
+
+  const severityCounts = useMemo(() => {
+    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    activeTrackingLoops.forEach((loop) => {
+      if (loop.severity === "critical") counts.critical += 1;
+      else if (loop.severity === "high") counts.high += 1;
+      else if (loop.severity === "medium") counts.medium += 1;
+      else if (loop.severity === "low") counts.low += 1;
+    });
+    return counts;
+  }, [activeTrackingLoops]);
+
+  const visibleAnomalies = showLowSeverity
+    ? activeTrackingLoops
+    : activeTrackingLoops.filter((loop) => loop.severity !== "low");
+  const numAnomalies = loopsKnown ? visibleAnomalies.length : null;
+  const nodes = topology?.nodes ?? [];
+  const healthyServices = nodes.filter((node) => node.status === "healthy").length;
+  const degradedServices = nodes.filter((node) => node.status !== "healthy").length;
+  const healthScore = topologyKnown && nodes.length > 0
+    ? Math.max(0, Math.round((healthyServices / nodes.length) * 100))
+    : null;
+
+  const logsValue = formatOperationalValue(logState, totalLogCount.toLocaleString(), connectionState);
+  const anomalyValue = numAnomalies === null ? statusLabel(loopStatus) : numAnomalies;
+  const servicesValue = topologyKnown ? `${healthyServices} / ${nodes.length}` : statusLabel(topologyStatus);
+  const scoreValue = healthScore === null ? statusLabel(topologyStatus) : `${healthScore}%`;
+
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <MetricCard
         title="Logs Processed"
-        value={totalLogs.toLocaleString()}
-        sub="session total"
+        value={logsValue}
+        sub={statusLabel(logStatus) === "Current" ? "session total" : statusLabel(logStatus)}
         trend="neutral"
-        trendLabel="Live"
+        trendLabel={statusLabel(logStatus)}
         icon={Database}
         iconBg="rgba(31,111,235,0.15)"
         iconColor="#388bfd"
@@ -174,63 +199,66 @@ export function MetricCards({ showLowSeverity = true, onToggleLowSeverity }: { s
       />
       <MetricCard
         title="Active Anomalies"
-        value={numAnomalies}
-        sub={`${numAnomalies} tracked`}
-        trend={numAnomalies > 0 ? "up" : "neutral"}
-        trendLabel={numAnomalies > 0 ? "Detected" : "None"}
+        value={anomalyValue}
+        sub={numAnomalies === null ? statusLabel(loopStatus) : numAnomalies === 0 ? "No anomalies" : `${numAnomalies} tracked`}
+        trend={numAnomalies !== null && numAnomalies > 0 ? "up" : "neutral"}
+        trendLabel={numAnomalies === null ? statusLabel(loopStatus) : numAnomalies > 0 ? "Detected" : "No data"}
         icon={AlertTriangle}
         iconBg="rgba(218,54,51,0.15)"
         iconColor="#f85149"
         accentColor="#da3633"
         sparkData={errorsSpark}
       >
-        <div className="flex flex-col gap-1 pr-1 border-l border-[#21262d] pl-3 py-0.5">
-          <div className="flex items-center gap-1.5" title="High / Critical">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#f85149]" />
-            <span className="text-[#e6edf3] text-[10px] font-mono leading-none">{criticalCount + highCount}</span>
+        {loopsKnown ? (
+          <div className="flex flex-col gap-1 border-l border-[#21262d] pl-3 pr-1 py-0.5">
+            <div className="flex items-center gap-1.5" title="High / Critical">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#f85149]" />
+              <span className="font-mono text-[10px] leading-none text-[#e6edf3]">{severityCounts.critical + severityCounts.high}</span>
+            </div>
+            <div className="flex items-center gap-1.5" title="Medium">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#d29922]" />
+              <span className="font-mono text-[10px] leading-none text-[#e6edf3]">{severityCounts.medium}</span>
+            </div>
+            <button
+              type="button"
+              className={`-ml-1 flex items-center gap-1.5 rounded px-1 py-0.5 transition-colors ${!showLowSeverity ? "opacity-50" : "hover:bg-[#21262d]"}`}
+              title="Toggle low severity"
+              aria-label="Toggle low severity anomalies"
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleLowSeverity?.();
+              }}
+            >
+              {showLowSeverity ? <span className="h-1.5 w-1.5 rounded-full bg-[#7d8590]" /> : <EyeOff className="h-2 w-2 text-[#7d8590]" />}
+              <span className="font-mono text-[10px] leading-none text-[#e6edf3]">{severityCounts.low}</span>
+            </button>
           </div>
-          <div className="flex items-center gap-1.5" title="Medium">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#d29922]" />
-            <span className="text-[#e6edf3] text-[10px] font-mono leading-none">{mediumCount}</span>
-          </div>
-          <div 
-            className={`flex items-center gap-1.5 rounded px-1 -ml-1 py-0.5 cursor-pointer transition-colors ${!showLowSeverity ? "opacity-50" : "hover:bg-[#21262d]"}`}
-            title="Low Severity (Click to toggle)"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleLowSeverity?.();
-            }}
-          >
-            {showLowSeverity ? <span className="w-1.5 h-1.5 rounded-full bg-[#7d8590]" /> : <EyeOff className="w-2 h-2 text-[#7d8590]" />}
-            <span className="text-[#e6edf3] text-[10px] font-mono leading-none">{lowCount}</span>
-          </div>
-        </div>
+        ) : null}
       </MetricCard>
       <MetricCard
         title="Health Score"
-        value={`${healthScore}%`}
-        sub={numAnomalies > 0 ? "Degraded" : "Healthy"}
-        trend={numAnomalies > 0 ? "down" : "neutral"}
-        trendLabel={numAnomalies > 0 ? `-${100 - healthScore}pts` : "Stable"}
+        value={scoreValue}
+        sub={healthScore === null ? statusLabel(topologyStatus) : `${healthyServices} of ${nodes.length} reported healthy`}
+        trend={healthScore !== null && healthScore < 100 ? "down" : "neutral"}
+        trendLabel={healthScore === null ? statusLabel(topologyStatus) : degradedServices > 0 ? `${degradedServices} degraded` : "Current"}
         icon={Activity}
         iconBg="rgba(210,153,34,0.15)"
         iconColor="#d29922"
         accentColor="#d29922"
-        sparkData={healthSpark}
+        sparkData={[]}
       />
       <MetricCard
         title="Services"
-        value={`${totalServices - numDegraded} / ${Math.max(totalServices, 1)}`}
-        sub={numDegraded > 0 ? `${numDegraded} degraded` : "All nominal"}
-        trend={numDegraded > 0 ? "down" : "neutral"}
-        trendLabel={numDegraded > 0 ? `${numDegraded} failing` : "All passing"}
+        value={servicesValue}
+        sub={topologyKnown ? (nodes.length === 0 ? "No topology returned" : degradedServices > 0 ? `${degradedServices} degraded` : "All reported healthy") : statusLabel(topologyStatus)}
+        trend={degradedServices > 0 ? "down" : "neutral"}
+        trendLabel={topologyKnown ? (nodes.length === 0 ? "No data" : degradedServices > 0 ? `${degradedServices} degraded` : "Current") : statusLabel(topologyStatus)}
         icon={CheckCircle}
         iconBg="rgba(63,185,80,0.12)"
         iconColor="#3fb950"
         accentColor="#3fb950"
-        sparkData={Array(10).fill(totalServices - numDegraded)}
+        sparkData={[]}
       />
     </div>
   );
 }
-

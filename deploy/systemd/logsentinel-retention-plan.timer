@@ -1,0 +1,11 @@
+[Unit]
+Description=Plan LogSentinel retention eligibility without deletion
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+Persistent=true
+Unit=logsentinel-retention-plan.service
+
+[Install]
+WantedBy=timers.target

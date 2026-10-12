@@ -300,6 +300,8 @@ def test_local_prometheus_scrape_config_targets_backend_service() -> None:
 
 
 def test_liveness_readiness_and_metrics_contract(monkeypatch) -> None:
+    monkeypatch.setenv("METRICS_TOKEN", "test-metrics-token")
+
     class DownRedis:
         async def ping(self) -> None:
             raise ConnectionError("down")
@@ -317,4 +319,10 @@ def test_liveness_readiness_and_metrics_contract(monkeypatch) -> None:
     readiness = client.get("/ready")
     assert readiness.status_code == 503
     assert readiness.json()["status"] == "not_ready"
-    assert client.get("/metrics").status_code == 200
+    assert client.get("/metrics").status_code == 404
+    assert (
+        client.get(
+            "/metrics", headers={"Authorization": "Bearer test-metrics-token"}
+        ).status_code
+        == 200
+    )

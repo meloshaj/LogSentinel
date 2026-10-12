@@ -4,27 +4,16 @@ import type {
   TopologyEdge,
   NodeType,
   NodeStatus,
+  TopologyNodeMetrics,
 } from "../types/topology";
 import { fetchAuthenticated } from "../utils/auth";
-
-// Default interconnected topology baseline
-const DEFAULT_TOPOLOGY_NODES: TopologyNode[] = [
-  { id: "api-gateway", name: "api-gateway", type: "gateway", status: "healthy", metrics: { latency_p95_ms: 10, error_rate_pct: 0, throughput_rps: 100 }, active_anomaly_id: null, is_root_cause: false },
-  { id: "auth-service", name: "auth-service", type: "service", status: "healthy", metrics: { latency_p95_ms: 5, error_rate_pct: 0, throughput_rps: 80 }, active_anomaly_id: null, is_root_cause: false },
-  { id: "order-service", name: "order-service", type: "service", status: "healthy", metrics: { latency_p95_ms: 15, error_rate_pct: 0, throughput_rps: 50 }, active_anomaly_id: null, is_root_cause: false },
-  { id: "payment-gateway", name: "payment-gateway", type: "service", status: "healthy", metrics: { latency_p95_ms: 45, error_rate_pct: 0, throughput_rps: 30 }, active_anomaly_id: null, is_root_cause: false },
-  { id: "postgres-db", name: "postgres-db", type: "database", status: "healthy", metrics: { latency_p95_ms: 8, error_rate_pct: 0, throughput_rps: 200 }, active_anomaly_id: null, is_root_cause: false },
-  { id: "redis-cache", name: "redis-cache", type: "cache", status: "healthy", metrics: { latency_p95_ms: 2, error_rate_pct: 0, throughput_rps: 300 }, active_anomaly_id: null, is_root_cause: false },
-];
-
-const DEFAULT_TOPOLOGY_EDGES: TopologyEdge[] = [
-  { id: "edge_api_gateway_to_auth_service", source: "api-gateway", target: "auth-service", call_count: 100, avg_latency_ms: 12, error_count: 0, is_blast_path: false },
-  { id: "edge_api_gateway_to_order_service", source: "api-gateway", target: "order-service", call_count: 80, avg_latency_ms: 24, error_count: 0, is_blast_path: false },
-  { id: "edge_auth_service_to_redis_cache", source: "auth-service", target: "redis-cache", call_count: 120, avg_latency_ms: 4, error_count: 0, is_blast_path: false },
-  { id: "edge_order_service_to_payment_gateway", source: "order-service", target: "payment-gateway", call_count: 30, avg_latency_ms: 48, error_count: 0, is_blast_path: false },
-  { id: "edge_order_service_to_postgres_db", source: "order-service", target: "postgres-db", call_count: 50, avg_latency_ms: 8, error_count: 0, is_blast_path: false },
-  { id: "edge_payment_gateway_to_postgres_db", source: "payment-gateway", target: "postgres-db", call_count: 30, avg_latency_ms: 6, error_count: 0, is_blast_path: false },
-];
+import {
+  loadingState,
+  staleState,
+  successState,
+  unavailableState,
+  type OperationalDataState,
+} from "../types/operational";
 
 export interface TopologyPayload {
   snapshot_timestamp: string | null;
@@ -34,56 +23,121 @@ export interface TopologyPayload {
 
 const POLL_INTERVAL_MS = 30_000;
 const TOPOLOGY_PATH = "/api/v1/topology";
+const EMPTY_TOPOLOGY_NODES: TopologyNode[] = [];
+const EMPTY_TOPOLOGY_EDGES: TopologyEdge[] = [];
 
 function buildTopologyUrls(): string[] {
-  const apiUrl = import.meta.env.VITE_API_URL || '';
+  const apiUrl = import.meta.env.VITE_API_URL || "";
   return [`${apiUrl.replace(/\/$/, "")}${TOPOLOGY_PATH}`];
 }
 
 const VALID_NODE_TYPES = new Set<NodeType>(["service", "database", "cache", "queue", "gateway"]);
 const VALID_NODE_STATUSES = new Set<NodeStatus>(["healthy", "degraded", "critical"]);
 
-function mapNode(raw: Record<string, unknown>, index: number): TopologyNode {
-  const id = typeof raw.id === "string" && raw.id ? raw.id : `node-${index}`;
-  const name = typeof raw.name === "string" && raw.name ? raw.name : id;
-  const rawType = typeof raw.type === "string" ? raw.type.toLowerCase() : "";
-  const type: NodeType = VALID_NODE_TYPES.has(rawType as NodeType) ? (rawType as NodeType) : "service";
-  const rawStatus = typeof raw.status === "string" ? raw.status.toLowerCase() : "";
-  const status: NodeStatus = VALID_NODE_STATUSES.has(rawStatus as NodeStatus) ? (rawStatus as NodeStatus) : "healthy";
-  
-  const rawMetrics = typeof raw.metrics === "object" && raw.metrics !== null ? (raw.metrics as any) : {};
-  const metrics = {
-    latency_p95_ms: typeof rawMetrics.latency_p95_ms === "number" ? rawMetrics.latency_p95_ms : 0,
-    error_rate_pct: typeof rawMetrics.error_rate_pct === "number" ? rawMetrics.error_rate_pct : 0,
-    throughput_rps: typeof rawMetrics.throughput_rps === "number" ? rawMetrics.throughput_rps : 0,
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function mapMetrics(raw: unknown): TopologyNodeMetrics | null {
+  if (!isRecord(raw)) return null;
+  if (!finiteNumber(raw.latency_p95_ms) || !finiteNumber(raw.error_rate_pct) || !finiteNumber(raw.throughput_rps)) {
+    return null;
+  }
+  if (raw.error_rate_pct > 100) return null;
+  return {
+    latency_p95_ms: raw.latency_p95_ms,
+    error_rate_pct: raw.error_rate_pct,
+    throughput_rps: raw.throughput_rps,
   };
+}
+
+function mapNode(raw: Record<string, unknown>): TopologyNode | null {
+  const id = typeof raw.id === "string" && raw.id ? raw.id : null;
+  const name = typeof raw.name === "string" && raw.name ? raw.name : null;
+  const rawType = typeof raw.type === "string" ? raw.type.toLowerCase() : null;
+  const rawStatus = typeof raw.status === "string" ? raw.status.toLowerCase() : null;
+  const metrics = mapMetrics(raw.metrics);
+  if (
+    !id ||
+    !name ||
+    !rawType ||
+    !VALID_NODE_TYPES.has(rawType as NodeType) ||
+    !rawStatus ||
+    !VALID_NODE_STATUSES.has(rawStatus as NodeStatus) ||
+    !metrics
+  ) {
+    return null;
+  }
 
   return {
     id,
     name,
-    type,
-    status,
+    type: rawType as NodeType,
+    status: rawStatus as NodeStatus,
     metrics,
     active_anomaly_id: typeof raw.active_anomaly_id === "string" ? raw.active_anomaly_id : null,
     is_root_cause: typeof raw.is_root_cause === "boolean" ? raw.is_root_cause : false,
   };
 }
 
-function mapEdge(raw: Record<string, unknown>, index: number): TopologyEdge | null {
-  const source = typeof raw.source === "string" ? raw.source : null;
-  const target = typeof raw.target === "string" ? raw.target : null;
-  if (!source || !target) return null;
-  const id = typeof raw.id === "string" && raw.id ? raw.id : `edge-${source}-${target}-${index}`;
-
+function mapEdge(raw: Record<string, unknown>): TopologyEdge | null {
+  if (
+    typeof raw.id !== "string" ||
+    !raw.id ||
+    typeof raw.source !== "string" ||
+    !raw.source ||
+    typeof raw.target !== "string" ||
+    !raw.target ||
+    !finiteNumber(raw.call_count) ||
+    !finiteNumber(raw.avg_latency_ms) ||
+    !finiteNumber(raw.error_count)
+  ) {
+    return null;
+  }
   return {
-    id,
-    source,
-    target,
-    call_count: typeof raw.call_count === "number" ? raw.call_count : 0,
-    avg_latency_ms: typeof raw.avg_latency_ms === "number" ? raw.avg_latency_ms : 0,
-    error_count: typeof raw.error_count === "number" ? raw.error_count : 0,
+    id: raw.id,
+    source: raw.source,
+    target: raw.target,
+    call_count: raw.call_count,
+    avg_latency_ms: raw.avg_latency_ms,
+    error_count: raw.error_count,
     is_blast_path: typeof raw.is_blast_path === "boolean" ? raw.is_blast_path : false,
   };
+}
+
+function parseSnapshotTimestamp(data: Record<string, unknown>): string | null {
+  const raw = data.snapshot_timestamp ?? data.generated_at;
+  if (typeof raw !== "string" || !Number.isFinite(new Date(raw).getTime())) return null;
+  return new Date(raw).toISOString();
+}
+
+function parseTopology(value: unknown): TopologyPayload {
+  if (!isRecord(value) || !Array.isArray(value.nodes) || !Array.isArray(value.edges)) {
+    throw new Error("Topology response schema invalid");
+  }
+  const snapshotTimestamp = parseSnapshotTimestamp(value);
+  if (!snapshotTimestamp) throw new Error("Topology response timestamp unavailable");
+
+  const nodes: TopologyNode[] = [];
+  for (const raw of value.nodes) {
+    if (!isRecord(raw)) throw new Error("Topology node schema invalid");
+    const node = mapNode(raw);
+    if (!node) throw new Error("Topology node metrics or status unavailable");
+    nodes.push(node);
+  }
+
+  const edges: TopologyEdge[] = [];
+  for (const raw of value.edges) {
+    if (!isRecord(raw)) throw new Error("Topology edge schema invalid");
+    const edge = mapEdge(raw);
+    if (!edge) throw new Error("Topology edge metrics unavailable");
+    edges.push(edge);
+  }
+  return { snapshot_timestamp: snapshotTimestamp, nodes, edges };
 }
 
 export interface UseTopologyResult {
@@ -94,75 +148,81 @@ export interface UseTopologyResult {
   isLoading: boolean;
   loading: boolean;
   error: string | null;
+  dataState: OperationalDataState<TopologyPayload>;
   refresh: () => void;
 }
 
 export function useTopology(pollIntervalMs = POLL_INTERVAL_MS): UseTopologyResult {
-  const [nodes, setNodes] = useState<TopologyNode[]>(DEFAULT_TOPOLOGY_NODES);
-  const [edges, setEdges] = useState<TopologyEdge[]>(DEFAULT_TOPOLOGY_EDGES);
+  const [nodes, setNodes] = useState<TopologyNode[]>(EMPTY_TOPOLOGY_NODES);
+  const [edges, setEdges] = useState<TopologyEdge[]>(EMPTY_TOPOLOGY_EDGES);
   const [topology, setTopology] = useState<TopologyPayload | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dataState, setDataState] = useState<OperationalDataState<TopologyPayload>>(
+    loadingState<TopologyPayload>("GET /api/v1/topology"),
+  );
+  const topologyRef = useRef<TopologyPayload | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const fetchTopology = useCallback(async () => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
-    setError(null);
+    setIsLoading(true);
 
-    const urls = buildTopologyUrls();
-    let lastErr: Error | null = null;
-
-    for (const url of urls) {
+    try {
+      const url = buildTopologyUrls()[0];
+      const headers: Record<string, string> = {};
+      const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
+      if (apiKey) headers["X-API-Key"] = apiKey;
+      const response = await fetchAuthenticated(url, { signal: controller.signal, headers });
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const parsed = parseTopology(await response.json());
       if (controller.signal.aborted) return;
-      try {
-        const headers: Record<string, string> = {};
-        const apiKey = import.meta.env.VITE_API_KEY as string | undefined;
-        if (apiKey) headers["X-API-Key"] = apiKey;
 
-        const res = await fetchAuthenticated(url, { signal: controller.signal, headers });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-
-        const data = (await res.json()) as TopologyPayload;
-        
-        const rawNodes = Array.isArray(data.nodes) && data.nodes.length > 0 ? data.nodes : DEFAULT_TOPOLOGY_NODES;
-        const rawEdges = Array.isArray(data.edges) && data.edges.length > 0 ? data.edges : DEFAULT_TOPOLOGY_EDGES;
-
-        const mappedNodes = rawNodes.map((n: any, i: number) => (typeof n === "object" && n !== null ? mapNode(n, i) : n));
-        const mappedEdges = rawEdges.map((e: any, i: number) => (typeof e === "object" && e !== null ? mapEdge(e, i) : e)).filter((e): e is TopologyEdge => e !== null);
-
-        if (!controller.signal.aborted) {
-          setNodes(mappedNodes.length > 0 ? mappedNodes : DEFAULT_TOPOLOGY_NODES);
-          setEdges(mappedEdges.length > 0 ? mappedEdges : DEFAULT_TOPOLOGY_EDGES);
-          setTopology(data);
-          setUpdatedAt(typeof data.snapshot_timestamp === "string" ? data.snapshot_timestamp : new Date().toISOString());
-          setIsLoading(false);
-        }
-        return;
-      } catch (err) {
-        if ((err as Error).name === "AbortError") return;
-        lastErr = err instanceof Error ? err : new Error(String(err));
+      topologyRef.current = parsed;
+      setNodes(parsed.nodes);
+      setEdges(parsed.edges);
+      setTopology(parsed);
+      setUpdatedAt(parsed.snapshot_timestamp);
+      setError(null);
+      setDataState(successState(parsed, parsed.snapshot_timestamp ?? new Date().toISOString(), "GET /api/v1/topology", parsed.nodes.length === 0));
+    } catch (caught) {
+      if (controller.signal.aborted) return;
+      const message = caught instanceof Error && caught.message.startsWith("HTTP 403")
+        ? "Topology is not available for this scope"
+        : "Topology is currently unavailable";
+      setError(message);
+      const previous = topologyRef.current;
+      if (previous && previous.snapshot_timestamp) {
+        setDataState(staleState(previous, previous.snapshot_timestamp, "GET /api/v1/topology", message));
+      } else {
+        setDataState(unavailableState("GET /api/v1/topology", message));
       }
-    }
-
-    if (!controller.signal.aborted) {
-      // Retain default connected nodes on error so graph remains functional
-      setNodes(DEFAULT_TOPOLOGY_NODES);
-      setEdges(DEFAULT_TOPOLOGY_EDGES);
-      setIsLoading(false);
+    } finally {
+      if (!controller.signal.aborted) setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchTopology();
-    const timer = setInterval(fetchTopology, pollIntervalMs);
+    void fetchTopology();
+    const timer = setInterval(() => void fetchTopology(), pollIntervalMs);
     return () => {
       clearInterval(timer);
       abortRef.current?.abort();
     };
   }, [fetchTopology, pollIntervalMs]);
 
-  return { nodes, edges, topology, updatedAt, isLoading, loading: isLoading, error, refresh: fetchTopology };
+  return {
+    nodes,
+    edges,
+    topology,
+    updatedAt,
+    isLoading,
+    loading: isLoading,
+    error,
+    dataState,
+    refresh: () => void fetchTopology(),
+  };
 }

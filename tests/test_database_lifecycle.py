@@ -79,7 +79,7 @@ class TestDatabaseSettings:
         settings = DatabaseSettings(
             database_url_override="postgresql+asyncpg://override:pw@h:1/d",
         )
-        assert settings.url == "postgresql+asyncpg://override:pw@h:1/d"
+        assert settings.url == "postgresql+asyncpg://override:pw@h:1/d?ssl=disable"
 
     def test_port_coerced_from_string(self) -> None:
         settings = DatabaseSettings(port="9999")  # type: ignore[arg-type]
@@ -126,7 +126,7 @@ class TestGetDatabaseSettings:
         with patch.dict("os.environ", {"DATABASE_URL": "postgresql+asyncpg://x:y@z:1/d"}, clear=False):
             settings = get_database_settings()
 
-        assert settings.url == "postgresql+asyncpg://x:y@z:1/d"
+        assert settings.url == "postgresql+asyncpg://x:y@z:1/d?ssl=disable"
 
 
 class TestDrain3PipelineSettings:

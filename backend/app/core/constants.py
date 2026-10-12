@@ -6,10 +6,14 @@ etc.) always reference the same Valkey stream and consumer group names.
 
 from __future__ import annotations
 
+import os
+
 # ---------------------------------------------------------------------------
 # Valkey stream identifiers
 # ---------------------------------------------------------------------------
-LOG_STREAM_NAME: str = "logs:stream"
+LOG_STREAM_NAME: str = (
+    os.getenv("LOG_STREAM_NAME", "logs:stream").strip() or "logs:stream"
+)
 """Name of the primary Valkey stream used for log ingestion."""
 
 LOG_WORKERS_GROUP: str = "log_workers"

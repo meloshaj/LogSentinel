@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import {
   Lock,
@@ -16,12 +16,19 @@ import {
   SuccessState,
   Spinner,
 } from "./AuthShared";
-import { getAuthErrorMessage } from "../utils/auth";
+import { getAuthErrorMessage, sanitizeAuthCallbackUrl } from "../utils/auth";
 
 export function ResetPasswordPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const token = searchParams.get("token") || "";
+
+  useEffect(() => {
+    // Keep the reset token only in component memory after parsing. Replacing
+    // the current history entry also prevents refresh/navigation from
+    // resubmitting or propagating the original query value.
+    sanitizeAuthCallbackUrl();
+  }, [searchParams]);
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");

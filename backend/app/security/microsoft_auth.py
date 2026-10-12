@@ -311,10 +311,17 @@ class MicrosoftTokenVerifier:
 
         # ── Validate required scope ───────────────────────────────────
         # Note: ID Tokens do not contain 'scp' claims. We rely on 'aud' (audience) matching our Client ID.
-        scp = payload.get("scp")
-        if scp is not None and self._settings.required_scope:
-            scopes = set(scp.split()) if isinstance(scp, str) else set()
-            if self._settings.required_scope not in scopes:
+        # This verifier supports delegated API access tokens only. A missing
+        # authorization claim is not permission, and application-only
+        # ``roles`` tokens are not accepted without a separate configured
+        # authorization contract.
+        required_scope = self._settings.required_scope
+        if required_scope:
+            scp = payload.get("scp")
+            if not isinstance(scp, str) or not scp.strip():
+                raise MissingRequiredScopeError()
+            scopes = set(scp.split())
+            if required_scope not in scopes:
                 raise MissingRequiredScopeError()
 
         # ── Extract stable identity ───────────────────────────────────

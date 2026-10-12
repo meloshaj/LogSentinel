@@ -1,0 +1,100 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "logsentinel.fullname" . }}-default
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+{{ toYaml .Values.networkPolicy.ingress.namespaceSelector | nindent 12 }}
+        - namespaceSelector:
+{{ toYaml .Values.networkPolicy.ingress.monitoringNamespaceSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- if .Values.networkPolicy.database.namespaceSelector }}
+    - to:
+        - namespaceSelector:
+{{ toYaml .Values.networkPolicy.database.namespaceSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.database.port }}
+{{- end }}
+{{- if .Values.networkPolicy.database.podSelector }}
+    - to:
+        - podSelector:
+{{ toYaml .Values.networkPolicy.database.podSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.database.port }}
+{{- end }}
+{{- range .Values.networkPolicy.database.cidrs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.database.port }}
+{{- end }}
+{{- if .Values.networkPolicy.valkey.namespaceSelector }}
+    - to:
+        - namespaceSelector:
+{{ toYaml .Values.networkPolicy.valkey.namespaceSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.valkey.port }}
+{{- end }}
+{{- if .Values.networkPolicy.valkey.podSelector }}
+    - to:
+        - podSelector:
+{{ toYaml .Values.networkPolicy.valkey.podSelector | nindent 12 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.valkey.port }}
+{{- end }}
+{{- range .Values.networkPolicy.valkey.cidrs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.valkey.port }}
+{{- end }}
+{{- if .Values.networkPolicy.externalHttps.enabled }}
+{{- range .Values.networkPolicy.externalHttps.cidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+{{- with $.Values.networkPolicy.externalHttps.exceptCidrs }}
+            except:
+{{ toYaml . | nindent 14 }}
+{{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+{{- end }}
+{{- end }}
+{{- if .Values.networkPolicy.smtp.enabled }}
+{{- range .Values.networkPolicy.smtp.cidrs }}
+    - to:
+        - ipBlock: {cidr: {{ . | quote }}}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.networkPolicy.smtp.port }}
+{{- end }}
+{{- end }}
+{{- with .Values.networkPolicy.extraEgress }}
+{{ toYaml . | nindent 4 }}
+{{- end }}
+{{- end }}

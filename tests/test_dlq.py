@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 
 from backend.app.main import app
 from backend.app.models import ParsedLog
+from backend.app.security.data_scope import DataScope
+from backend.app.security.ingest_guard import require_ingestion_api_key
 from backend.app.services.batch_manager import ParsedLogBatchManager
 from backend.app.workers.drain_worker import DrainWorker, DLQ_STREAM_NAME
 
@@ -194,6 +196,9 @@ def test_approximate_stream_trimming_on_ingest(monkeypatch) -> None:
             return MockRedisPipeline()
 
     monkeypatch.setattr(app.state, "redis", MockRedis(), raising=False)
+    app.dependency_overrides[require_ingestion_api_key] = lambda: DataScope(
+        "test-tenant", 101
+    )
     client = TestClient(app)
 
     with patch.dict("os.environ", {"INGEST_API_KEY": "test-key"}, clear=False):
@@ -212,3 +217,4 @@ def test_approximate_stream_trimming_on_ingest(monkeypatch) -> None:
     assert xadd_calls[0]["stream"] == "logs:stream"
     assert xadd_calls[0]["maxlen"] == 500000
     assert xadd_calls[0]["approximate"] is True
+    app.dependency_overrides.pop(require_ingestion_api_key, None)

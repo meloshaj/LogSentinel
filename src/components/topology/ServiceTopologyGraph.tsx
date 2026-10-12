@@ -2,8 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import cytoscape from "cytoscape";
 import { useTopology } from "../../hooks/useTopology";
 import { useTelemetryStream } from "../../hooks/useTelemetryStream";
-import { AlertTriangle, RefreshCw, Loader2, Network } from "lucide-react";
-import { TopologyNode } from "../../types/topology";
+import { RefreshCw, Loader2, Network } from "lucide-react";
+import { OperationalStateNotice, displayOperationalStatus } from "../common/OperationalState";
 import "./topology.css";
 
 export interface TopologyGraphProps {
@@ -21,8 +21,9 @@ export function ServiceTopologyGraph({
 }: TopologyGraphProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
-  const { nodes: initialNodes, edges: initialEdges, updatedAt, isLoading, error, refresh } = useTopology();
+  const { nodes: initialNodes, edges: initialEdges, updatedAt, isLoading, error, dataState, refresh } = useTopology();
   const { activeTrackingLoops } = useTelemetryStream();
+  const topologyStatus = displayOperationalStatus(dataState);
 
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
   const selectedNodeId = controlledSelectedId ?? internalSelectedId;
@@ -42,7 +43,7 @@ export function ServiceTopologyGraph({
         });
       }
 
-      const blastData = loop.blast_radius as any;
+      const blastData = loop.blast_radius;
       if (blastData && Array.isArray(blastData)) {
         for (const brNode of blastData) {
           if (typeof brNode.service_name !== "string") continue;
@@ -69,7 +70,7 @@ export function ServiceTopologyGraph({
     const filteredSourceNodes = initialNodes.filter(node => {
       if (statusFilter === "ALL") return true;
       const overlay = overlayMap.get(node.id);
-      const status = overlay ? overlay.status.toUpperCase() : "HEALTHY";
+      const status = (overlay?.status ?? node.status).toUpperCase();
       return status === statusFilter;
     });
 
@@ -77,7 +78,7 @@ export function ServiceTopologyGraph({
 
     const cyNodes = filteredSourceNodes.map(node => {
       const overlay = overlayMap.get(node.id);
-      const status = overlay ? overlay.status : 'healthy';
+      const status = overlay?.status ?? node.status;
       return {
         data: {
           id: node.id,
@@ -96,7 +97,7 @@ export function ServiceTopologyGraph({
         const srcOverlay = overlayMap.get(edge.source);
         const tgtOverlay = overlayMap.get(edge.target);
         
-        let status = 'healthy';
+        let status = 'unknown';
         if (srcOverlay?.status === 'critical' || tgtOverlay?.status === 'critical') status = 'critical';
         else if (srcOverlay?.status === 'degraded' || tgtOverlay?.status === 'degraded') status = 'degraded';
         
@@ -119,7 +120,7 @@ export function ServiceTopologyGraph({
           {
             selector: 'node',
             style: {
-              'background-color': (ele) => {
+          'background-color': (ele: cytoscape.NodeSingular) => {
                 const status = ele.data('status');
                 if (status === 'critical') return '#ef4444';
                 if (status === 'degraded') return '#f59e0b';
@@ -134,7 +135,7 @@ export function ServiceTopologyGraph({
               'width': 32,
               'height': 32,
               'border-width': 2,
-              'border-color': (ele) => {
+              'border-color': (ele: cytoscape.NodeSingular) => {
                 const isRoot = ele.data('isRoot');
                 if (isRoot) return '#fff';
                 return '#21262d';
@@ -152,13 +153,13 @@ export function ServiceTopologyGraph({
             selector: 'edge',
             style: {
               'width': 1.5,
-              'line-color': (ele) => {
+              'line-color': (ele: cytoscape.EdgeSingular) => {
                 const status = ele.data('status');
                 if (status === 'critical') return '#ef4444';
                 if (status === 'degraded') return '#f59e0b';
                 return '#30363d';
               },
-              'target-arrow-color': (ele) => {
+              'target-arrow-color': (ele: cytoscape.EdgeSingular) => {
                 const status = ele.data('status');
                 if (status === 'critical') return '#ef4444';
                 if (status === 'degraded') return '#f59e0b';
@@ -176,8 +177,8 @@ export function ServiceTopologyGraph({
           randomize: false,
           componentSpacing: 80,
           nodeOverlap: 10,
-          idealEdgeLength: (edge: any) => 80,
-          edgeElasticity: (edge: any) => 100,
+          idealEdgeLength: () => 80,
+          edgeElasticity: () => 100,
           nestingFactor: 5,
           gravity: 80,
           numIter: 1000,
@@ -245,8 +246,8 @@ export function ServiceTopologyGraph({
           fit: false,
           componentSpacing: 80,
           nodeOverlap: 10,
-          idealEdgeLength: (edge: any) => 80,
-          edgeElasticity: (edge: any) => 100,
+          idealEdgeLength: () => 80,
+          edgeElasticity: () => 100,
           nestingFactor: 5,
           gravity: 80,
           numIter: 1000,
@@ -279,7 +280,7 @@ export function ServiceTopologyGraph({
     let count = 0;
     for (const loop of activeTrackingLoops) {
       if (!showLowSeverity && loop.severity === "low") continue;
-      const blastData = loop.blast_radius as any;
+      const blastData = loop.blast_radius;
       if (blastData && Array.isArray(blastData)) {
         count += blastData.length;
       } else if (loop.suspected_root_service) {
@@ -291,12 +292,14 @@ export function ServiceTopologyGraph({
 
   if (error && initialNodes.length === 0) {
     return (
-      <div data-testid="topology-error" className="flex items-center justify-center w-full h-full bg-[#161b22] rounded-xl border border-[#21262d] p-6">
+      <div data-testid="topology-error" className="flex flex-col items-center justify-center w-full h-full bg-[#161b22] rounded-xl border border-[#21262d] p-6 gap-3">
+        <OperationalStateNotice
+          state={dataState}
+          errorMessage="Failed to load service topology; no operational state is being inferred."
+        />
         <div className="flex flex-col items-center gap-3 text-center">
-          <AlertTriangle className="w-8 h-8 text-[#ef4444]" />
-          <span className="text-[#e6edf3] font-semibold text-sm">Failed to load service topology</span>
-          <span className="text-[#8b949e] text-xs max-w-sm">{error}</span>
           <button 
+            type="button"
             onClick={refresh} 
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#21262d] text-[#e6edf3] hover:bg-[#30363d] text-xs font-semibold transition-colors mt-2"
           >
@@ -363,6 +366,14 @@ export function ServiceTopologyGraph({
           <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin text-[#388bfd]" : ""}`} />
         </button>
       </div>
+
+      {topologyStatus !== "available" && topologyStatus !== "empty" && initialNodes.length > 0 && (
+        <OperationalStateNotice
+          state={dataState}
+          errorMessage="Showing no current topology claim while the authoritative snapshot is unavailable."
+          className="absolute bottom-3 left-4 z-10"
+        />
+      )}
       
       {initialNodes.length === 0 && isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-[#0d1117] z-10 pointer-events-none">
@@ -373,6 +384,18 @@ export function ServiceTopologyGraph({
                <div className="h-full bg-[#388bfd] animate-pulse rounded-full w-2/3" />
             </div>
           </div>
+        </div>
+      )}
+
+      {initialNodes.length === 0 && !isLoading && !error && (
+        <div role="status" className="absolute inset-0 z-10 flex items-center justify-center bg-[#0d1117] px-6 text-center text-sm text-[#8b949e]">
+          No service topology was returned for this scope.
+        </div>
+      )}
+
+      {initialNodes.length > 0 && error && (
+        <div role="status" className="absolute bottom-3 left-4 z-10 rounded-lg border border-[#d29922]/40 bg-[#161b22]/95 px-3 py-2 text-xs text-[#d29922]">
+          Showing last known topology — current refresh unavailable.
         </div>
       )}
       

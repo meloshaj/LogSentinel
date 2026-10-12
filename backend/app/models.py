@@ -7,6 +7,15 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .schemas.ingest import (
+    BulkIngestPayload,
+    BulkIngestResponse,
+    BulkLogEntry,
+    IngestPayload,
+    IngestResponse,
+    LogEntry,
+)
+
 
 class ParsedLog(BaseModel):
     """Standardized parsed log structure from Drain3 pipeline.
@@ -42,6 +51,12 @@ class ParsedLog(BaseModel):
         min_length=1,
         description="Original unprocessed log message",
     )
+    event_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Stable logical source identity preserved across redelivery",
+    )
 
     # Drain3 template fields
     template_id: str = Field(
@@ -49,7 +64,7 @@ class ParsedLog(BaseModel):
         description="Drain3 cluster ID for the log template",
     )
     template_text: str | None = Field(
-        None,
+        default=None,
         description="Extracted log template with parameters replaced by wildcards",
     )
     parameters: list[dict[str, Any]] = Field(
@@ -57,12 +72,12 @@ class ParsedLog(BaseModel):
         description="Extracted parameters from the log message",
     )
     cluster_size: int | None = Field(
-        None,
+        default=None,
         ge=0,
         description="Number of logs in the Drain3 cluster",
     )
     change_type: str | None = Field(
-        None,
+        default=None,
         description="Drain3 change type (none, cluster_created, cluster_template_changed)",
     )
 
@@ -76,13 +91,18 @@ class ParsedLog(BaseModel):
         description="Deployment environment (development, staging, production)",
     )
     correlation_id: str | None = Field(
-        None,
+        default=None,
         description="Distributed trace correlation identifier",
     )
     tenant_id: str = Field(
         default="default",
         min_length=1,
         description="Authoritative tenant assigned by the ingestion gateway",
+    )
+    owner_user_id: int = Field(
+        default=0,
+        ge=0,
+        description="Authoritative application user assigned by the ingestion boundary",
     )
     metadata: dict[str, Any] = Field(
         default_factory=dict,
@@ -91,7 +111,7 @@ class ParsedLog(BaseModel):
 
     # Processing timestamps
     parsed_at: datetime | None = Field(
-        None,
+        default=None,
         description="Timestamp when Drain3 parsing completed",
     )
 
@@ -155,7 +175,7 @@ class LogWindow(BaseModel):
         description="Parsed logs within this time window",
     )
     service: str | None = Field(
-        None,
+        default=None,
         description="Service filter applied to this window (if any)",
     )
 
@@ -203,6 +223,11 @@ class FeatureVector(BaseModel):
         default="default",
         min_length=1,
         description="Tenant whose logs produced this feature window",
+    )
+    owner_user_id: int = Field(
+        default=0,
+        ge=0,
+        description="Owner of every source log in this feature window",
     )
 
     # Statistical features
@@ -302,15 +327,6 @@ class PerformanceEvent(BaseModel):
 
     model_config = ConfigDict()
 
-
-from .schemas.ingest import (
-    BulkIngestPayload,
-    BulkIngestResponse,
-    BulkLogEntry,
-    IngestPayload,
-    IngestResponse,
-    LogEntry,
-)
 
 __all__ = [
     "ParsedLog",

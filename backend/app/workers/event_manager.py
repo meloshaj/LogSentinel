@@ -11,16 +11,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from redis.asyncio import Redis
-
-from ..core import redis as redis_state
 from ..core.settings import GraphScoringSettings, get_graph_scoring_settings
 from ..ml.anomaly_scoring import normalize_prediction_anomaly_score
 from ..models import FeatureVector, PerformanceEvent
+from ..observability.metrics import EVENT_QUEUE_DROPS_TOTAL
 from ..repositories.tracking_repository import TrackingRepository
 from ..schemas.alerting import IncidentAlertPayload
 from ..schemas.blast_radius import BlastRadiusResult
-from ..services.alerting import dispatch_incident_alert
+from ..security.redaction import sanitize_error_text
 from ..services.benchmarking import BenchmarkingCollector
 from ..services.graph_analysis_service import GraphAnalysisService
 from ..services.telemetry import telemetry_event, telemetry_manager
@@ -60,14 +58,16 @@ class EventManager:
 
         self._task: asyncio.Task[None] | None = None
         self._running = False
-        self.redis_client: Redis | None = None
+        self.redis_client = None
         self._processed_count = 0
         self._error_count = 0
+        self._noncritical_queue_drops = 0
+        self._critical_queue_rejections = 0
         self._last_processed_at: str | None = None
 
         logger.info("EventManager initialized")
 
-    def set_redis_client(self, redis_client: Redis) -> None:
+    def set_redis_client(self, redis_client) -> None:
         """Inject the initialized application Redis client for cooldowns."""
         self.redis_client = redis_client
 
@@ -97,15 +97,22 @@ class EventManager:
         logger.info("EventManager stopped")
 
     def enqueue_feature_vector(self, feature_vector: FeatureVector) -> bool:
-        """Enqueue a feature vector for evaluation without blocking."""
-        try:
-            self.queue.put_nowait(feature_vector)
-            return True
-        except asyncio.QueueFull:
-            logger.warning(
-                "EventManager queue is full; dropping feature vector event to protect memory"
-            )
-            return False
+        """Reject the obsolete in-memory critical path explicitly.
+
+        Feature vectors are accepted by the durable ``feature_window`` outbox
+        in ``FeatureExtractionWorker``. Keeping this compatibility method from
+        silently dropping a critical event is safer than treating the bounded
+        queue as an acceptance boundary.
+        """
+        del feature_vector
+        self._critical_queue_rejections += 1
+        logger.error(
+            "Critical feature event rejected from the in-memory queue; "
+            "the durable feature_window outbox is the only accepted path"
+        )
+        raise RuntimeError(
+            "critical feature events must be registered in the durable feature stage"
+        )
 
     def enqueue_performance_event(self, event: PerformanceEvent) -> bool:
         """Enqueue a performance event for alerting without blocking."""
@@ -113,14 +120,17 @@ class EventManager:
             self.queue.put_nowait(event)
             return True
         except asyncio.QueueFull:
+            self._noncritical_queue_drops += 1
+            EVENT_QUEUE_DROPS_TOTAL.labels(event_class="noncritical").inc()
             logger.warning(
-                "EventManager queue is full; dropping performance event to protect memory"
+                "EventManager queue is full; dropping explicitly noncritical performance event"
             )
             return False
 
     async def run(self) -> None:
         """Main worker loop that dequeues and evaluates events."""
         while self._running:
+            event = None
             try:
                 event = await self.queue.get()
                 if isinstance(event, FeatureVector):
@@ -129,14 +139,18 @@ class EventManager:
                     await self._process_performance_event(event)
                 self._processed_count += 1
                 self._last_processed_at = datetime.now(timezone.utc).isoformat()
-                self.queue.task_done()
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 self._error_count += 1
-                logger.exception(
-                    "EventManager encountered an error processing an event"
+                logger.error(
+                    "EventManager encountered an error processing an event exception_type=%s detail=%s",
+                    type(exc).__name__,
+                    sanitize_error_text(exc),
                 )
+            finally:
+                if event is not None:
+                    self.queue.task_done()
 
     def get_stats(self) -> dict[str, Any]:
         """Return bounded worker state for readiness and Prometheus sampling."""
@@ -144,7 +158,11 @@ class EventManager:
             "running": self._running,
             "processed_count": self._processed_count,
             "error_count": self._error_count,
+            # This queue has no durable DLQ. Do not alias processing errors to
+            # a durable failed-row count.
             "dlq_count": 0,
+            "noncritical_queue_drops": self._noncritical_queue_drops,
+            "critical_queue_rejections": self._critical_queue_rejections,
             "queue_size": self.queue.qsize(),
             "last_processed_at": self._last_processed_at,
         }
@@ -155,17 +173,39 @@ class EventManager:
             payload = event.model_dump(mode="json")
             await self.telemetry_broadcaster.broadcast(
                 telemetry_event(
-                    "infrastructure.performance.alert",
+                    "system.performance.alert",
                     payload,
                 )
             )
             logger.warning(
                 f"Performance alert triggered: {event.metric_name} = {event.current_value} (threshold {event.threshold})"
             )
-        except Exception:
-            logger.exception("Failed to broadcast performance event")
+        except Exception as exc:
+            logger.error(
+                "Failed to broadcast performance event exception_type=%s detail=%s",
+                type(exc).__name__,
+                sanitize_error_text(exc),
+            )
 
-    async def _process_event(self, feature_vector: FeatureVector) -> None:
+    async def process_feature_vector(
+        self,
+        feature_vector: FeatureVector,
+        *,
+        connection: Any | None = None,
+        broadcast: bool = True,
+    ) -> None:
+        """Process feature work from the durable stage, bypassing EventManager.queue."""
+        await self._process_event(
+            feature_vector, connection=connection, broadcast=broadcast
+        )
+
+    async def _process_event(
+        self,
+        feature_vector: FeatureVector,
+        *,
+        connection: Any | None = None,
+        broadcast: bool = True,
+    ) -> None:
         """Evaluate a single feature vector and trigger tracking loops if needed."""
         prediction = feature_vector.anomaly_prediction
         if not isinstance(prediction, dict):
@@ -180,13 +220,22 @@ class EventManager:
                 anomaly_score,
                 feature_vector.window_id,
             )
-            await self._trigger_tracking_loop(feature_vector, anomaly_score, prediction)
+            await self._trigger_tracking_loop(
+                feature_vector,
+                anomaly_score,
+                prediction,
+                connection=connection,
+                broadcast=broadcast,
+            )
 
     async def _trigger_tracking_loop(
         self,
         feature_vector: FeatureVector,
         anomaly_score: float,
         prediction: dict[str, Any],
+        *,
+        connection: Any | None = None,
+        broadcast: bool = True,
     ) -> None:
         """Create a tracking loop in the database and emit an alert telemetry event."""
         blast_radius_result = await self._run_graph_analysis(feature_vector)
@@ -196,19 +245,62 @@ class EventManager:
             else None
         )
 
+        service_dist = feature_vector.service_distribution
+        dominant_service = (
+            max(service_dist.items(), key=lambda x: x[1])[0]
+            if service_dist
+            else "unknown"
+        )
+        alert_payload = IncidentAlertPayload(
+            tenant_id=feature_vector.tenant_id,
+            owner_user_id=feature_vector.owner_user_id,
+            incident_id=feature_vector.window_id,
+            root_cause_service=dominant_service,
+            triggering_template=None,
+            affected_services=[dominant_service],
+            confidence_score=anomaly_score,
+            is_critical=(anomaly_score >= 0.7),
+        )
+
         # Persist to database
         try:
-            await self.tracking_repository.persist_tracking_loop(  # type: ignore
-                tenant_id=feature_vector.tenant_id,
-                window_id=feature_vector.window_id,
-                anomaly_score=anomaly_score,
-                status="ACTIVE",
-                blast_radius=blast_radius_payload,
+            persist_on_connection = getattr(
+                self.tracking_repository, "persist_tracking_loop_on_connection", None
             )
-        except Exception:
-            logger.exception("Failed to persist tracking loop in EventManager")
+            if connection is not None and callable(persist_on_connection):
+                created = await persist_on_connection(
+                    connection,
+                    tenant_id=feature_vector.tenant_id,
+                    owner_user_id=feature_vector.owner_user_id,
+                    window_id=feature_vector.window_id,
+                    anomaly_score=anomaly_score,
+                    status="ACTIVE",
+                    blast_radius=blast_radius_payload,
+                    alert_payload=alert_payload,
+                )
+            else:
+                created = await self.tracking_repository.persist_tracking_loop(  # type: ignore
+                    tenant_id=feature_vector.tenant_id,
+                    owner_user_id=feature_vector.owner_user_id,
+                    window_id=feature_vector.window_id,
+                    anomaly_score=anomaly_score,
+                    status="ACTIVE",
+                    blast_radius=blast_radius_payload,
+                    alert_payload=alert_payload,
+                )
+        except Exception as exc:
+            logger.error(
+                "Failed to persist tracking loop in EventManager exception_type=%s detail=%s",
+                type(exc).__name__,
+                sanitize_error_text(exc),
+            )
+            raise
 
-        # Broadcast via WebSocket
+        # WebSocket telemetry is a best-effort UI hint. A durable feature retry
+        # must not replay it, and a crash before this point must not affect the
+        # committed feature/anomaly/incident truth.
+        if not broadcast or created is False:
+            return
         try:
             # Derive severity from prediction or fall back to score-based classification
             severity = prediction.get("severity")
@@ -250,54 +342,17 @@ class EventManager:
                 telemetry_event(
                     "infrastructure.tracking_loop.triggered",
                     payload,
+                    tenant_id=feature_vector.tenant_id,
+                    owner_user_id=feature_vector.owner_user_id,
+                    logical_id=f"incident:{feature_vector.tenant_id}:{feature_vector.owner_user_id}:{feature_vector.window_id}",
                 )
             )
-        except Exception:
-            logger.exception("Failed to broadcast tracking loop event")
-
-        # Suppress and deduplicate repeated webhook alerts using Redis cooldown
-        try:
-            # Resolve the module-level pool at execution time as a fallback.
-            # Importing ``_redis_pool`` by value would leave this worker with
-            # None because startup replaces the pool during lifespan.
-            redis = self.redis_client
-            if redis is None and redis_state._redis_pool is not None:
-                redis = Redis(connection_pool=redis_state._redis_pool)
-
-            if redis is not None:
-                service_dist = feature_vector.service_distribution
-                dominant_service = (
-                    max(service_dist.items(), key=lambda x: x[1])[0]
-                    if service_dist
-                    else "unknown"
-                )
-                anomaly_type = "anomaly_spike"
-
-                cooldown_key = f"alert_cooldown:{dominant_service}:{anomaly_type}"
-                lock_acquired = await redis.set(cooldown_key, "1", nx=True, ex=900)
-
-                if lock_acquired:
-                    logger.info(
-                        "Triggering webhook alert for %s (cooldown active for 15m)",
-                        dominant_service,
-                    )
-                    alert_payload = IncidentAlertPayload(  # type: ignore
-                        incident_id=feature_vector.window_id,
-                        root_cause_service=dominant_service,
-                        affected_services=[dominant_service],
-                        confidence_score=anomaly_score,
-                        is_critical=(anomaly_score >= 0.7),
-                    )
-                    asyncio.create_task(
-                        dispatch_incident_alert(alert_payload, redis_client=redis)
-                    )
-                else:
-                    logger.debug(
-                        "Webhook alert for %s suppressed by 15-minute cooldown",
-                        dominant_service,
-                    )
-        except Exception:
-            logger.exception("Failed to process webhook alert deduplication")
+        except Exception as exc:
+            logger.error(
+                "Failed to broadcast tracking loop event exception_type=%s detail=%s",
+                type(exc).__name__,
+                sanitize_error_text(exc),
+            )
 
     async def _run_graph_analysis(
         self,

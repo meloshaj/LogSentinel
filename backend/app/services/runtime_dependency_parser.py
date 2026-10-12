@@ -57,6 +57,12 @@ class TraceObservation(BaseModel):
     source: str | None = None
     target_service_hint: str | None = None
     operation_hint: str | None = None
+    tenant_id: str = Field(
+        default="default",
+        min_length=1,
+        description="Trusted tenant assigned at ingestion",
+    )
+    owner_user_id: int = Field(default=0, ge=0)
 
 
 class _IdentifierOccurrence(BaseModel):
@@ -274,6 +280,8 @@ class RuntimeDependencyParser:
             source=parsed_log.source,
             target_service_hint=self._select_hint(target_hints),
             operation_hint=self._select_hint(operation_hints),
+            tenant_id=parsed_log.tenant_id,
+            owner_user_id=parsed_log.owner_user_id,
         )
 
     def _walk_value(

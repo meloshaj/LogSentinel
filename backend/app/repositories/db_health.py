@@ -8,6 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..core.database import get_engine
+from ..security.redaction import sanitize_error_text
 
 REQUIRED_LOG_COLUMNS = {
     "id",
@@ -64,7 +65,7 @@ async def check_database_health(engine: AsyncEngine | None = None) -> dict[str, 
             "connected": False,
             "table_exists": False,
             "missing_columns": sorted(REQUIRED_LOG_COLUMNS),
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": f"{type(exc).__name__}: {sanitize_error_text(exc)}",
         }
 
 

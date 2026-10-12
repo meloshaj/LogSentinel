@@ -12,9 +12,9 @@ function isFeatureWindow(event: TelemetryEvent): event is TelemetryEvent & { pay
 }
 
 function statusColor(status: string) {
-  if (status === "connected") return "#3fb950";
-  if (status === "connecting") return "#d29922";
-  if (status === "error") return "#f85149";
+  if (status === "live") return "#3fb950";
+  if (status === "connecting" || status === "reconnecting") return "#d29922";
+  if (status === "failed" || status === "auth_required") return "#f85149";
   return "#7d8590";
 }
 

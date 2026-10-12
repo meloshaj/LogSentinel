@@ -20,10 +20,11 @@ export interface ServiceAnomaly {
   id: string;
   name: string;
   score: number;
-  status: "Normal" | "Warning" | "Critical";
+  status: "Low" | "Warning" | "Critical";
   explanation: string;
-  errorRate: number;
-  latency: number;
+  errorRate: number | null;
+  latency: number | null;
+  detectedAt?: string | null;
 }
 
 export interface RootCause {
@@ -40,7 +41,7 @@ export interface Incident {
   severity: "low" | "medium" | "high" | "critical";
   timestamp: string;
   description: string;
-  status: "open" | "investigating" | "resolved";
+  status: "open" | "acknowledged" | "investigating" | "resolved";
 }
 
 export interface MetricSeries {
@@ -51,6 +52,6 @@ export interface MetricSeries {
 }
 
 export interface ServiceGraph {
-  nodes: Array<{ id: string; x: number; y: number }>;
-  edges: Array<{ from: string; to: string }>;
+  nodes: Array<{ id: string; x: number; y: number; status?: "healthy" | "degraded" | "critical" }>;
+  edges: Array<{ from: string; to: string; isBlastPath?: boolean }>;
 }

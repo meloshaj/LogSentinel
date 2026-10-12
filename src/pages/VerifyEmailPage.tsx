@@ -33,6 +33,7 @@ export function VerifyEmailPage() {
       const base = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
       const response = await fetch(`${base}/api/auth/verify-email`, {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: normalized, code }),
       });

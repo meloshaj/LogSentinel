@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "historical_bootstrap_families": [
+    {
+      "family": "pre-tenant-partitioning",
+      "git_commit": "dca8188",
+      "source": "scripts/init.sql",
+      "meaning": "Original created_at hypertable and non-tenant operational tables.",
+      "canonical_lifecycle_boundary": "The current runner must refuse this state because the destructive 20260826_0001 cutover is frozen history."
+    },
+    {
+      "family": "post-tenant-partitioning",
+      "git_commit": "88d34e3",
+      "source": "scripts/init.sql",
+      "meaning": "Historical ingested_at hypertable with tenant-shaped operational tables, before the 0002-0010 additions.",
+      "canonical_lifecycle_boundary": "The fixture records the already-validated frozen 20260826_0001 cutover before applying later canonical migrations."
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "legacy-bridge-to-current",
+      "family": "post-tenant-partitioning",
+      "source_git_commit": "88d34e3",
+      "source_migration_start": "20260822_0001_schema_reconciliation",
+      "apply_through": "20260911_0004_legacy_logsentinel_tenant_bridge",
+      "data_profile": "legacy_clean",
+      "purpose": "Exercises approved six-account adoption, event-id backfill, later durable schema additions, and the published 0010 legacy cleanup contract."
+    },
+    {
+      "id": "pre-distributed-correctness",
+      "family": "post-tenant-partitioning",
+      "source_git_commit": "88d34e3",
+      "source_migration_start": "20260911_0004_legacy_logsentinel_tenant_bridge",
+      "apply_through": "20260911_0004_legacy_logsentinel_tenant_bridge",
+      "data_profile": "legacy_clean",
+      "purpose": "Representative tenant-shaped schema immediately before 0005 event identity and pipeline durability."
+    },
+    {
+      "id": "pre-durable-webhook",
+      "family": "post-tenant-partitioning",
+      "source_git_commit": "88d34e3",
+      "source_migration_start": "20260911_0005_distributed_correctness",
+      "apply_through": "20260911_0005_distributed_correctness",
+      "data_profile": "legacy_clean",
+      "purpose": "Exercises delivery-state columns and tenant integration creation from the pre-0006 outbox shape."
+    },
+    {
+      "id": "pre-release-gates",
+      "family": "post-tenant-partitioning",
+      "source_git_commit": "88d34e3",
+      "source_migration_start": "20260911_0006_durable_webhook_delivery",
+      "apply_through": "20260911_0006_durable_webhook_delivery",
+      "data_profile": "legacy_clean",
+      "purpose": "Exercises session, email, triage, settings, and model metadata additions from the pre-0007 schema."
+    },
+    {
+      "id": "pre-tenant-authority",
+      "family": "post-tenant-partitioning",
+      "source_git_commit": "88d34e3",
+      "source_migration_start": "20260912_0007_application_release_gates",
+      "apply_through": "20260912_0007_application_release_gates",
+      "data_profile": "legacy_clean",
+      "purpose": "Exercises the 0008 fail-closed reference and API-key authority migration from the prior additive schema."
+    },
+    {
+      "id": "pre-pipeline-durability",
+      "family": "post-tenant-partitioning",
+      "source_git_commit": "88d34e3",
+      "source_migration_start": "20260912_0008_tenant_authority",
+      "apply_through": "20260912_0008_tenant_authority",
+      "data_profile": "legacy_clean",
+      "purpose": "Exercises pipeline feature-input and ownership-adjacent schema addition from the pre-0009 state."
+    },
+    {
+      "id": "pre-per-user-ownership",
+      "family": "post-tenant-partitioning",
+      "source_git_commit": "88d34e3",
+      "source_migration_start": "20260912_0009_pipeline_feature_durability",
+      "apply_through": "20260912_0009_pipeline_feature_durability",
+      "data_profile": "legacy_clean",
+      "purpose": "Exercises the published per-user ownership migration against its exact approved legacy cleanup baseline."
+    },
+    {
+      "id": "pre-per-user-full-data-safety-stop",
+      "family": "post-tenant-partitioning",
+      "source_git_commit": "88d34e3",
+      "source_migration_start": "20260912_0009_pipeline_feature_durability",
+      "apply_through": "20260912_0009_pipeline_feature_durability",
+      "data_profile": "legacy_full",
+      "purpose": "Realistic data-bearing negative control containing incident, queue, archive, and integration rows; 0010 must stop rather than discard or guess ownership."
+    }
+  ]
+}

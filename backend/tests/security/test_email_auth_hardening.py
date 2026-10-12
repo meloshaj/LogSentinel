@@ -11,7 +11,7 @@ from backend.app.core.settings import SMTPSettings, validate_auth_email_configur
 from backend.app.core.user_status import SUSPENDED
 from backend.app.routers.auth_router import UserLoginRequest, login_user
 from backend.app.services import auth_cache, email
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 
 
 def test_email_identity_is_canonical_at_every_boundary() -> None:
@@ -128,6 +128,7 @@ async def test_suspended_password_login_never_issues_a_token() -> None:
         await login_user(
             request,
             UserLoginRequest(email=" Alice@Example.COM ", password="password"),
+            Response(),
             AsyncMock(),
         )
     assert exc.value.status_code == 403

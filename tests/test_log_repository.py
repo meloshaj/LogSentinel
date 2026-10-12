@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from backend.app.models import ParsedLog
 from backend.app.repositories.db_health import check_database_health, find_missing_columns
@@ -102,9 +103,16 @@ class FakeInsertConnection:
         statement: object,
         *args,
         **kwargs,
-    ) -> None:
+    ):
         rows = args[0] if args else kwargs.get("parameters")
         self.execute_calls.append((statement, rows))
+        params = statement.compile().params
+        indexes = sorted({key.rsplit("_m", 1)[1] for key in params if key.startswith("event_id_m")}, key=int)
+        return [SimpleNamespace(
+            tenant_id=params[f"tenant_id_m{i}"],
+            owner_user_id=params[f"owner_user_id_m{i}"],
+            event_id=params[f"event_id_m{i}"],
+        ) for i in indexes]
         
     async def commit(self) -> None:
         pass
@@ -134,19 +142,22 @@ class FakeInsertEngine:
 def test_bulk_insert_uses_one_transaction_for_typed_batch(make_parsed_log) -> None:
     engine = FakeInsertEngine()
     repository = LogRepository(engine=engine)  # type: ignore[arg-type]
+    batch_timestamp = datetime.now(timezone.utc)
     logs = [
-        make_parsed_log(template_id="1", timestamp=EVENT_TIMESTAMP),
-        make_parsed_log(template_id="2", timestamp=EVENT_TIMESTAMP)
+        make_parsed_log(template_id="1", timestamp=batch_timestamp),
+        make_parsed_log(template_id="2", timestamp=batch_timestamp)
     ]
 
     inserted = asyncio.run(repository.bulk_insert_parsed_logs(logs))
 
     assert inserted == 2
     assert engine.begin_count == 1
-    assert len(engine.connection.execute_calls) == 1
-    _, rows = engine.connection.execute_calls[0]
-    assert [row["template_id"] for row in rows] == ["1", "2"]
-    assert all(row["timestamp"] is EVENT_TIMESTAMP for row in rows)
+    # One ledger claim plus one durable feature-contribution registration per
+    # logical source event, all on the same transaction connection.
+    assert len(engine.connection.execute_calls) == 3
+    ledger_statement, _ = engine.connection.execute_calls[0]
+    params = ledger_statement.compile().params
+    assert len([key for key in params if key.startswith("event_id_m")]) == 2
     assert all(isinstance(log, ParsedLog) for log in logs)
 
 

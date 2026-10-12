@@ -19,9 +19,10 @@ import {
 import { AlertTriangle, Database, Radio, Server, Share2, Zap } from "lucide-react";
 import { useTopology } from "../../hooks/useTopology";
 import type { NodeType, TopologyNode } from "../../types/topology";
+import { OperationalStateNotice, displayOperationalStatus } from "../common/OperationalState";
 import "@xyflow/react/dist/style.css";
 
-type RadarStatus = "root" | "affected" | "nominal";
+type RadarStatus = "root" | "affected" | "unaffected";
 
 type RadarNodeData = {
   node: TopologyNode;
@@ -68,7 +69,7 @@ export function RadarNode({ data }: NodeProps<Node<RadarNodeData>>) {
         </span>
         <span className="mt-1 max-w-[100px] truncate font-mono text-[10px] font-bold text-[#e6edf3]">{serviceName}</span>
         <span className="mt-0.5 text-[8px] font-bold uppercase tracking-wide" style={{ color: accent }}>
-          {root ? "Root cause" : affected ? "Cascade" : "Nominal"}
+          {root ? "Root cause" : affected ? "Cascade" : "Unaffected by selected incident"}
         </span>
         <div className="flex flex-col items-center mt-1 text-[8px] font-mono text-[#94a3b8]">
             <div className="flex justify-between w-full">
@@ -119,7 +120,8 @@ function AutoCenter({ rootId }: { rootId: string }) {
 }
 
 export function IncidentBlastRadiusMap({ rootCause, affectedServices, onSelect }: { rootCause: string | null; affectedServices: string[]; onSelect: (id: string) => void }) {
-  const { nodes: topologyNodes, edges: topologyEdges } = useTopology();
+  const { nodes: topologyNodes, edges: topologyEdges, dataState } = useTopology();
+  const topologyStatus = displayOperationalStatus(dataState);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<RadarNodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<RadarEdgeData>>([]);
 
@@ -144,7 +146,7 @@ export function IncidentBlastRadiusMap({ rootCause, affectedServices, onSelect }
             node,
             status: rootNode?.id === node.id
               ? ("root" as const)
-              : affected.has(node.id) ? ("affected" as const) : ("nominal" as const),
+              : affected.has(node.id) ? ("affected" as const) : ("unaffected" as const),
             onSelect,
           },
         };
@@ -170,24 +172,34 @@ export function IncidentBlastRadiusMap({ rootCause, affectedServices, onSelect }
 
   return (
     <div className="h-full w-full bg-[#0b1220]">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        fitView
-        fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
-        minZoom={0.35}
-        maxZoom={1.5}
-        panOnDrag
-        proOptions={{ hideAttribution: true }}
-      >
-        {rootCause && topologyNodes.some((node) => node.id === rootCause) && <AutoCenter rootId={rootCause} />}
-        <Background color="#1e293b" gap={22} size={1} />
-        <Controls showInteractive={false} className="!border-[#334155] !bg-[#111827] [&>button]:!border-[#334155] [&>button]:!bg-[#111827] [&>button]:!fill-[#cbd5e1]" />
-      </ReactFlow>
+      {topologyStatus === "available" || topologyStatus === "stale" ? (
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.25, maxZoom: 1 }}
+          minZoom={0.35}
+          maxZoom={1.5}
+          panOnDrag
+          proOptions={{ hideAttribution: true }}
+        >
+          {rootCause && topologyNodes.some((node) => node.id === rootCause) && <AutoCenter rootId={rootCause} />}
+          <Background color="#1e293b" gap={22} size={1} />
+          <Controls showInteractive={false} className="!border-[#334155] !bg-[#111827] [&>button]:!border-[#334155] [&>button]:!bg-[#111827] [&>button]:!fill-[#cbd5e1]" />
+        </ReactFlow>
+      ) : (
+        <div className="flex h-full items-center justify-center px-6">
+          <OperationalStateNotice
+            state={dataState}
+            emptyMessage="No topology was returned for this scope."
+            errorMessage="Topology is unavailable; incident impact is not being inferred."
+          />
+        </div>
+      )}
     </div>
   );
 }

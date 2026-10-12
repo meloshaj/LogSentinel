@@ -1,0 +1,13 @@
+[Unit]
+Description=Scheduled LogSentinel PostgreSQL remote backup
+
+[Timer]
+# Operator-approved production schedule: daily at 02:00 UTC with up to
+# fifteen minutes of randomized delay.
+OnCalendar=*-*-* 02:00:00 UTC
+Persistent=true
+RandomizedDelaySec=15min
+Unit=logsentinel-backup.service
+
+[Install]
+WantedBy=timers.target

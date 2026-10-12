@@ -1,0 +1,94 @@
+{
+  "source": "read-only production feature_windows snapshot",
+  "run_id": "626edf44b8a1",
+  "tenant_id": "logsentinel",
+  "owner_user_id": 7,
+  "feature_schema_version": "logsentinel-feature-schema-v1",
+  "feature_columns": [
+    "log_count",
+    "info_count",
+    "warning_count",
+    "error_count",
+    "error_ratio",
+    "active_services",
+    "unique_templates",
+    "dominant_service_count",
+    "dominant_template_count",
+    "logs_per_second",
+    "avg_logs_per_minute",
+    "burst_indicator"
+  ],
+  "windows": [
+    {
+      "window_id": "window-78a80e1840ad331ee61f5318885f9d6d78fbbc2b576a6c026ba05bd851ceddb7",
+      "phase_class": "normal",
+      "phase_level_counts": {"normal/INFO": 11},
+      "features": {"log_count": 11, "info_count": 11, "warning_count": 0, "error_count": 0, "error_ratio": 0.0, "active_services": 4, "unique_templates": 3, "dominant_service_count": 3, "dominant_template_count": 6, "logs_per_second": 1.1, "avg_logs_per_minute": 66, "burst_indicator": 0}
+    },
+    {
+      "window_id": "window-275bf9fb756fab5f0d2a232c1eed34ffb9651453d75c11bd1e359d6265fa001c",
+      "phase_class": "normal",
+      "phase_level_counts": {"normal/INFO": 25},
+      "features": {"log_count": 25, "info_count": 25, "warning_count": 0, "error_count": 0, "error_ratio": 0.0, "active_services": 4, "unique_templates": 3, "dominant_service_count": 7, "dominant_template_count": 13, "logs_per_second": 2.5, "avg_logs_per_minute": 150, "burst_indicator": 1}
+    },
+    {
+      "window_id": "window-8e0e82fcaa987cc795a9c46415523186b3c5c383f586b94b4e0da921c3d62bbe",
+      "phase_class": "normal",
+      "phase_level_counts": {"normal/INFO": 24},
+      "features": {"log_count": 24, "info_count": 24, "warning_count": 0, "error_count": 0, "error_ratio": 0.0, "active_services": 4, "unique_templates": 3, "dominant_service_count": 6, "dominant_template_count": 12, "logs_per_second": 2.4, "avg_logs_per_minute": 144, "burst_indicator": 1}
+    },
+    {
+      "window_id": "window-2d9a29c5a455b38c104e176dd033b57fca89183c7ca471363c09dbd0a238dfae",
+      "phase_class": "mixed_normal_auth",
+      "phase_level_counts": {"normal/INFO": 10, "auth_failures/WARN": 9},
+      "features": {"log_count": 19, "info_count": 10, "warning_count": 9, "error_count": 0, "error_ratio": 0.0, "active_services": 4, "unique_templates": 4, "dominant_service_count": 11, "dominant_template_count": 9, "logs_per_second": 1.9, "avg_logs_per_minute": 114, "burst_indicator": 0}
+    },
+    {
+      "window_id": "window-381f95047949dd0e7a57ee32e061a296fe1c2c22ef457757af247b713e3c97d3",
+      "phase_class": "auth_failures",
+      "phase_level_counts": {"auth_failures/WARN": 20},
+      "features": {"log_count": 20, "info_count": 0, "warning_count": 20, "error_count": 0, "error_ratio": 0.0, "active_services": 1, "unique_templates": 1, "dominant_service_count": 20, "dominant_template_count": 20, "logs_per_second": 2.0, "avg_logs_per_minute": 120, "burst_indicator": 1}
+    },
+    {
+      "window_id": "window-5871e369378dd632fb06b0afe5ac3d9222edbc3950eaf68048f76cd529f5d5f5",
+      "phase_class": "auth_failures",
+      "phase_level_counts": {"auth_failures/WARN": 16},
+      "features": {"log_count": 16, "info_count": 0, "warning_count": 16, "error_count": 0, "error_ratio": 0.0, "active_services": 1, "unique_templates": 1, "dominant_service_count": 16, "dominant_template_count": 16, "logs_per_second": 1.6, "avg_logs_per_minute": 96, "burst_indicator": 0}
+    },
+    {
+      "window_id": "window-0af34c11efa1d63b7db756e383b0af7bb83a34d0bd29ec8157dc587ab91d322b",
+      "phase_class": "mixed_auth_payment_outage",
+      "phase_level_counts": {"auth_failures/WARN": 5, "payment_outage/CRITICAL": 4, "payment_outage/ERROR": 8},
+      "features": {"log_count": 17, "info_count": 0, "warning_count": 5, "error_count": 12, "error_ratio": 0.7058823529411765, "active_services": 3, "unique_templates": 3, "dominant_service_count": 8, "dominant_template_count": 8, "logs_per_second": 1.7, "avg_logs_per_minute": 102, "burst_indicator": 0}
+    },
+    {
+      "window_id": "window-34fa4e382abaa788d8a162c979c1eba3dd995b2d0ad7958261e0208ef10b965c",
+      "phase_class": "payment_outage",
+      "phase_level_counts": {"payment_outage/CRITICAL": 9, "payment_outage/ERROR": 16},
+      "features": {"log_count": 25, "info_count": 0, "warning_count": 0, "error_count": 25, "error_ratio": 1.0, "active_services": 2, "unique_templates": 2, "dominant_service_count": 16, "dominant_template_count": 16, "logs_per_second": 2.5, "avg_logs_per_minute": 150, "burst_indicator": 1}
+    },
+    {
+      "window_id": "window-43863140d8e729ca688d8a162e39eeb74ae",
+      "phase_class": "mixed_payment_outage_recovery",
+      "phase_level_counts": {"payment_outage/CRITICAL": 5, "payment_outage/ERROR": 8, "recovery/INFO": 6},
+      "features": {"log_count": 19, "info_count": 6, "warning_count": 0, "error_count": 13, "error_ratio": 0.6842105263157895, "active_services": 3, "unique_templates": 3, "dominant_service_count": 11, "dominant_template_count": 8, "logs_per_second": 1.9, "avg_logs_per_minute": 114, "burst_indicator": 0}
+    },
+    {
+      "window_id": "window-2d08f323230d230788fbe97506a4a4cc9f595649c28f721b02ee04298fa44550",
+      "phase_class": "recovery",
+      "phase_level_counts": {"recovery/INFO": 14},
+      "features": {"log_count": 14, "info_count": 14, "warning_count": 0, "error_count": 0, "error_ratio": 0.0, "active_services": 2, "unique_templates": 1, "dominant_service_count": 7, "dominant_template_count": 14, "logs_per_second": 1.4, "avg_logs_per_minute": 84, "burst_indicator": 0}
+    },
+    {
+      "window_id": "window-55fffdae281619f6c37ef01c4d7e39843e14368afcdfbca8c869b2383737a44d",
+      "phase_class": "recovery",
+      "phase_level_counts": {"recovery/INFO": 9},
+      "features": {"log_count": 9, "info_count": 9, "warning_count": 0, "error_count": 0, "error_ratio": 0.0, "active_services": 2, "unique_templates": 1, "dominant_service_count": 5, "dominant_template_count": 9, "logs_per_second": 0.9, "avg_logs_per_minute": 54, "burst_indicator": 0}
+    }
+  ],
+  "unverified_non_demo_marked_windows": {
+    "count": 2,
+    "interpretation": "Not accepted as healthy training/validation data: both are 5-log jury-demo-api windows with 3 INFO, 1 WARN, 1 ERROR and four templates.",
+    "features": {"log_count": 5, "info_count": 3, "warning_count": 1, "error_count": 1, "error_ratio": 0.2, "active_services": 1, "unique_templates": 4, "dominant_service_count": 5, "dominant_template_count": 2, "logs_per_second": 0.5, "avg_logs_per_minute": 30, "burst_indicator": 0}
+  }
+}

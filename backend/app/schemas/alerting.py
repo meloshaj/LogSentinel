@@ -4,6 +4,9 @@ from pydantic import BaseModel, Field
 class IncidentAlertPayload(BaseModel):
     """Payload representing an incident or anomaly to be dispatched to webhooks."""
 
+    tenant_id: str = Field(..., min_length=1, max_length=64)
+    owner_user_id: int = Field(default=0, ge=0)
+
     incident_id: str = Field(
         ..., description="Unique identifier for the incident or anomaly"
     )

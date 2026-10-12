@@ -5,8 +5,10 @@ import { IncidentBlastRadiusMap } from "../components/topology/IncidentBlastRadi
 import { Bell, CheckCircle, Clock, Flame, XCircle, AlertTriangle, ChevronRight, X, Filter, Activity, Network, Target, ShieldAlert, Cpu, Layers } from "lucide-react";
 import { useState, useMemo } from "react";
 import { EmptyState } from "../components/common/EmptyState";
+import { deriveIncidentRecords, type IncidentRecord } from "../utils/incidentRecords";
 import { resolveRootService } from "../utils/incident";
 import { AnomalyDrawer } from "../components/dashboard/AnomalyDrawer";
+import { displayOperationalStatus, OperationalStateNotice } from "../components/common/OperationalState";
 
 const SEVERITY_CONFIG = {
   critical: { label: "CRITICAL", color: "#ef4444", bg: "rgba(239,68,68,0.12)", border: "rgba(239,68,68,0.35)", icon: Flame },
@@ -16,6 +18,7 @@ const SEVERITY_CONFIG = {
 };
 
 const STATUS_CONFIG = {
+  acknowledged:  { label: "Acknowledged", color: "#d29922", dot: "bg-[#d29922]" },
   investigating: { label: "Investigating", color: "#f59e0b", dot: "bg-[#f59e0b] animate-pulse" },
   open:          { label: "Open",          color: "#ef4444", dot: "bg-[#ef4444] animate-pulse" },
   resolved:      { label: "Resolved",      color: "#3fb950", dot: "bg-[#3fb950]" },
@@ -27,7 +30,8 @@ function IncidentCard({ incident, onClick }: { incident: Incident, onClick: () =
   const SevIcon = sev.icon;
 
   return (
-    <div
+    <button type="button"
+      aria-label={`Open incident for ${incident.service}`}
       className="rounded-xl border overflow-hidden hover:brightness-110 transition-all cursor-pointer shadow-sm"
       style={{ background: sev.bg, borderColor: sev.border }}
       onClick={onClick}
@@ -56,53 +60,22 @@ function IncidentCard({ incident, onClick }: { incident: Incident, onClick: () =
         </div>
         <ChevronRight className="w-4 h-4 text-[#7d8590] shrink-0 mt-2" />
       </div>
-    </div>
+    </button>
   );
 }
 
 export function IncidentsPage() {
-  const { activeTrackingLoops, latestPerformanceEvents } = useTelemetryStream();
-  const { filteredLogs } = useLiveLogs();
-  const [selectedIncident, setSelectedIncident] = useState<any | null>(null);
+  const { activeTrackingLoops, latestPerformanceEvents, trackingLoopsDataState } = useTelemetryStream();
+  const { filteredLogs, connectionState } = useLiveLogs();
+  const incidentDataStatus = displayOperationalStatus(trackingLoopsDataState, connectionState);
+  const [selectedIncident, setSelectedIncident] = useState<IncidentRecord | null>(null);
   const [selectedServiceFilter, setSelectedServiceFilter] = useState<string | null>(null);
 
   // Derive incidents from live tracking loops and performance alerts
-  const incidents: any[] = useMemo(() => {
-    const list: any[] = [
-      ...activeTrackingLoops.map((loop) => {
-        const rootService = resolveRootService(loop);
-        return {
-          ...loop,
-          id: loop.window_id,
-          service: rootService || "Root cause unavailable",
-          severity:
-            loop.severity === "medium" || loop.severity === "low" || loop.severity === "high" || loop.severity === "critical"
-              ? loop.severity
-              : "medium",
-          timestamp: (loop as any).created_at
-            ? new Date((loop as any).created_at).toLocaleTimeString()
-            : new Date().toLocaleTimeString(),
-          description: `Anomaly loop detected with score ${loop.anomaly_score.toFixed(2)} across dependency cascade.`,
-          status:
-            loop.status === "open" || loop.status === "investigating" || loop.status === "resolved"
-              ? loop.status
-              : "open",
-        };
-      }),
-      ...latestPerformanceEvents.map((event) => ({
-        id: event.metric_name,
-        service: "infrastructure",
-        severity:
-          event.severity === "medium" || event.severity === "low" || event.severity === "high" || event.severity === "critical"
-            ? event.severity
-            : "medium",
-        timestamp: new Date().toLocaleTimeString(),
-        description: `Performance alert: ${event.metric_name} is ${event.current_value.toFixed(0)} (threshold ${event.threshold})`,
-        status: "open",
-      })),
-    ];
-    return list;
-  }, [activeTrackingLoops, latestPerformanceEvents]);
+  const incidents: IncidentRecord[] = useMemo(
+    () => deriveIncidentRecords(activeTrackingLoops, latestPerformanceEvents),
+    [activeTrackingLoops, latestPerformanceEvents],
+  );
 
   const filteredIncidents = selectedServiceFilter
     ? incidents.filter(
@@ -110,7 +83,7 @@ export function IncidentsPage() {
           i.service === selectedServiceFilter ||
           (i.blast_radius &&
             Array.isArray(i.blast_radius) &&
-            i.blast_radius.some((b: any) => b.service_name === selectedServiceFilter)),
+            i.blast_radius.some((b) => b.service_name === selectedServiceFilter)),
       )
     : incidents;
 
@@ -123,14 +96,13 @@ export function IncidentsPage() {
     primaryLoop?.blast_radius && Array.isArray(primaryLoop.blast_radius) ? primaryLoop.blast_radius : [];
   const primaryRootCause =
     (primaryLoop ? resolveRootService(primaryLoop) : null) ||
-    blastNodes.find((b: any) => b.impact_classification === "root")?.service_name ||
+    blastNodes.find((b) => b.impact_classification === "root")?.service_name ||
     blastNodes[0]?.service_name ||
     (open[0]?.service !== "Root cause unavailable" ? open[0]?.service : null);
-  const confidenceScore = primaryLoop?.anomaly_score
-    ? Math.min(99, Math.round(primaryLoop.anomaly_score > 1 ? primaryLoop.anomaly_score : primaryLoop.anomaly_score * 100))
-    : 94;
-  const fleetImpactPercent =
-    blastNodes.length > 0 ? Math.min(100, Math.round((blastNodes.length / 5) * 100)) : primaryRootCause ? 20 : 0;
+  const confidenceScore = primaryLoop?.root_cause_confidence !== undefined && primaryLoop.root_cause_confidence !== null
+    ? Math.round(primaryLoop.root_cause_confidence * 100)
+    : null;
+  const fleetImpactPercent = blastNodes.length > 0 ? Math.min(100, Math.round((blastNodes.length / 5) * 100)) : null;
 
   // Filtered service logs for inspector panel
   const inspectedLogs = useMemo(() => {
@@ -139,7 +111,7 @@ export function IncidentsPage() {
       .filter(
         (l) =>
           l.service === selectedServiceFilter ||
-          blastNodes.some((b: any) => b.service_name === l.service),
+          blastNodes.some((b) => b.service_name === l.service),
       )
       .slice(-8)
       .reverse();
@@ -152,11 +124,20 @@ export function IncidentsPage() {
           <h1 className="text-[#e6edf3]" style={{ fontSize: "18px", fontWeight: 700 }}>Service Incidents & Topology</h1>
           <p className="text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>Real-time service health, dependency topology, and incident triage</p>
         </div>
-        <EmptyState
-          title="No Active Incidents Detected"
-          description="Your services are operating normally. Any performance degradation or anomaly loop escalations will appear here."
-          icon={CheckCircle}
-        />
+        {incidentDataStatus === "empty" ? (
+          <EmptyState
+            title="No Incident Records"
+            description="The backend returned no current incident records for this scope."
+            icon={CheckCircle}
+          />
+        ) : (
+          <OperationalStateNotice
+            state={trackingLoopsDataState}
+            connectionState={connectionState}
+            errorMessage="Incident data is unavailable; this page is not presenting an empty success state."
+            className="w-full"
+          />
+        )}
       </div>
     );
   }
@@ -205,8 +186,8 @@ export function IncidentsPage() {
             </div>
             <div className="min-w-0">
               <span className="text-[#8b949e] text-[10px] uppercase font-bold tracking-wider">Blast Radius Scope</span>
-              <h3 className="text-[#e6edf3] font-bold font-mono text-sm mt-0.5">{fleetImpactPercent}% of fleet</h3>
-              <span className="text-[#f59e0b] text-[11px] font-semibold">{blastNodes.length || 1} downstream services impacted</span>
+              <h3 className="text-[#e6edf3] font-bold font-mono text-sm mt-0.5">{fleetImpactPercent === null ? "Unavailable" : `${fleetImpactPercent}% of fleet`}</h3>
+              <span className="text-[#f59e0b] text-[11px] font-semibold">{blastNodes.length > 0 ? `${blastNodes.length} downstream services impacted` : "Impact scope unavailable"}</span>
             </div>
           </div>
 
@@ -216,8 +197,8 @@ export function IncidentsPage() {
             </div>
             <div className="min-w-0">
               <span className="text-[#8b949e] text-[10px] uppercase font-bold tracking-wider">Root-Cause Confidence</span>
-              <h3 className="text-[#388bfd] font-bold font-mono text-sm mt-0.5">{confidenceScore}% Probability</h3>
-              <span className="text-[#8b949e] text-[11px]">Graph pathway algorithm score</span>
+              <h3 className="text-[#388bfd] font-bold font-mono text-sm mt-0.5">{confidenceScore === null ? "Unavailable" : `${confidenceScore}% Probability`}</h3>
+              <span className="text-[#8b949e] text-[11px]">Backend root-cause confidence</span>
             </div>
           </div>
         </div>
@@ -235,10 +216,12 @@ export function IncidentsPage() {
             {selectedServiceFilter && (
               <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-[#388bfd]/15 border border-[#388bfd]/30 text-xs text-[#388bfd]">
                 <span>Inspecting: <strong className="font-mono">{selectedServiceFilter}</strong></span>
-                <button 
+                <button
+                  type="button"
                   onClick={() => setSelectedServiceFilter(null)} 
                   className="hover:text-white transition-colors ml-1"
                   title="Clear filter"
+                  aria-label="Clear service filter"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -317,9 +300,10 @@ export function IncidentsPage() {
               const dotColor = isCrit ? "bg-[#ef4444]" : isMed ? "bg-[#f59e0b]" : "bg-[#7d8590]";
               
               return (
-                <div 
+                <button
+                  type="button"
                   key={idx} 
-                  className="flex items-center gap-3.5 p-3 rounded-xl border bg-[#0d1117] border-[#21262d] hover:border-[#388bfd]/50 transition-all shadow-sm cursor-pointer"
+                  className="flex w-full items-center gap-3.5 rounded-xl border border-[#21262d] bg-[#0d1117] p-3 text-left shadow-sm transition-all hover:border-[#388bfd]/50"
                   onClick={() => setSelectedIncident(ev)}
                 >
                   <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotColor} animate-pulse`} />
@@ -329,7 +313,7 @@ export function IncidentsPage() {
                   <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${bg}`}>
                     {ev.severity}
                   </span>
-                </div>
+                </button>
               );
             })}
           </div>

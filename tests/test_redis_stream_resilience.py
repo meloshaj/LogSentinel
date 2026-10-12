@@ -9,13 +9,16 @@ from backend.app.services.batch_manager import ParsedLogBatchManager
 
 import pytest_asyncio
 
+import os
+
 @pytest_asyncio.fixture
 async def redis_client():
-    client = Redis.from_url("redis://localhost:6379/0", decode_responses=True)
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    client = Redis.from_url(redis_url, decode_responses=True)
     try:
         await client.ping()
     except Exception:
-        pytest.skip("Redis not available on localhost:6379")
+        pytest.skip(f"Redis not available on {redis_url}")
     
     yield client
     

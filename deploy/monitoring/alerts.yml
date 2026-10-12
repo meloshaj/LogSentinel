@@ -1,53 +1,375 @@
 groups:
-  - name: logsentinel-alerts
+  - name: logsentinel-availability
     rules:
-      - alert: ArchiveBacklogGrowing
-        expr: archive_backlog_seconds > 86400
-        for: 30m
+      - alert: LogSentinelBackendUnavailable
+        expr: up{job="logsentinel-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: backend
+          service: logsentinel
+        annotations:
+          summary: LogSentinel backend metrics target is unavailable
+          description: Prometheus cannot scrape the authenticated backend metrics endpoint.
+          runbook_url: docs/operations/monitoring.md#backendunavailable
+      - alert: LogSentinelRequiredContainerDown
+        expr: logsentinel_container_running{service=~"postgres|valkey|backend|pipeline-worker|webhook-worker|archive-worker|caddy"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: container
+          service: '{{ $labels.service }}'
+        annotations:
+          summary: Required LogSentinel container is not running
+          description: The required container {{ $labels.service }} is not running.
+          runbook_url: docs/operations/monitoring.md#requiredcontainerdown
+      - alert: LogSentinelRequiredContainerUnhealthy
+        expr: logsentinel_container_health{service=~"postgres|valkey|backend|pipeline-worker|webhook-worker|archive-worker|caddy"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: container
+          service: '{{ $labels.service }}'
+        annotations:
+          summary: Required LogSentinel container is unhealthy
+          description: The required container {{ $labels.service }} is not reporting a healthy Docker healthcheck.
+          runbook_url: docs/operations/monitoring.md#requiredcontainerunhealthy
+      - alert: LogSentinelContainerRestarted
+        expr: increase(logsentinel_container_restarts_total{service=~"postgres|valkey|backend|pipeline-worker|webhook-worker|archive-worker|caddy"}[10m]) > 0
+        for: 2m
         labels:
           severity: warning
+          component: container
+          service: '{{ $labels.service }}'
         annotations:
-          summary: "Archive backlog is growing (> 24h)"
-          description: "The age of the oldest unarchived data exceeds 24 hours, currently at {{ $value }} seconds."
+          summary: LogSentinel service restarted
+          description: The {{ $labels.service }} container restart counter increased during the last 10 minutes.
+          runbook_url: docs/operations/monitoring.md#containerrestart
 
-      - alert: ArchiveVerificationFailed
-        expr: increase(logsentinel_archive_verification_failures_total[5m]) > 0
+  - name: logsentinel-workers-and-queues
+    rules:
+      - alert: LogSentinelPipelineHeartbeatStale
+        expr: time() - logsentinel_worker_durable_heartbeat_timestamp_seconds{role="pipeline"} > 90 or absent(logsentinel_worker_durable_heartbeat_timestamp_seconds{role="pipeline"})
+        for: 2m
         labels:
           severity: critical
+          component: pipeline-worker
+          service: logsentinel
         annotations:
-          summary: "Archive verification failed"
-          description: "One or more archive manifest verifications failed in the last 5 minutes."
-
-      - alert: ArchiveHotDeleteFailed
-        expr: increase(logsentinel_archive_hot_delete_failures_total[5m]) > 0
+          summary: Pipeline worker heartbeat is stale or missing
+          description: The pipeline heartbeat has exceeded the 60-second TTL plus an operational margin.
+          runbook_url: docs/operations/monitoring.md#workerheartbeat
+      - alert: LogSentinelWebhookHeartbeatStale
+        expr: time() - logsentinel_worker_durable_heartbeat_timestamp_seconds{role="webhook"} > 90 or absent(logsentinel_worker_durable_heartbeat_timestamp_seconds{role="webhook"})
+        for: 2m
         labels:
           severity: critical
+          component: webhook-worker
+          service: logsentinel
         annotations:
-          summary: "Archive hot delete failed"
-          description: "One or more chunks failed to drop from hot storage after verification in the last 5 minutes."
-
-      - alert: TimescaleDiskSpaceRunningLow
-        expr: (node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql/data"} / node_filesystem_size_bytes{mountpoint="/var/lib/postgresql/data"}) * 100 < 20
+          summary: Webhook worker heartbeat is stale or missing
+          description: The webhook/email worker heartbeat has exceeded the 60-second TTL plus an operational margin.
+          runbook_url: docs/operations/monitoring.md#workerheartbeat
+      - alert: LogSentinelArchiveHeartbeatStale
+        expr: time() - logsentinel_worker_durable_heartbeat_timestamp_seconds{role="archive"} > 90 or absent(logsentinel_worker_durable_heartbeat_timestamp_seconds{role="archive"})
+        for: 2m
+        labels:
+          severity: critical
+          component: archive-worker
+          service: logsentinel
+        annotations:
+          summary: Archive worker heartbeat is stale or missing
+          description: The archive worker heartbeat has exceeded the 60-second TTL plus an operational margin.
+          runbook_url: docs/operations/monitoring.md#workerheartbeat
+      - alert: LogSentinelStreamBacklogHigh
+        expr: logsentinel_stream_backlog > 10000
+        for: 10m
+        labels:
+          severity: warning
+          component: stream
+          service: logsentinel
+        annotations:
+          summary: Ingestion stream backlog is high
+          description: Recoverable ingestion backlog exceeds 10,000 entries for 10 minutes.
+          runbook_url: docs/operations/monitoring.md#streambacklog
+      - alert: LogSentinelStreamPendingHigh
+        expr: logsentinel_stream_pending_entries > 1000
+        for: 10m
+        labels:
+          severity: warning
+          component: stream
+          service: logsentinel
+        annotations:
+          summary: Ingestion pending entries are high
+          description: The consumer group has more than 1,000 pending entries for 10 minutes.
+          runbook_url: docs/operations/monitoring.md#streampending
+      - alert: LogSentinelPipelineDLQNotEmpty
+        expr: logsentinel_stream_dlq_size > 0
+        for: 5m
+        labels:
+          severity: critical
+          component: pipeline
+          service: logsentinel
+        annotations:
+          summary: Pipeline dead-letter stream is not empty
+          description: At least one ingestion item requires operator investigation.
+          runbook_url: docs/operations/monitoring.md#pipelinedlq
+      - alert: LogSentinelStreamObservationDown
+        expr: logsentinel_stream_observability_up == 0 or absent(logsentinel_stream_observability_up)
+        for: 2m
+        labels:
+          severity: critical
+          component: valkey
+          service: logsentinel
+        annotations:
+          summary: Stream and Valkey observation is unavailable
+          description: The backend cannot obtain a current stream observation from Valkey.
+          runbook_url: docs/operations/monitoring.md#streamobservation
+      - alert: LogSentinelWebhookOutboxBacklog
+        expr: sum(logsentinel_outbox_items{status=~"pending|processing|retry"}) > 100
+        for: 10m
+        labels:
+          severity: warning
+          component: webhook-outbox
+          service: logsentinel
+        annotations:
+          summary: Webhook outbox backlog is growing
+          description: More than 100 durable webhook deliveries await processing for 10 minutes.
+          runbook_url: docs/operations/monitoring.md#outboxbacklog
+      - alert: LogSentinelWebhookOldestPendingTooOld
+        expr: logsentinel_outbox_oldest_pending_age_seconds > 900
+        for: 5m
+        labels:
+          severity: critical
+          component: webhook-outbox
+          service: logsentinel
+        annotations:
+          summary: Webhook delivery is stalled
+          description: The oldest pending delivery is more than 15 minutes old.
+          runbook_url: docs/operations/monitoring.md#outboxage
+      - alert: LogSentinelWebhookTerminalFailures
+        expr: logsentinel_outbox_items{status="failed"} > 0
         for: 5m
         labels:
           severity: warning
+          component: webhook-outbox
+          service: logsentinel
         annotations:
-          summary: "TimescaleDB persistent volume is running low on disk space"
-          description: "Disk usage has exceeded 80% on the persistent volume."
+          summary: Webhook deliveries reached terminal failure
+          description: Durable webhook rows require operator review.
+          runbook_url: docs/operations/monitoring.md#outboxfailures
 
-      - alert: ValkeyBufferOverflow
-        expr: increase(log_dropped_buffer_full_total[5m]) > 0
+  - name: logsentinel-backup-pitr
+    rules:
+      - alert: LogSentinelBackupTimerInactive
+        expr: logsentinel_backup_timer_enabled == 0 or logsentinel_backup_timer_active == 0
+        for: 5m
         labels:
           severity: critical
+          component: backup
+          service: logsentinel
         annotations:
-          summary: "Valkey log buffer overflow"
-          description: "Logs were dropped due to a full buffer in the last 5 minutes."
-
-      - alert: BackendReadinessFailing
-        expr: probe_success{job="logsentinel-backend"} == 0 or up{job="logsentinel-backend"} == 0
-        for: 1m
+          summary: Logical backup timer is not enabled and active
+          description: The approved daily backup timer is not in its expected enabled/active state.
+          runbook_url: docs/operations/monitoring.md#backuptimer
+      - alert: LogSentinelBackupServiceFailed
+        expr: logsentinel_backup_service_last_result == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: backup
+          service: logsentinel
+        annotations:
+          summary: Last logical backup service run failed
+          description: The most recent systemd logical backup result was not successful.
+          runbook_url: docs/operations/monitoring.md#backupfailure
+      - alert: LogSentinelBackupMissingOrInvalid
+        expr: logsentinel_backup_latest_valid == 0 or absent(logsentinel_backup_latest_valid)
+        for: 5m
         labels:
           severity: critical
+          component: backup
+          service: logsentinel
         annotations:
-          summary: "Backend readiness probe failing"
-          description: "The backend service readiness check has been failing for more than 1 minute."
+          summary: No checksum-valid logical backup is available
+          description: The read-only backup verifier found no valid local recovery point.
+          runbook_url: docs/operations/monitoring.md#backupfailure
+      - alert: LogSentinelBackupFreshnessWarning
+        expr: time() - logsentinel_backup_latest_valid_timestamp_seconds > 79200
+        for: 10m
+        labels:
+          severity: warning
+          component: backup
+          service: logsentinel
+        annotations:
+          summary: Latest valid logical backup is older than 22 hours
+          description: Backup freshness is approaching the approved 24-hour RPO.
+          runbook_url: docs/operations/monitoring.md#backupfreshness
+      - alert: LogSentinelBackupFreshnessCritical
+        expr: time() - logsentinel_backup_latest_valid_timestamp_seconds > 86400
+        for: 5m
+        labels:
+          severity: critical
+          component: backup
+          service: logsentinel
+        annotations:
+          summary: Latest valid logical backup exceeds the 24-hour RPO
+          description: No checksum-valid logical backup completed within the approved recovery objective.
+          runbook_url: docs/operations/monitoring.md#backupfreshness
+      - alert: LogSentinelArchiveModeDisabled
+        expr: logsentinel_pitr_database_observation_up == 0 or logsentinel_pitr_archive_mode == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: pitr
+          service: postgres
+        annotations:
+          summary: PostgreSQL WAL archive observation or archive mode is unhealthy
+          description: PostgreSQL archive mode is disabled or the read-only archiver observation failed.
+          runbook_url: docs/operations/monitoring.md#pitrarchive
+      - alert: LogSentinelArchiverFailureIncrease
+        expr: increase(logsentinel_pg_archiver_failed_total[15m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+          component: pitr
+          service: postgres
+        annotations:
+          summary: New PostgreSQL WAL archive failures occurred
+          description: The archiver failure counter increased during the last 15 minutes; historical failures alone do not fire this alert.
+          runbook_url: docs/operations/monitoring.md#pitrarchive
+      - alert: LogSentinelWALArchiveStale
+        expr: time() - logsentinel_pg_archiver_last_archived_timestamp_seconds > 900 or absent(logsentinel_pg_archiver_last_archived_timestamp_seconds)
+        for: 5m
+        labels:
+          severity: critical
+          component: pitr
+          service: postgres
+        annotations:
+          summary: Local PostgreSQL WAL archive progress is stale
+          description: No successful WAL archive has been observed for more than 15 minutes.
+          runbook_url: docs/operations/monitoring.md#pitrarchive
+      - alert: LogSentinelRemoteWALUnhealthy
+        expr: logsentinel_remote_wal_status == 0 or absent(logsentinel_remote_wal_status)
+        for: 5m
+        labels:
+          severity: critical
+          component: pitr
+          service: remote-wal
+        annotations:
+          summary: Remote WAL verification is unhealthy
+          description: The existing secret-free remote WAL inventory helper cannot verify a healthy object set.
+          runbook_url: docs/operations/monitoring.md#pitrarchive
+      - alert: LogSentinelRemoteWALStale
+        expr: time() - logsentinel_remote_wal_latest_timestamp_seconds > 900 or absent(logsentinel_remote_wal_latest_timestamp_seconds)
+        for: 5m
+        labels:
+          severity: critical
+          component: pitr
+          service: remote-wal
+        annotations:
+          summary: Remote WAL progress is stale
+          description: The latest verified remote WAL object is older than 15 minutes.
+          runbook_url: docs/operations/monitoring.md#pitrarchive
+
+  - name: logsentinel-capacity-and-monitoring
+    rules:
+      - alert: LogSentinelDiskPressureWarning
+        expr: 100 * (1 - (node_filesystem_avail_bytes{mountpoint="/", fstype!=""} / node_filesystem_size_bytes{mountpoint="/", fstype!=""})) > 85
+        for: 10m
+        labels:
+          severity: warning
+          component: host
+          service: logsentinel-host
+        annotations:
+          summary: Host root filesystem is more than 85 percent full
+          description: Disk pressure may threaten database, backup, and monitoring operation.
+          runbook_url: docs/operations/monitoring.md#diskpressure
+      - alert: LogSentinelDiskPressureCritical
+        expr: 100 * (1 - (node_filesystem_avail_bytes{mountpoint="/", fstype!=""} / node_filesystem_size_bytes{mountpoint="/", fstype!=""})) > 90
+        for: 5m
+        labels:
+          severity: critical
+          component: host
+          service: logsentinel-host
+        annotations:
+          summary: Host root filesystem is more than 90 percent full
+          description: Immediate capacity action is required to protect database, backup, and monitoring operation.
+          runbook_url: docs/operations/monitoring.md#diskpressure
+      - alert: LogSentinelMemoryPressureWarning
+        expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 85
+        for: 10m
+        labels:
+          severity: warning
+          component: host
+          service: logsentinel-host
+        annotations:
+          summary: Host memory utilization is more than 85 percent
+          description: Sustained memory pressure may destabilize application or monitoring services.
+          runbook_url: docs/operations/monitoring.md#memorypressure
+      - alert: LogSentinelMemoryPressureCritical
+        expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 95
+        for: 5m
+        labels:
+          severity: critical
+          component: host
+          service: logsentinel-host
+        annotations:
+          summary: Host memory utilization is more than 95 percent
+          description: Immediate capacity action is required to avoid service instability.
+          runbook_url: docs/operations/monitoring.md#memorypressure
+      - alert: LogSentinelMonitoringTargetDown
+        expr: up{job=~"node-exporter|prometheus|alertmanager|alert-relay"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+          service: '{{ $labels.job }}'
+        annotations:
+          summary: Monitoring target is unavailable
+          description: The monitoring target {{ $labels.job }} is not scrapeable.
+          runbook_url: docs/operations/monitoring.md#monitoringhealth
+      - alert: LogSentinelCollectorStale
+        expr: logsentinel_ops_collector_success == 0 or time() - logsentinel_ops_collector_last_success_timestamp_seconds > 120
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+          service: ops-collector
+        annotations:
+          summary: Host operations collector is stale or failed
+          description: The textfile collector has not completed a successful observation within two minutes.
+          runbook_url: docs/operations/monitoring.md#collectorhealth
+      - alert: LogSentinelRuleEvaluationFailed
+        expr: increase(prometheus_rule_evaluation_failures_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+          service: prometheus
+        annotations:
+          summary: Prometheus rule evaluation failed
+          description: Prometheus reported one or more rule evaluation failures during the last five minutes.
+          runbook_url: docs/operations/monitoring.md#monitoringhealth
+      - alert: LogSentinelNotificationErrors
+        expr: increase(prometheus_notifications_errors_total[5m]) > 0 or increase(alertmanager_notifications_failed_total[5m]) > 0 or increase(logsentinel_alert_relay_delivery_failures_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: critical
+          component: monitoring
+          service: alerting
+        annotations:
+          summary: Monitoring notification delivery reported an error
+          description: Prometheus, Alertmanager, or the operator relay reported a recent notification failure.
+          runbook_url: docs/operations/monitoring.md#notificationdelivery
+      - alert: LogSentinelMonitoringCanary
+        expr: logsentinel_monitoring_canary == 1
+        for: 15s
+        labels:
+          severity: warning
+          component: monitoring-canary
+          service: alerting
+        annotations:
+          summary: LogSentinel monitoring canary is firing
+          description: This is the safe operator-controlled end-to-end alert-delivery canary.
+          runbook_url: docs/operations/monitoring.md#canary

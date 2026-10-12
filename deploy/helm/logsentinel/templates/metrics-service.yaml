@@ -1,0 +1,17 @@
+{{- if .Values.monitoring.metricsService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "logsentinel.fullname" . }}-metrics
+  labels:
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 8000
+      targetPort: 8000
+  selector:
+    app.kubernetes.io/name: {{ include "logsentinel.name" . }}-api
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

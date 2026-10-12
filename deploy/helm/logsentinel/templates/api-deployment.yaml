@@ -4,6 +4,11 @@ metadata:
   name: {{ include "logsentinel.fullname" . }}-api
 spec:
   replicas: {{ .Values.replicaCount.api | default 1 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "logsentinel.name" . }}-api
@@ -14,14 +19,23 @@ spec:
         app.kubernetes.io/name: {{ include "logsentinel.name" . }}-api
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      serviceAccountName: {{ include "logsentinel.fullname" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds.api }}
       containers:
         - name: api
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "logsentinel.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "uvicorn"]
+          args: ["app.main:app", "--host", "0.0.0.0", "--port", "8000"]
           securityContext:
             runAsNonRoot: true
             runAsUser: 10001
             allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - name: http
               containerPort: 8000
@@ -36,12 +50,19 @@ spec:
             failureThreshold: {{ .Values.probes.api.liveness.failureThreshold | default 3 }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.probes.api.readiness.path | default "/health" }}
+              path: {{ .Values.probes.api.readiness.path | default "/readiness" }}
               port: http
             initialDelaySeconds: {{ .Values.probes.api.readiness.initialDelaySeconds | default 5 }}
             periodSeconds: {{ .Values.probes.api.readiness.periodSeconds | default 5 }}
             timeoutSeconds: {{ .Values.probes.api.readiness.timeoutSeconds | default 3 }}
             failureThreshold: {{ .Values.probes.api.readiness.failureThreshold | default 2 }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.api.liveness.path | default "/health" }}
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
           {{- if .Values.resources.api }}
           resources:
             {{- toYaml .Values.resources.api | nindent 12 }}
@@ -50,4 +71,4 @@ spec:
             - configMapRef:
                 name: {{ include "logsentinel.fullname" . }}-config
             - secretRef:
-                name: {{ include "logsentinel.fullname" . }}-secret
+                name: {{ include "logsentinel.secretName" . }}

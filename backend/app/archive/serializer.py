@@ -1,5 +1,6 @@
 """Serializer for Hot/Cold Storage Architecture."""
 
+import asyncio
 import hashlib
 import json
 from typing import Any
@@ -12,6 +13,7 @@ ARCHIVE_SCHEMA = pa.schema(
     [
         ("id", pa.string()),
         ("tenant_id", pa.string()),
+        ("owner_user_id", pa.int64()),
         ("timestamp", pa.timestamp("us", tz="UTC")),
         ("service", pa.string()),
         ("raw_message", pa.string()),
@@ -26,6 +28,7 @@ ARCHIVE_SCHEMA = pa.schema(
         ("parsed_at", pa.timestamp("us", tz="UTC")),
         ("created_at", pa.timestamp("us", tz="UTC")),
         ("ingested_at", pa.timestamp("us", tz="UTC")),
+        ("retention_deadline_at", pa.timestamp("us", tz="UTC")),
     ]
 )
 
@@ -79,9 +82,6 @@ def serialize_to_parquet(rows: list[dict[str, Any]]) -> tuple[bytes, dict[str, A
         "sha256": sha256_hash,
     }
     return raw_bytes, stats
-
-
-import asyncio
 
 
 async def async_serialize_to_parquet(

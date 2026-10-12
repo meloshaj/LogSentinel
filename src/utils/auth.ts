@@ -1,5 +1,7 @@
 const AUTH_TOKEN_KEY = "authToken";
 const LEGACY_LOGIN_FLAG_KEY = "isLoggedIn";
+let accessToken: string | null = null;
+let refreshInFlight: Promise<string | null> | null = null;
 
 export class AuthenticationError extends Error {
   constructor(message = "Authentication expired or invalid") {
@@ -9,27 +11,78 @@ export class AuthenticationError extends Error {
 }
 
 export function getAuthToken(): string | null {
-  // Deterministic precedence: localStorage wins if both are present somehow
-  return window.localStorage.getItem(AUTH_TOKEN_KEY) || window.sessionStorage.getItem(AUTH_TOKEN_KEY);
+  return accessToken;
 }
 
 export function setAuthToken(token: string, persistent: boolean = true): void {
-  // Clear any existing duplicates
+  accessToken = token;
+  // Remove credentials written by older releases. Access JWTs are memory-only;
+  // the durable session secret exists only in the HttpOnly refresh cookie.
   window.localStorage.removeItem(AUTH_TOKEN_KEY);
   window.sessionStorage.removeItem(AUTH_TOKEN_KEY);
   window.localStorage.removeItem(LEGACY_LOGIN_FLAG_KEY);
-
-  if (persistent) {
-    window.localStorage.setItem(AUTH_TOKEN_KEY, token);
-  } else {
-    window.sessionStorage.setItem(AUTH_TOKEN_KEY, token);
-  }
+  void persistent;
 }
 
 export function clearAuthToken(): void {
+  accessToken = null;
   window.localStorage.removeItem(AUTH_TOKEN_KEY);
   window.sessionStorage.removeItem(AUTH_TOKEN_KEY);
   window.localStorage.removeItem(LEGACY_LOGIN_FLAG_KEY);
+}
+
+/** Remove sensitive OAuth/reset query and fragment values from the current URL. */
+export function sanitizeAuthCallbackUrl(): void {
+  window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+function readCookie(name: string): string | null {
+  const prefix = `${encodeURIComponent(name)}=`;
+  for (const part of document.cookie.split(";")) {
+    const value = part.trim();
+    if (value.startsWith(prefix)) return decodeURIComponent(value.slice(prefix.length));
+  }
+  return null;
+}
+
+export async function refreshSession(): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const csrf = readCookie("logsentinel_csrf");
+    if (!csrf) return null;
+    const response = await fetch("/api/auth/refresh", {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-CSRF-Token": csrf },
+    });
+    if (!response.ok) {
+      clearAuthToken();
+      return null;
+    }
+    const payload: unknown = await response.json();
+    if (typeof payload !== "object" || payload === null || !("access_token" in payload) || typeof payload.access_token !== "string") {
+      clearAuthToken();
+      return null;
+    }
+    setAuthToken(payload.access_token, false);
+    return payload.access_token;
+  })().finally(() => { refreshInFlight = null; });
+  return refreshInFlight;
+}
+
+export async function logoutSession(): Promise<void> {
+  const csrf = readCookie("logsentinel_csrf");
+  try {
+    if (csrf) {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRF-Token": csrf },
+      });
+    }
+  } finally {
+    clearAuthToken();
+  }
 }
 
 function normalizedOrigin(value: string): string | null {
@@ -113,7 +166,12 @@ export async function fetchAuthenticated(
         : typeof Request !== "undefined" && input instanceof Request
           ? input.url
           : String(input);
-  const response = await fetch(input, authenticatedRequestInit(url, init));
+  const requestInit = authenticatedRequestInit(url, { ...init, credentials: "include" });
+  let response = await fetch(input, requestInit);
+  if (response.status === 401) {
+    const token = await refreshSession();
+    if (token) response = await fetch(input, authenticatedRequestInit(url, { ...init, credentials: "include" }));
+  }
   if (response.status === 401 || response.status === 403) {
     clearAuthToken();
     throw new AuthenticationError();
@@ -175,11 +233,23 @@ export async function getAuthErrorMessage(
   response: Response,
   fallback: string,
 ): Promise<string> {
+  const safeMessage = (candidate: string): string => {
+    const normalized = candidate.replace(/\s+/g, " ").trim();
+    if (
+      !normalized ||
+      normalized.length > 240 ||
+      /(postgres(?:ql)?(?:\+\w+)?|rediss?|mongodb(?:\+\w+)?):\/\/|bearer\s+\S+|(?:password|secret|token|access[_ -]?key)\s*[:=]/i.test(normalized)
+    ) {
+      return fallback;
+    }
+    return normalized;
+  };
+
   try {
     const data = await response.json();
-    if (typeof data?.detail === "string") return data.detail;
+    if (typeof data?.detail === "string") return safeMessage(data.detail);
     if (Array.isArray(data?.detail)) {
-      return data.detail
+      const message = data.detail
         .map((item: unknown) =>
           typeof item === "object" &&
           item !== null &&
@@ -189,7 +259,8 @@ export async function getAuthErrorMessage(
             : null,
         )
         .filter(Boolean)
-        .join("; ") || fallback;
+        .join("; ");
+      return message ? safeMessage(message) : fallback;
     }
   } catch {
     // Keep the original fallback for empty or non-JSON error responses.

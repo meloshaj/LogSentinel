@@ -1,13 +1,16 @@
 import { useLiveLogs } from "../hooks/useLiveLogs";
 import { useMemo } from "react";
-import { BarChart2, TrendingDown, TrendingUp, AlertTriangle, ShieldCheck, CheckCircle } from "lucide-react";
+import { BarChart2, TrendingDown, TrendingUp, AlertTriangle, ShieldCheck } from "lucide-react";
+import { displayOperationalStatus, OperationalStateNotice, operationalStatusLabel } from "../components/common/OperationalState";
 import {
   Area, ComposedChart, Bar, BarChart, CartesianGrid, Cell,
   ResponsiveContainer, Tooltip, XAxis, YAxis, Line,
 } from "recharts";
 
 export function AnalyticsPage() {
-  const { filteredLogs, totalLogCount } = useLiveLogs();
+  const { filteredLogs, totalLogCount, dataState, connectionState } = useLiveLogs();
+  const logStatus = displayOperationalStatus(dataState, connectionState);
+  const telemetryKnown = logStatus === "available" || logStatus === "empty" || logStatus === "stale";
 
   const timeSeriesData = useMemo(() => {
     if (filteredLogs.length === 0) return [];
@@ -42,22 +45,20 @@ export function AnalyticsPage() {
     });
     
     return Object.entries(stats).map(([service, data]) => {
-      const errorRate = data.total > 0 ? (data.errors / data.total) * 100 : 0;
-      const uptime = Math.max(0, 100 - errorRate);
-      
-      let p95 = 0;
+      const errorRate = data.total > 0 ? (data.errors / data.total) * 100 : null;
+
+      let p95: number | null = null;
       if (data.latencies.length > 0) {
         data.latencies.sort((a, b) => a - b);
-        p95 = data.latencies[Math.floor(data.latencies.length * 0.95)] ?? 0;
+        p95 = data.latencies[Math.min(data.latencies.length - 1, Math.floor(data.latencies.length * 0.95))] ?? null;
       }
 
       return {
         service,
-        uptime: Number(uptime.toFixed(1)),
-        p95: p95.toFixed(0),
-        errorRate: Number(errorRate.toFixed(1))
+        errorRate: errorRate === null ? null : Number(errorRate.toFixed(1)),
+        p95: p95 === null ? null : Number(p95.toFixed(0)),
       };
-    }).sort((a, b) => b.errorRate - a.errorRate);
+    }).sort((a, b) => (b.errorRate ?? -1) - (a.errorRate ?? -1));
   }, [filteredLogs]);
 
   const errorDistrib = useMemo(() => {
@@ -85,12 +86,22 @@ export function AnalyticsPage() {
   }, [filteredLogs]);
 
   const totalErrors = filteredLogs.filter(l => l.level === 'ERROR' || l.level === 'FATAL').length;
-  const avgErrorRate = filteredLogs.length > 0 ? ((totalErrors / filteredLogs.length) * 100).toFixed(1) : "0.0";
-  const sloCompliance = filteredLogs.length > 0 ? (100 - Number(avgErrorRate)).toFixed(1) : "100.0";
+  const avgErrorRate = telemetryKnown && filteredLogs.length > 0
+    ? ((totalErrors / filteredLogs.length) * 100).toFixed(1)
+    : null;
+  const sloCompliance = avgErrorRate === null ? null : (100 - Number(avgErrorRate)).toFixed(1);
 
-  const CustomChartTooltip = ({ active, payload, label }: any) => {
+  const CustomChartTooltip = ({
+    active,
+    payload,
+    label,
+  }: {
+    active?: boolean;
+    payload?: Array<{ payload?: { logs?: number; errors?: number } }>;
+    label?: string | number;
+  }) => {
     if (active && payload && payload.length) {
-      const data = payload[0].payload;
+      const data = payload[0].payload ?? {};
       return (
         <div className="bg-[#0d1117]/95 backdrop-blur-md border border-[#21262d] rounded-xl p-3.5 shadow-2xl min-w-[190px]">
           <p className="text-[#e6edf3] font-bold text-xs mb-2.5 border-b border-[#21262d] pb-1.5">{label} UTC</p>
@@ -118,23 +129,29 @@ export function AnalyticsPage() {
 
   return (
     <div className="space-y-5">
+      <OperationalStateNotice
+        state={dataState}
+        connectionState={connectionState}
+        emptyMessage="No telemetry was returned for this scope. Analytics remain empty until the backend reports data."
+        errorMessage="Analytics are unavailable; no current values are being estimated."
+      />
       <div>
         <h1 className="text-[#e6edf3]" style={{ fontSize: "18px", fontWeight: 700 }}>Telemetry Analytics</h1>
-        <p className="text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>Error trends, service performance distributions, and SLA metrics</p>
+        <p className="text-[#7d8590] mt-0.5" style={{ fontSize: "12px" }}>Current live browser window. Values on this page are not historical SLO measurements.</p>
       </div>
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: "Logs Ingested",    value: totalLogCount.toLocaleString(),  delta: "Live Stream", up: true },
-          { label: "Avg Error Rate",   value: `${avgErrorRate}%`,   delta: `${totalErrors} errors`, up: Number(avgErrorRate) < 5 },
-          { label: "Active Services",  value: servicePerf.length.toString(),  delta: "Monitored", up: true },
-          { label: "SLO Compliance",   value: `${sloCompliance}%`,  delta: "Availability", up: Number(sloCompliance) > 95 },
+          { label: "Logs Ingested", value: telemetryKnown ? totalLogCount.toLocaleString() : operationalStatusLabel(logStatus), delta: telemetryKnown ? "Backend result" : "Current state", up: false },
+          { label: "Avg Error Rate", value: avgErrorRate === null ? operationalStatusLabel(logStatus) : `${avgErrorRate}%`, delta: avgErrorRate === null ? "Not measured" : `${totalErrors} errors`, up: avgErrorRate !== null && Number(avgErrorRate) < 5 },
+          { label: "Active Services", value: telemetryKnown ? servicePerf.length.toString() : operationalStatusLabel(logStatus), delta: telemetryKnown ? "Observed in logs" : "Current state", up: false },
+          { label: "Live Success Rate", value: sloCompliance === null ? operationalStatusLabel(logStatus) : `${sloCompliance}%`, delta: sloCompliance === null ? "Not measured" : "Current window", up: sloCompliance !== null && Number(sloCompliance) > 95 },
         ].map((k) => (
           <div key={k.label} className="p-4 rounded-xl bg-[#161b22] border border-[#21262d] shadow-sm">
             <div className="text-[#8b949e]" style={{ fontSize: "11px", fontWeight: 500 }}>{k.label}</div>
             <div className="text-[#e6edf3] mt-1 font-mono" style={{ fontSize: "22px", fontWeight: 700 }}>{k.value}</div>
-            <div className={`flex items-center gap-1 mt-1 text-xs font-semibold ${k.up ? "text-[#3fb950]" : "text-[#f85149]"}`}>
+            <div className={`flex items-center gap-1 mt-1 text-xs font-semibold ${k.up ? "text-[#3fb950]" : "text-[#8b949e]"}`}>
               {k.up ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
               <span>{k.delta}</span>
             </div>
@@ -165,7 +182,7 @@ export function AnalyticsPage() {
         <div className="px-4 pb-4 pt-2">
           <ResponsiveContainer width="100%" height={170}>
             <ComposedChart 
-              data={timeSeriesData.length > 0 ? timeSeriesData : [{ time: '00:00', logs: 0, errors: 0 }]} 
+              data={timeSeriesData}
               margin={{ top: 15, right: 10, left: -20, bottom: 0 }}
             >
               <defs>
@@ -211,6 +228,11 @@ export function AnalyticsPage() {
               />
             </ComposedChart>
           </ResponsiveContainer>
+          {timeSeriesData.length === 0 && (
+            <div role="status" className="text-center text-xs text-[#7d8590] py-2">
+              {telemetryKnown ? "No log samples are available for this window." : `Chart ${operationalStatusLabel(logStatus).toLowerCase()}.`}
+            </div>
+          )}
         </div>
       </div>
 
@@ -237,11 +259,16 @@ export function AnalyticsPage() {
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+            ) : !telemetryKnown ? (
+              <div role="status" className="flex flex-col items-center justify-center py-8 text-center text-[#7d8590]">
+                <AlertTriangle className="w-6 h-6 text-[#d29922] mb-1.5" />
+                <span className="text-xs font-semibold text-[#e6edf3]">Error data {operationalStatusLabel(logStatus).toLowerCase()}</span>
+              </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-8 text-center text-[#7d8590]">
-                <CheckCircle className="w-6 h-6 text-[#3fb950] mb-1.5" />
-                <span className="text-xs font-semibold text-[#e6edf3]">Zero Errors Detected</span>
-                <span className="text-[10px] text-[#7d8590] mt-0.5">All service telemetry is clean.</span>
+                <ShieldCheck className="w-6 h-6 text-[#8b949e] mb-1.5" />
+                <span className="text-xs font-semibold text-[#e6edf3]">No errors in returned telemetry</span>
+                <span className="text-[10px] text-[#7d8590] mt-0.5">This is a current-window observation, not a health guarantee.</span>
               </div>
             )}
           </div>
@@ -250,31 +277,30 @@ export function AnalyticsPage() {
         {/* Service performance table */}
         <div className="lg:col-span-2 rounded-xl bg-[#161b22] border border-[#21262d] overflow-hidden shadow-sm flex flex-col">
           <div className="px-4 py-3 border-b border-[#21262d] flex items-center justify-between">
-            <span className="text-[#e6edf3] text-[13px] font-bold">Service Performance Metrics</span>
+            <span className="text-[#e6edf3] text-[13px] font-bold">Live-window Service Metrics</span>
             <span className="text-[#7d8590] text-[10px]">{servicePerf.length} Services</span>
           </div>
           <div className="overflow-x-auto flex-1">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#21262d] bg-[#0d1117]/50">
-                  {["Service", "Uptime", "P95 Latency", "Error Rate", "Status"].map((h) => (
+                  {["Service", "Live success", "P95 Latency", "Error Rate", "Window status"].map((h) => (
                     <th key={h} className="px-4 py-2.5 text-left text-[#8b949e] text-[10px] font-bold uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#21262d]/50">
                 {servicePerf.map((s) => {
-                  const healthy = s.uptime > 98;
-                  const warn = s.uptime >= 94 && s.uptime <= 98;
-                  const statusColor = healthy ? "#3fb950" : warn ? "#d29922" : "#f85149";
-                  const statusLabel = healthy ? "Healthy" : warn ? "Degraded" : "Critical";
+                  const elevated = s.errorRate !== null && s.errorRate > 5;
+                  const statusColor = elevated ? "#f85149" : "#8b949e";
+                  const statusLabel = elevated ? "Elevated errors" : "Observed";
                   return (
                     <tr key={s.service} className="hover:bg-[#21262d]/30 transition-colors">
                       <td className="px-4 py-2.5 text-[#e6edf3] text-xs font-mono font-semibold">{s.service}</td>
-                      <td className="px-4 py-2.5 text-xs font-mono font-bold" style={{ color: statusColor }}>{s.uptime}%</td>
-                      <td className="px-4 py-2.5 text-[#c9d1d9] text-xs font-mono">{s.p95}ms</td>
-                      <td className="px-4 py-2.5 text-xs font-mono font-semibold" style={{ color: s.errorRate > 5 ? "#f85149" : s.errorRate > 2 ? "#d29922" : "#7d8590" }}>
-                        {s.errorRate}%
+                      <td className="px-4 py-2.5 text-xs font-mono font-bold" style={{ color: statusColor }}>{s.errorRate === null ? "Unavailable" : `${(100 - s.errorRate).toFixed(1)}%`}</td>
+                      <td className="px-4 py-2.5 text-[#c9d1d9] text-xs font-mono">{s.p95 === null ? "Unavailable" : `${s.p95}ms`}</td>
+                      <td className="px-4 py-2.5 text-xs font-mono font-semibold" style={{ color: statusColor }}>
+                        {s.errorRate === null ? "Unavailable" : `${s.errorRate}%`}
                       </td>
                       <td className="px-4 py-2.5">
                         <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider" style={{ color: statusColor, background: `${statusColor}20`, border: `1px solid ${statusColor}40` }}>

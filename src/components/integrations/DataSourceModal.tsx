@@ -16,6 +16,9 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { useTelemetrySocket } from "../../hooks/useTelemetrySocket";
+import { getApiUrl } from "../../config/api";
+import { fetchAuthenticated } from "../../utils/auth";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -155,7 +158,7 @@ function IngestionBeacon() {
     prevCountRef.current = eventCount;
   }, [eventCount]);
 
-  const isConnected = connectionStatus === "connected";
+  const isConnected = connectionStatus === "live";
 
   return (
     <div
@@ -487,20 +490,15 @@ export function DataSourceModal({
   isOpen,
   onClose,
 }: DataSourceModalProps) {
-  const [apiKey, setApiKey] = useState("Loading...");
-
-  useEffect(() => {
-    fetch("/api/auth/api-key", {
-      headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
-    })
-      .then(res => res.json())
-      .then(data => setApiKey(data.api_key || "Error loading key"))
-      .catch(() => setApiKey("Error loading key"));
-  }, []);
+  const [apiKey, setApiKey] = useState("");
+  const [isCreatingKey, setIsCreatingKey] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("fluent-bit");
   const [showKey, setShowKey] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const backdropRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
 
   // Open / close animation
   useEffect(() => {
@@ -511,18 +509,38 @@ export function DataSourceModal({
 
   const handleClose = useCallback(() => {
     setIsAnimating(false);
-    setTimeout(onClose, 200);
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      onClose();
+    }, 200);
   }, [onClose]);
 
-  // Close on Escape key
-  useEffect(() => {
-    if (!isOpen) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") handleClose();
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [isOpen, handleClose]);
+  useEffect(() => () => {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+  }, []);
+
+  const createApiKey = useCallback(async () => {
+    setIsCreatingKey(true);
+    setKeyError(null);
+    try {
+      const params = new URLSearchParams({ name: "ingestion-key", expires_in_days: "90" });
+      const response = await fetchAuthenticated(getApiUrl("/api/auth/api-key") + "?" + params.toString(), {
+        method: "POST",
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const data = (await response.json()) as { api_key?: string };
+      if (!data.api_key) throw new Error("The server did not return a key");
+      setApiKey(data.api_key);
+      setShowKey(true);
+    } catch {
+      setKeyError("Unable to create an ingestion key. Check your permissions and try again.");
+    } finally {
+      setIsCreatingKey(false);
+    }
+  }, []);
+
+  useDialogFocus(dialogRef, isOpen, handleClose);
 
   // Close on backdrop click
   const handleBackdropClick = (e: React.MouseEvent) => {
@@ -557,6 +575,11 @@ export function DataSourceModal({
       }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="data-source-modal-title"
+        tabIndex={-1}
         className="relative w-full max-w-3xl max-h-[90vh] flex flex-col rounded-2xl overflow-hidden border border-[#30363d] shadow-2xl"
         style={{
           background:
@@ -578,7 +601,8 @@ export function DataSourceModal({
               <Zap className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h2
+                <h2
+                  id="data-source-modal-title"
                 className="text-[#e6edf3]"
                 style={{ fontSize: "15px", fontWeight: 700 }}
               >
@@ -590,21 +614,16 @@ export function DataSourceModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* API Key visibility toggle */}
-            <button
+            {apiKey && <button
               type="button"
               onClick={() => setShowKey(!showKey)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[#7d8590] hover:text-[#e6edf3] bg-[#0d1117] border border-[#21262d] hover:border-[#30363d] transition-colors"
               style={{ fontSize: "11px" }}
               title={showKey ? "Hide API key" : "Reveal API key"}
             >
-              {showKey ? (
-                <EyeOff className="w-3.5 h-3.5" />
-              ) : (
-                <Eye className="w-3.5 h-3.5" />
-              )}
+              {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
               {showKey ? "Hide Key" : "Show Key"}
-            </button>
+            </button>}
 
             <button
               type="button"
@@ -652,7 +671,16 @@ export function DataSourceModal({
 
         {/* ---- Tab Content ---- */}
         <div className="flex-1 overflow-y-auto px-6 py-5 min-h-0">
-          <TabContent />
+          {!apiKey ? (
+            <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-6 text-center">
+              <p className="text-[#e6edf3] text-sm font-semibold">Create an ingestion key to continue</p>
+              <p className="text-[#8b949e] text-xs mt-2">A key is created only after you explicitly confirm. It will be shown once.</p>
+              {keyError && <p role="alert" className="text-[#f85149] text-xs mt-3">{keyError}</p>}
+              <button type="button" onClick={createApiKey} disabled={isCreatingKey} className="mt-5 px-4 py-2 rounded-lg bg-[#1f6feb] text-white text-xs font-semibold disabled:opacity-50">
+                {isCreatingKey ? "Creating…" : "Create ingestion key"}
+              </button>
+            </div>
+          ) : <TabContent />}
         </div>
 
         {/* ---- Footer ---- */}
