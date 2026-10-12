@@ -216,9 +216,12 @@ describe("TelemetryProvider", () => {
 
   it("refreshes an expired session before reconnecting and stops on refresh rejection", async () => {
     vi.spyOn(Math, "random").mockReturnValue(0);
-    document.cookie = "logsentinel_csrf=test-csrf; path=/";
     fetchMock.mockImplementation((input: string | URL) => {
-      if (String(input).endsWith("/api/auth/refresh")) {
+      const url = String(input);
+      if (url.endsWith("/api/auth/csrf")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ csrf_token: "test-csrf" }) });
+      }
+      if (url.endsWith("/api/auth/refresh")) {
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ access_token: "fresh-token" }) });
       }
       return Promise.resolve(successfulBackfill());
@@ -231,7 +234,11 @@ describe("TelemetryProvider", () => {
     expect(screen.getByTestId("connection-state")).toHaveTextContent("live");
 
     fetchMock.mockImplementation((input: string | URL) => {
-      if (String(input).endsWith("/api/auth/refresh")) {
+      const url = String(input);
+      if (url.endsWith("/api/auth/csrf")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ csrf_token: "test-csrf" }) });
+      }
+      if (url.endsWith("/api/auth/refresh")) {
         return Promise.resolve({ ok: false, status: 401, json: async () => ({}) });
       }
       return Promise.resolve(successfulBackfill());

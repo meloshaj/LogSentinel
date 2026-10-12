@@ -158,6 +158,15 @@ describe("LoginPage", () => {
     expect(googleOAuthMock.initTokenClient).not.toHaveBeenCalled();
   });
 
+  it("keeps password recovery reachable when its feature flag is off", () => {
+    vi.stubEnv("VITE_FEATURE_ENABLE_PASSWORD_RESET", "false");
+    renderLogin();
+
+    fireEvent.click(screen.getByRole("button", { name: "Forgot password?" }));
+
+    expect(testState.navigate).toHaveBeenCalledWith("/forgot-password");
+  });
+
   it("shows Google and initializes the SDK once with a non-empty configured client ID", () => {
     vi.stubEnv("VITE_GOOGLE_CLIENT_ID", "  public-web-client-id  ");
 
@@ -492,5 +501,36 @@ describe("LoginPage", () => {
     expect(window.location.pathname).toBe("/login");
     expect(window.location.search).toBe("");
     expect(window.location.hash).toBe("");
+  });
+
+  it("restores the internal session after the GitHub callback", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(response({ csrf_token: "csrf-value" }))
+        .mockResolvedValueOnce(response({ access_token: "internal-session-token" })),
+    );
+    window.history.replaceState({}, "", "/login?session=restored");
+
+    renderLogin();
+
+    await screen.findByText("Signed in successfully");
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "http://localhost:8000/api/auth/csrf",
+      expect.objectContaining({ method: "GET", credentials: "include" }),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "http://localhost:8000/api/auth/refresh",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRF-Token": "csrf-value" },
+      }),
+    );
+    expect(getAuthToken()).toBe("internal-session-token");
+    expect(window.location.search).toBe("");
   });
 });

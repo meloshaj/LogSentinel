@@ -54,18 +54,18 @@ No client secret or certificate is needed for access-token validation. The backe
 4. Register the exact local redirect URI under the SPA platform:
 
    ```text
-   http://localhost:5173/redirect.html
+   http://localhost:5173/auth/callback
    ```
 
    Add the Docker URI only when Docker browser validation is required:
 
    ```text
-   http://localhost:8080/redirect.html
+   http://localhost:8080/auth/callback
    ```
 
    Microsoft treats localhost redirect URIs that differ only by port as equivalent during matching. If both local modes must remain registered and exact-port return behavior is unreliable, use separate development SPA registrations rather than changing the callback path or weakening validation.
 
-5. Add `https://<production-domain>/redirect.html` only after the real production domain is known. Do not register a guessed domain.
+5. Add `https://<production-domain>/auth/callback` only after the real production domain is known. Do not register a guessed domain.
 6. Under **Implicit grant and hybrid flows**, leave both legacy token options disabled. MSAL uses authorization code flow with PKCE.
 7. Under **API permissions**, add **My APIs > LogSentinel API > Delegated permissions > `access_as_user`**.
 8. Grant administrator consent only when required by the scope or tenant policy.
@@ -73,7 +73,7 @@ No client secret or certificate is needed for access-token validation. The backe
 
 The SPA is a public client: never create, embed, or expose a client secret in Vite variables, JavaScript, Docker build arguments, or `redirect.html`.
 
-The redirect URI is a dedicated MSAL bridge, not a React route. It must remain same-origin with the application and exactly match a registered SPA redirect URI. The production server must serve `redirect.html` as a static file and must not apply a `Cross-Origin-Opener-Policy` header that severs the popup from its opener.
+The redirect URI is a dedicated MSAL bridge, not an authenticated application route. It must remain same-origin with the application and exactly match a registered SPA redirect URI. The frontend loads the bridge at `/auth/callback`; production routing must serve the SPA entry point there without redirecting to `/redirect`. Do not apply a `Cross-Origin-Opener-Policy` header that severs the popup from its opener.
 
 ## 4. Environment contract
 
@@ -97,10 +97,14 @@ The redirect URI is a dedicated MSAL bridge, not a React route. It must remain s
 
 The existing Cloudflare Pages project supplies the SPA values as
 `VITE_AZURE_CLIENT_ID`, `VITE_AZURE_AUTHORITY`, `VITE_AZURE_SCOPES`, and
-`VITE_AZURE_REDIRECT_URI`. The frontend accepts these as compatibility aliases;
-the `VITE_MICROSOFT_*` names take precedence when both forms are set. The
-current registered `/auth/callback` URI is served through the static
-`/redirect.html` MSAL bridge by the Pages `_redirects` rule.
+`VITE_AZURE_REDIRECT_URI`. The frontend accepts the `VITE_MICROSOFT_*` names as
+compatibility aliases; `VITE_AZURE_*` values take precedence when both forms
+are set. Microsoft auth can be explicitly enabled with
+`VITE_AZURE_AUTH_ENABLED=true`; when neither enable flag is set, the presence
+of a client ID enables configuration validation, which still fails closed
+unless the authority, delegated scope, and callback are valid. The
+`/auth/callback` path uses the MSAL bridge and Cloudflare's SPA fallback; it
+must not redirect to `/redirect` or `/redirect.html`.
 
 `VITE_*` values are compiled into the browser bundle and are never secrets. `JWT_SECRET_KEY` is unrelated to Entra registration and must be a strong, private, randomly generated value shared only with the backend.
 
@@ -130,7 +134,7 @@ $env:VITE_MICROSOFT_AUTH_ENABLED="true"
 $env:VITE_MICROSOFT_SPA_CLIENT_ID="<SPA_APP_CLIENT_ID>"
 $env:VITE_MICROSOFT_AUTHORITY="https://login.microsoftonline.com/<tenant-guid-or-supported-mode>"
 $env:VITE_MICROSOFT_API_SCOPE="api://<API_APP_CLIENT_ID>/access_as_user"
-$env:VITE_MICROSOFT_REDIRECT_URI="http://localhost:5173/redirect.html"
+$env:VITE_MICROSOFT_REDIRECT_URI="http://localhost:5173/auth/callback"
 $env:VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI="http://localhost:5173/login"
 npm run dev
 ```
@@ -151,7 +155,7 @@ VITE_MICROSOFT_AUTH_ENABLED=true
 VITE_MICROSOFT_SPA_CLIENT_ID=<SPA_APP_CLIENT_ID>
 VITE_MICROSOFT_AUTHORITY=https://login.microsoftonline.com/<tenant-guid-or-supported-mode>
 VITE_MICROSOFT_API_SCOPE=api://<API_APP_CLIENT_ID>/access_as_user
-VITE_MICROSOFT_REDIRECT_URI=http://localhost:8080/redirect.html
+VITE_MICROSOFT_REDIRECT_URI=http://localhost:8080/auth/callback
 VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI=http://localhost:8080/login
 VITE_API_URL=http://localhost:8080
 FRONTEND_URL=http://localhost:8080
@@ -163,7 +167,7 @@ Then rebuild because Vite variables are build-time values:
 docker compose up --build
 ```
 
-For production, use `https://<production-domain>/redirect.html` and `https://<production-domain>/login` for the two frontend URI values, set `FRONTEND_URL=https://<production-domain>` for the backend CORS origin, and set `VITE_API_URL` to the browser-visible HTTPS API origin (the same origin when Nginx proxies `/api`). Register the exact redirect URI in Entra before building the production image.
+For production, use `https://<production-domain>/auth/callback` and `https://<production-domain>/login` for the two frontend URI values, set `FRONTEND_URL=https://<production-domain>` for the backend CORS origin, and set `VITE_API_URL` to the browser-visible HTTPS API origin (the same origin when Nginx proxies `/api`). Register the exact redirect URI in Entra before building the production image.
 
 ## 5. Runtime and token contract
 
@@ -184,7 +188,7 @@ Use browser developer tools while keeping token values redacted.
 1. Start PostgreSQL and the backend with the backend variables above; confirm `/api/auth/microsoft` is enabled without sending a real token.
 2. Start Vite or rebuild/start Docker with the matching frontend values.
 3. Open `/login`; confirm email/password and Google regressions remain usable as configured.
-4. Confirm `redirect.html` returns HTTP 200 as a static document and loads only its compiled redirect-bridge asset.
+4. Confirm `/auth/callback` returns the SPA entry point with HTTP 200 and no redirect to `/redirect`; the bridge is loaded without mounting the React app.
 5. Select Remember Me, choose **Continue with Microsoft**, and confirm the popup opens.
 6. Select an allowed account and grant the custom `access_as_user` permission if prompted. Do not accept a Graph permission as a substitute.
 7. Confirm the popup closes, one `POST /api/auth/microsoft` succeeds, and the response is an internal LogSentinel JWT.

@@ -36,11 +36,29 @@ export function sanitizeAuthCallbackUrl(): void {
   window.history.replaceState({}, document.title, window.location.pathname);
 }
 
-function readCookie(name: string): string | null {
-  const prefix = `${encodeURIComponent(name)}=`;
-  for (const part of document.cookie.split(";")) {
-    const value = part.trim();
-    if (value.startsWith(prefix)) return decodeURIComponent(value.slice(prefix.length));
+export function authApiUrl(path: string): string {
+  const base = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${normalizedPath}`;
+}
+
+async function getCsrfToken(): Promise<string | null> {
+  const response = await fetch(authApiUrl("/api/auth/csrf"), {
+    method: "GET",
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) return null;
+
+  const payload: unknown = await response.json();
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "csrf_token" in payload &&
+    typeof payload.csrf_token === "string" &&
+    payload.csrf_token
+  ) {
+    return payload.csrf_token;
   }
   return null;
 }
@@ -48,38 +66,47 @@ function readCookie(name: string): string | null {
 export async function refreshSession(): Promise<string | null> {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
-    const csrf = readCookie("logsentinel_csrf");
-    if (!csrf) return null;
-    const response = await fetch("/api/auth/refresh", {
-      method: "POST",
-      credentials: "include",
-      headers: { "X-CSRF-Token": csrf },
-    });
-    if (!response.ok) {
+    try {
+      const csrf = await getCsrfToken();
+      if (!csrf) return null;
+      const response = await fetch(authApiUrl("/api/auth/refresh"), {
+        method: "POST",
+        credentials: "include",
+        headers: { "X-CSRF-Token": csrf },
+      });
+      if (!response.ok) {
+        clearAuthToken();
+        return null;
+      }
+      const payload: unknown = await response.json();
+      if (
+        typeof payload !== "object" ||
+        payload === null ||
+        !("access_token" in payload) ||
+        typeof payload.access_token !== "string"
+      ) {
+        clearAuthToken();
+        return null;
+      }
+      setAuthToken(payload.access_token, false);
+      return payload.access_token;
+    } catch {
       clearAuthToken();
       return null;
     }
-    const payload: unknown = await response.json();
-    if (typeof payload !== "object" || payload === null || !("access_token" in payload) || typeof payload.access_token !== "string") {
-      clearAuthToken();
-      return null;
-    }
-    setAuthToken(payload.access_token, false);
-    return payload.access_token;
   })().finally(() => { refreshInFlight = null; });
   return refreshInFlight;
 }
 
 export async function logoutSession(): Promise<void> {
-  const csrf = readCookie("logsentinel_csrf");
   try {
-    if (csrf) {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include",
-        headers: { "X-CSRF-Token": csrf },
-      });
-    }
+    const csrf = await getCsrfToken();
+    if (!csrf) return;
+    await fetch(authApiUrl("/api/auth/logout"), {
+      method: "POST",
+      credentials: "include",
+      headers: { "X-CSRF-Token": csrf },
+    });
   } finally {
     clearAuthToken();
   }

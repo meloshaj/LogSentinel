@@ -127,9 +127,9 @@ async function openDashboard(page: Page, options: FixtureOptions = {}) {
   } = options;
 
   await installMockSocket(page, socketMode, socketEvent);
-  await page.context().addCookies([
-    { name: "logsentinel_csrf", value: "browser-test-csrf", url: "http://127.0.0.1:5173" },
-  ]);
+  await page.route("**/api/auth/csrf", (route) =>
+    fulfillJson(route, 200, { csrf_token: "browser-test-csrf" }),
+  );
   await page.route("**/api/auth/refresh", (route) => fulfillJson(route, refreshStatus, { access_token: INTERNAL_TOKEN }));
   await page.route("**/api/v1/logs/recent*", async (route) => {
     if (logsTimeout) {
@@ -263,10 +263,26 @@ test.describe("frontend operational truth", () => {
     expect(page.url()).not.toContain("token=");
   });
 
+  test("handles direct callback navigation without redirecting or reporting an error", async ({ page }) => {
+    const pageErrors: string[] = [];
+    const consoleErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.name));
+    page.on("console", (message) => {
+      if (message.type() === "error") consoleErrors.push("console-error");
+    });
+
+    const response = await page.goto("/auth/callback");
+
+    expect(response?.status()).toBe(200);
+    expect(new URL(page.url()).pathname).toBe("/auth/callback");
+    expect(pageErrors).toEqual([]);
+    expect(consoleErrors).toEqual([]);
+  });
+
   test("routes an expired session to login without retaining dashboard state", async ({ page }) => {
-    await page.context().addCookies([
-      { name: "logsentinel_csrf", value: "browser-test-csrf", url: "http://127.0.0.1:5173" },
-    ]);
+    await page.route("**/api/auth/csrf", (route) =>
+      fulfillJson(route, 200, { csrf_token: "browser-test-csrf" }),
+    );
     await page.route("**/api/auth/refresh", (route) => fulfillJson(route, 401, { detail: "session_required" }));
 
     await page.goto("/");

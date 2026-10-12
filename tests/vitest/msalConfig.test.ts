@@ -7,7 +7,7 @@ const validEnvironment = {
     "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111",
   VITE_MICROSOFT_API_SCOPE:
     "api://00000000-0000-4000-8000-000000000002/access_as_user",
-  VITE_MICROSOFT_REDIRECT_URI: `${window.location.origin}/redirect.html`,
+  VITE_MICROSOFT_REDIRECT_URI: `${window.location.origin}/auth/callback`,
   VITE_MICROSOFT_POST_LOGOUT_REDIRECT_URI: window.location.origin,
 };
 
@@ -128,6 +128,43 @@ describe("MSAL configuration validation", () => {
     ]);
   });
 
+  it("prioritizes the Cloudflare Azure values and honors an explicit disable", async () => {
+    const config = await loadConfig({
+      VITE_AZURE_AUTH_ENABLED: "true",
+      VITE_MICROSOFT_AUTH_ENABLED: "false",
+      VITE_AZURE_CLIENT_ID: "00000000-0000-4000-8000-000000000003",
+      VITE_MICROSOFT_SPA_CLIENT_ID: "00000000-0000-4000-8000-000000000001",
+      VITE_AZURE_AUTHORITY:
+        "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111",
+      VITE_MICROSOFT_AUTHORITY:
+        "https://login.microsoftonline.com/consumers",
+      VITE_AZURE_API_SCOPE:
+        "api://00000000-0000-4000-8000-000000000004/access_as_user",
+      VITE_AZURE_REDIRECT_URI: `${window.location.origin}/auth/callback`,
+      VITE_MICROSOFT_REDIRECT_URI: `${window.location.origin}/redirect.html`,
+    });
+
+    expect(config.msalConfig.enabled).toBe(true);
+    expect(config.msalConfig.clientId).toBe(
+      "00000000-0000-4000-8000-000000000003",
+    );
+    expect(config.msalConfig.authority).toBe(
+      "https://login.microsoftonline.com/11111111-1111-4111-8111-111111111111",
+    );
+    expect(config.loginRequest.scopes).toEqual([
+      "api://00000000-0000-4000-8000-000000000004/access_as_user",
+    ]);
+    expect(config.msalConfig.redirectUri).toBe(
+      `${window.location.origin}/auth/callback`,
+    );
+
+    const disabled = await loadConfig({
+      VITE_AZURE_AUTH_ENABLED: "false",
+      VITE_MICROSOFT_AUTH_ENABLED: "true",
+    });
+    expect(disabled.isMsalConfigured()).toBe(false);
+  });
+
   it.each([
     "User.Read",
     "Mail.Read",
@@ -140,11 +177,16 @@ describe("MSAL configuration validation", () => {
     expect(config.isMsalConfigured()).toBe(false);
   });
 
-  it("rejects a routed redirect bridge, but sanitizes cross-origin to default", async () => {
+  it("rejects legacy redirect paths and sanitizes cross-origin redirects to the callback", async () => {
     const crossOrigin = await loadConfig({
       VITE_MICROSOFT_REDIRECT_URI: "https://example.invalid/redirect.html",
     });
     expect(crossOrigin.isMsalConfigured()).toBe(true);
+
+    const legacy = await loadConfig({
+      VITE_MICROSOFT_REDIRECT_URI: `${window.location.origin}/redirect.html`,
+    });
+    expect(legacy.isMsalConfigured()).toBe(false);
 
     const routed = await loadConfig({
       VITE_MICROSOFT_REDIRECT_URI: `${window.location.origin}/login`,
